@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-android35.0</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>org.junimogate.runtimeprobe</ApplicationId>
+    <ApplicationTitle>JunimoGate Runtime Probe</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1.0-dev</ApplicationDisplayVersion>
+    <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <SelfContained>true</SelfContained>
+    <AndroidUseSharedRuntime>false</AndroidUseSharedRuntime>
+    <UseInterpreter>false</UseInterpreter>
+    <AndroidUseInterpreter>false</AndroidUseInterpreter>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">true</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../JunimoGate.RuntimeProbe.Core/JunimoGate.RuntimeProbe.Core.csproj" />
+    <AndroidNativeLibrary Include="../../artifacts/native-cacheflush/libjunimogate-cacheflush.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <TrimmerRootDescriptor Include="linker.xml" Condition="'$(Configuration)' == 'Release'" />
+  </ItemGroup>
+  <Target Name="ValidateRuntimeProbeExecutionMode" BeforeTargets="Build">
+    <Error Condition="'$(UseInterpreter)' != 'false'"
+           Text="RuntimeProbe must run with UseInterpreter=false so Harmony is tested against stock Mono JIT." />
+    <Error Condition="'$(AndroidUseInterpreter)' != 'false'"
+           Text="RuntimeProbe must run with AndroidUseInterpreter=false so Harmony is tested against stock Mono JIT." />
+    <Error Condition="'$(RunAOTCompilation)' != 'false'"
+           Text="RuntimeProbe must run with RunAOTCompilation=false so Harmony is tested against stock Mono JIT." />
+    <Error Condition="!Exists('../../artifacts/native-cacheflush/libjunimogate-cacheflush.so')"
+           Text="Missing ARM64 cache helper. Run build/build-cacheflush.sh first." />
+  </Target>
+</Project>

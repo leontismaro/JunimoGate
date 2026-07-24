@@ -1,0 +1,419 @@
+diff --git a/Directory.Build.props b/Directory.Build.props
+index 4fd1656..998e80a 100644
+--- a/Directory.Build.props
++++ b/Directory.Build.props
+@@ -1,10 +1,10 @@
+ <Project>
+ 	<PropertyGroup Label="Harmony Defines">
+ 		<HarmonyVersion>2.4.2.0</HarmonyVersion>
+-		<HarmonyPrerelease></HarmonyPrerelease>
++		<HarmonyPrerelease>-junimogate.11</HarmonyPrerelease>
+ 
+-		<!-- set empty to build from local LocalMonoMod submodule -->
+-		<MonoModCoreVersion>1.3.3</MonoModCoreVersion>
++		<!-- JunimoGate builds the pinned, patched LocalMonoMod source. -->
++		<MonoModCoreVersion></MonoModCoreVersion>
+ 	</PropertyGroup>
+ 
+ 	<PropertyGroup Label="Lib.Harmony Properties" Condition="$(MSBuildProjectName.StartsWith('Lib.Harmony'))">
+@@ -22,7 +22,7 @@
+ 	</PropertyGroup>
+ 
+ 	<PropertyGroup Label="Build Configuration">
+-		<TargetFrameworks>net35;net452;net472;net48;netcoreapp3.0;netcoreapp3.1;net5.0;net6.0;net7.0;net8.0;net9.0;net10.0</TargetFrameworks>
++		<TargetFrameworks>net9.0</TargetFrameworks>
+ 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+ 		<LangVersion>preview</LangVersion>
+ 		<CheckEolTargetFramework>false</CheckEolTargetFramework>
+diff --git a/Lib.Harmony/Lib.Harmony.csproj b/Lib.Harmony/Lib.Harmony.csproj
+index 158ef23..832a8ee 100644
+--- a/Lib.Harmony/Lib.Harmony.csproj
++++ b/Lib.Harmony/Lib.Harmony.csproj
+@@ -1,7 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+   <PropertyGroup>
+     <PackageId>Lib.Harmony</PackageId>
+-    <TargetFrameworks>$(TargetFrameworks);netstandard2.0</TargetFrameworks>
++    <TargetFrameworks>$(TargetFrameworks)</TargetFrameworks>
+   </PropertyGroup>
+ 
+   <PropertyGroup Condition="$(Configuration.StartsWith('Release'))">
+@@ -12,9 +12,6 @@
+   </PropertyGroup>
+ 
+   <Import Project="..\Harmony\Harmony.projitems" Label="Shared" />
+-  <ItemGroup>
+-    <None Include="../_._" Pack="true" Visible="false" PackagePath="lib/netstandard2.0" />
+-  </ItemGroup>
+ 
+   <ItemGroup>
+     <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.34.2" PrivateAssets="all" />
+diff --git a/LocalMonoMod/src/MonoMod.Core/Interop/AndroidNativeLibraryResolver.cs b/LocalMonoMod/src/MonoMod.Core/Interop/AndroidNativeLibraryResolver.cs
+new file mode 100644
+index 0000000..0d9c361
+--- /dev/null
++++ b/LocalMonoMod/src/MonoMod.Core/Interop/AndroidNativeLibraryResolver.cs
+@@ -0,0 +1,37 @@
++using MonoMod.Utils;
++using System;
++using System.Reflection;
++using System.Runtime.InteropServices;
++using System.Threading;
++
++namespace MonoMod.Core.Interop
++{
++    internal static class AndroidNativeLibraryResolver
++    {
++        private static int initialized;
++
++        public static void EnsureRegistered()
++        {
++            if (PlatformDetection.OS != OSKind.Android || Interlocked.Exchange(ref initialized, 1) != 0)
++                return;
++
++            try
++            {
++                NativeLibrary.SetDllImportResolver(typeof(AndroidNativeLibraryResolver).Assembly, Resolve);
++            }
++            catch
++            {
++                Volatile.Write(ref initialized, 0);
++                throw;
++            }
++        }
++
++        private static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
++            => libraryName switch
++            {
++                "libc" => NativeLibrary.Load("libc.so"),
++                "dl" or "libdl.so.2" => NativeLibrary.Load("libdl.so"),
++                _ => IntPtr.Zero,
++            };
++    }
++}
+diff --git a/LocalMonoMod/src/MonoMod.Core/Interop/Unix.cs b/LocalMonoMod/src/MonoMod.Core/Interop/Unix.cs
+index 92f3adb..c6930cd 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Interop/Unix.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Interop/Unix.cs
+@@ -1,4 +1,5 @@
+-﻿using System;
++﻿using MonoMod.Utils;
++using System;
+ using System.Runtime.InteropServices;
+ 
+ namespace MonoMod.Core.Interop
+@@ -39,10 +40,22 @@ namespace MonoMod.Core.Interop
+         [DllImport(LibC, CallingConvention = CallingConvention.Cdecl, EntryPoint = "mkstemp")]
+         public static extern unsafe int MkSTemp(byte* template);
+ 
++        [DllImport("libjunimogate-cacheflush.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "junimogate_clear_cache")]
++        public static extern void JunimoGateClearCache(IntPtr start, IntPtr end);
++
+         [DllImport(LibC, CallingConvention = CallingConvention.Cdecl, EntryPoint = "__errno_location")]
+-        public static extern unsafe int* __errno_location();
++        private static extern unsafe int* __errno_location();
++
++        [DllImport(LibC, CallingConvention = CallingConvention.Cdecl, EntryPoint = "__errno")]
++        private static extern unsafe int* __errno();
++
++        public static unsafe int Errno
++            => *(PlatformDetection.OS == OSKind.Android ? __errno() : __errno_location());
+ 
+-        public static unsafe int Errno => *__errno_location();
++        public static long GetPageSize()
++            => Sysconf(PlatformDetection.OS == OSKind.Android
++                ? SysconfName.AndroidPageSize
++                : SysconfName.PageSize);
+ 
+         static Unix()
+         {
+@@ -127,6 +140,7 @@ namespace MonoMod.Core.Interop
+             SemValueMax,
+             SigQueueMax,
+             TimerMax,
++            AndroidPageSize = 0x0027,
+         }
+     }
+ }
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs
+index 001110b..42104d4 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs
+@@ -88,7 +88,7 @@ namespace MonoMod.Core.Platforms
+             {
+                 OSKind.Posix => throw new NotImplementedException(),
+                 OSKind.Linux => new Systems.LinuxSystem(),
+-                OSKind.Android => throw new NotImplementedException(),
++                OSKind.Android => CreateAndroidSystem(),
+                 OSKind.OSX => new Systems.MacOSSystem(),
+                 OSKind.IOS => throw new NotImplementedException(),
+                 OSKind.BSD => throw new NotImplementedException(),
+@@ -96,6 +96,12 @@ namespace MonoMod.Core.Platforms
+                 var kind => throw new PlatformNotSupportedException($"OS kind {kind} not supported"),
+             };
+ 
++        private static ISystem CreateAndroidSystem()
++        {
++            Interop.AndroidNativeLibraryResolver.EnsureRegistered();
++            return new Systems.LinuxSystem();
++        }
++
+         /// <summary>
+         /// Gets the <see cref="IArchitecture"/> for this <see cref="PlatformTriple"/>.
+         /// </summary>
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs
+index d435ccc..c97851a 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs
+@@ -264,7 +264,7 @@ namespace MonoMod.Core.Platforms
+                             {
+                                 from = codeStart;
+                                 fromRw = codeStartRw;
+-                                to = Triple.Runtime.GetMethodHandle(target).GetFunctionPointer();
++                                to = Triple.GetNativeMethodBody(target);
+                             }
+ 
+                             var newDetour = Triple.CreateSimpleDetour(from, to, detourMaxSize: (int)codeSize, fromRw: fromRw);
+@@ -404,7 +404,7 @@ namespace MonoMod.Core.Platforms
+                 Triple.Compile(Source);
+                 var from = Triple.GetNativeMethodBody(Source);
+                 Triple.Compile(realTarget);
+-                var to = Triple.Runtime.GetMethodHandle(realTarget).GetFunctionPointer();
++                var to = Triple.GetNativeMethodBody(realTarget);
+ 
+                 return Triple.CreateSimpleDetour(from, to);
+             }
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs
+index f72c399..b3b36cc 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs
+@@ -6,6 +6,7 @@ using System.Collections.Generic;
+ using System.Linq;
+ using System.Reflection;
+ using System.Reflection.Emit;
++using System.Runtime.InteropServices;
+ using System.Threading;
+ 
+ namespace MonoMod.Core.Platforms.Runtimes
+@@ -342,20 +343,35 @@ namespace MonoMod.Core.Platforms.Runtimes
+             return pinnedHandles.TryGetValue(GetMethodHandle(method), out var pin) ? pin.Pin.Method : method;
+         }
+ 
++        [DllImport("libmonosgen-2.0.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "mono_compile_method")]
++        private static extern IntPtr MonoCompileMethod(IntPtr method);
++
++        private static IntPtr GetCompiledMethodEntryPoint(RuntimeMethodHandle handle)
++        {
++            if (PlatformDetection.OS == OSKind.Android)
++            {
++                var compiled = MonoCompileMethod(handle.Value);
++                if (compiled == IntPtr.Zero)
++                    throw new InvalidOperationException("mono_compile_method returned null for a managed method.");
++                return compiled;
++            }
++
++            return handle.GetFunctionPointer();
++        }
++
+         public IntPtr GetMethodEntryPoint(MethodBase method)
+         {
+             if (pinnedMethods.TryGetValue(method, out var pmp))
+             {
+-                return pmp.Pin.Handle.GetFunctionPointer();
++                return GetCompiledMethodEntryPoint(pmp.Pin.Handle);
+             }
+             var handle = GetMethodHandle(method);
+-            return handle.GetFunctionPointer();
++            return GetCompiledMethodEntryPoint(handle);
+         }
+ 
+         public void Compile(MethodBase method)
+         {
+-            // GetFunctionPointer forces the method to be compiled on Mono
+-            _ = GetMethodHandle(method).GetFunctionPointer();
++            _ = GetCompiledMethodEntryPoint(GetMethodHandle(method));
+         }
+     }
+ }
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs
+index fd70570..374f6f4 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs
+@@ -7,6 +7,8 @@ using System.Collections.Generic;
+ using System.ComponentModel;
+ using System.Diagnostics;
+ using System.Diagnostics.CodeAnalysis;
++using System.Globalization;
++using System.IO;
+ using System.Linq;
+ using System.Reflection;
+ 
+@@ -33,7 +35,7 @@ namespace MonoMod.Core.Platforms.Systems
+ 
+         public LinuxSystem()
+         {
+-            PageSize = (nint)Unix.Sysconf(Unix.SysconfName.PageSize);
++            PageSize = (nint)Unix.GetPageSize();
+             allocator = new MmapPagedMemoryAllocator(PageSize);
+ 
+             switch (PlatformDetection.Architecture)
+@@ -89,11 +91,21 @@ namespace MonoMod.Core.Platforms.Systems
+         public unsafe void PatchData(PatchTargetKind patchKind, IntPtr patchTarget, ReadOnlySpan<byte> data, Span<byte> backup)
+         {
+             // TODO: should this be thread-safe? It definitely is not right now.
++            Unix.Protection? androidOriginalProtection = null;
++            var restoreAndroidProtection = false;
+ 
+-            // Update the protection of this
+-            if (patchKind == PatchTargetKind.Executable)
++            if (PlatformDetection.OS == OSKind.Android)
++            {
++                androidOriginalProtection = GetAndroidProtection(patchTarget);
++                var writableProtection = androidOriginalProtection.Value | Unix.Protection.Write;
++                if (writableProtection != androidOriginalProtection.Value)
++                {
++                    Protect(patchTarget, data.Length, writableProtection);
++                    restoreAndroidProtection = true;
++                }
++            }
++            else if (patchKind == PatchTargetKind.Executable)
+             {
+-                // Because Windows is Windows, we don't actually need to do anything except make sure we're in RWX
+                 ProtectRWX(patchTarget, data.Length);
+             }
+             else
+@@ -101,35 +113,96 @@ namespace MonoMod.Core.Platforms.Systems
+                 ProtectRW(patchTarget, data.Length);
+             }
+ 
+-            var target = new Span<byte>((void*)patchTarget, data.Length);
+-            // now we copy target to backup, then data to target, then flush the instruction cache
+-            _ = target.TryCopyTo(backup);
+-            data.CopyTo(target);
++            try
++            {
++                var target = new Span<byte>((void*)patchTarget, data.Length);
++                _ = target.TryCopyTo(backup);
++                data.CopyTo(target);
++
++                if (patchKind == PatchTargetKind.Executable && PlatformDetection.OS == OSKind.Android)
++                {
++                    FlushInstructionCache(patchTarget, data.Length);
++                }
++            }
++            finally
++            {
++                if (restoreAndroidProtection)
++                {
++                    Protect(patchTarget, data.Length, androidOriginalProtection!.Value);
++                }
++            }
++        }
++
++        private static Unix.Protection GetAndroidProtection(nint address)
++        {
++            var target = (nuint)UntagForSystemCall(address);
++            foreach (var line in File.ReadLines("/proc/self/maps"))
++            {
++                var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
++                if (fields.Length < 2)
++                    continue;
++
++                var separator = fields[0].IndexOf('-');
++                if (separator <= 0
++                    || !nuint.TryParse(fields[0].AsSpan(0, separator), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var start)
++                    || !nuint.TryParse(fields[0].AsSpan(separator + 1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var end)
++                    || target < start
++                    || target >= end)
++                {
++                    continue;
++                }
++
++                var permissions = fields[1];
++                var protection = Unix.Protection.None;
++                if (permissions.Length > 0 && permissions[0] == 'r')
++                    protection |= Unix.Protection.Read;
++                if (permissions.Length > 1 && permissions[1] == 'w')
++                    protection |= Unix.Protection.Write;
++                if (permissions.Length > 2 && permissions[2] == 'x')
++                    protection |= Unix.Protection.Execute;
++                return protection;
++            }
++
++            throw new InvalidOperationException($"Could not find Android memory mapping for 0x{target:x16}.");
+         }
+ 
+         private void RoundToPageBoundary(ref nint addr, ref nint size)
+         {
++            addr = UntagForSystemCall(addr);
+             var newAddr = allocator.RoundDownToPageBoundary(addr);
+             size += addr - newAddr;
+             addr = newAddr;
+         }
+ 
++        private static nint UntagForSystemCall(nint address)
++            => PlatformDetection.OS == OSKind.Android && PlatformDetection.Architecture == ArchitectureKind.Arm64
++                ? (nint)((nuint)address & 0x00ff_ffff_ffff_ffffUL)
++                : address;
++
+         private void ProtectRW(IntPtr addr, nint size)
++            => Protect(addr, size, Unix.Protection.Read | Unix.Protection.Write);
++
++        private void ProtectRWX(IntPtr addr, nint size)
++            => Protect(addr, size, Unix.Protection.Read | Unix.Protection.Write | Unix.Protection.Execute);
++
++        private void Protect(IntPtr addr, nint size, Unix.Protection protection)
+         {
++            var originalAddress = addr;
++            var originalSize = size;
+             RoundToPageBoundary(ref addr, ref size);
+-            if (Unix.Mprotect(addr, (nuint)size, Unix.Protection.Read | Unix.Protection.Write) != 0)
++            if (Unix.Mprotect(addr, (nuint)size, protection) != 0)
+             {
+-                throw new Win32Exception(Unix.Errno);
++                var errno = Unix.Errno;
++                throw new Win32Exception(errno,
++                    $"mprotect({protection}) failed: original=0x{originalAddress:x16}, originalSize={originalSize}, aligned=0x{addr:x16}, alignedSize={size}, pageSize={PageSize}");
+             }
+         }
+ 
+-        private void ProtectRWX(IntPtr addr, nint size)
++        private static void FlushInstructionCache(IntPtr addr, nint size)
+         {
+-            RoundToPageBoundary(ref addr, ref size);
+-            if (Unix.Mprotect(addr, (nuint)size, Unix.Protection.Read | Unix.Protection.Write | Unix.Protection.Execute) != 0)
+-            {
+-                throw new Win32Exception(Unix.Errno);
+-            }
++            var start = UntagForSystemCall(addr);
++            var end = start + size;
++            Unix.JunimoGateClearCache(start, end);
+         }
+ 
+         private sealed class MmapPagedMemoryAllocator : PagedMemoryAllocator
+diff --git a/LocalMonoMod/src/MonoMod.Utils/Interop/Unix.cs b/LocalMonoMod/src/MonoMod.Utils/Interop/Unix.cs
+index 29b76c4..da8ef64 100644
+--- a/LocalMonoMod/src/MonoMod.Utils/Interop/Unix.cs
++++ b/LocalMonoMod/src/MonoMod.Utils/Interop/Unix.cs
+@@ -10,6 +10,8 @@ namespace MonoMod.Utils.Interop
+         Justification = "The attribute doesn't do anything on platforms where this will be used.")]
+     internal unsafe static partial class Unix
+     {
++        // Android library names are mapped by MonoMod.Core.Interop.AndroidNativeLibraryResolver
++        // after ILRepack internalizes MonoMod.Core and MonoMod.Utils into 0Harmony.dll.
+         // If this dllimport decl isn't enough to get the runtime to load the right thing, I give up
+         public const string LibC = "libc";
+         public const string DL1 = "dl";
+diff --git a/global.json b/global.json
+index b24aad6..cdbb589 100644
+--- a/global.json
++++ b/global.json
+@@ -1,6 +1,6 @@
+ {
+   "sdk": {
+-    "version": "10.0.100",
+-    "rollForward": "latestPatch"
++    "version": "9.0.100",
++    "rollForward": "latestFeature"
+   }
+ }

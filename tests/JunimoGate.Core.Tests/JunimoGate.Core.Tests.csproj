@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/TestHarness.cs" Link="TestHarness.cs" />
+    <ProjectReference Include="../../src/JunimoGate.Core/JunimoGate.Core.csproj" />
+  </ItemGroup>
+</Project>

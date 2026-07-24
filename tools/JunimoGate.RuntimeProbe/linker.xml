@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<linker>
+  <assembly fullname="JunimoGate.RuntimeProbe" preserve="all" />
+  <assembly fullname="JunimoGate.RuntimeProbe.Core" preserve="all" />
+  <assembly fullname="JunimoGate.RuntimeProbe.Target" preserve="all" />
+  <assembly fullname="0Harmony" preserve="all" />
+  <assembly fullname="MonoMod.Utils" preserve="all" />
+  <assembly fullname="MonoMod.Backports" preserve="all" />
+  <assembly fullname="MonoMod.ILHelpers" preserve="all" />
+  <assembly fullname="Mono.Cecil" preserve="all" />
+  <!-- MonoMod's Cecil backend emits compatibility references to this facade at runtime. -->
+  <assembly fullname="mscorlib" preserve="all" />
+</linker>

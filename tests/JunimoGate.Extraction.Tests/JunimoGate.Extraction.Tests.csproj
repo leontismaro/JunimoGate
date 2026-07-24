@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/TestHarness.cs" Link="TestHarness.cs" />
+    <PackageReference Include="K4os.Compression.LZ4" Version="1.3.8" />
+    <ProjectReference Include="../../src/JunimoGate.Extraction/JunimoGate.Extraction.csproj" />
+  </ItemGroup>
+</Project>

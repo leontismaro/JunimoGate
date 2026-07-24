@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-android35.0</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>org.junimogate.app</ApplicationId>
+    <ApplicationTitle>JunimoGate</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1.0-dev</ApplicationDisplayVersion>
+    <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
+    <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
+    <ProjectReference Include="../JunimoGate.GameHost/JunimoGate.GameHost.csproj" />
+  </ItemGroup>
+</Project>

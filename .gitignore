@@ -1,0 +1,63 @@
+# Build and test output
+bin/
+obj/
+artifacts/
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.trx
+*.log
+*.dmp
+*.core
+
+# Project-local SDKs, caches, and private inspection data
+.toolchains/
+local-game/
+inspector-output/
+.nuget/
+packages/
+
+# IDE and OS state
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+.DS_Store
+
+# Generated Android/.NET packages and native binaries
+*.apk
+*.aab
+*.aar
+*.nupkg
+*.snupkg
+*.dll
+*.pdb
+*.so
+*.dylib
+
+# Signing material and local environment files
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+local.properties
+
+# Temporary and conflict files
+*.tmp
+*.pyc
+__pycache__/
+*.orig
+*.rej
+*~
+
+# Inspector output manifests
+assemblies-manifest.json
+assembly-inspection.json
+inventory.json

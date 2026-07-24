@@ -1,0 +1,20 @@
+{
+  "solution": {
+    "path": "JunimoGate.sln",
+    "projects": [
+      "src/JunimoGate.Core/JunimoGate.Core.csproj",
+      "src/JunimoGate.Extraction/JunimoGate.Extraction.csproj",
+      "src/JunimoGate.Rewriter/JunimoGate.Rewriter.csproj",
+      "src/JunimoGate.Mods/JunimoGate.Mods.csproj",
+      "tools/JunimoGate.RuntimePack/JunimoGate.RuntimePack.csproj",
+      "tools/JunimoGate.GameInspector/JunimoGate.GameInspector.csproj",
+      "tools/JunimoGate.RuntimeProbe.Target/JunimoGate.RuntimeProbe.Target.csproj",
+      "tools/JunimoGate.RuntimeProbe.Core/JunimoGate.RuntimeProbe.Core.csproj",
+      "tests/JunimoGate.Core.Tests/JunimoGate.Core.Tests.csproj",
+      "tests/JunimoGate.Extraction.Tests/JunimoGate.Extraction.Tests.csproj",
+      "tests/JunimoGate.Rewriter.Tests/JunimoGate.Rewriter.Tests.csproj",
+      "tests/JunimoGate.Mods.Tests/JunimoGate.Mods.Tests.csproj",
+      "tests/JunimoGate.RuntimeProbe.Tests/JunimoGate.RuntimeProbe.Tests.csproj"
+    ]
+  }
+}
