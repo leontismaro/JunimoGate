@@ -22,6 +22,19 @@ class ExpectedArtifact:
     debuggable: bool
     extract_native_libs: bool
     native_libraries_stored: bool
+    query_packages: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class ManifestElement:
+    path: tuple[str, ...]
+    attributes: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ParsedManifest:
+    query_packages: list[str]
+    permissions: list[str]
 
 
 def run(*command: str) -> str:
@@ -59,6 +72,63 @@ def capture_manifest_bool(attribute: str, xmltree: str) -> bool:
     return int(match.group(1), 16) != 0
 
 
+def parse_xmltree_string(raw_value: str) -> str | None:
+    raw_match = re.search(r'\(Raw:\s*"([^"]*)"\)\s*$', raw_value)
+    if raw_match:
+        return raw_match.group(1)
+    string_match = re.match(r'"([^"]*)"', raw_value)
+    return string_match.group(1) if string_match else None
+
+
+def parse_manifest(xmltree: str) -> ParsedManifest:
+    elements: list[ManifestElement] = []
+    stack: list[tuple[int, str]] = []
+    current_attributes: dict[str, str] | None = None
+
+    for line in xmltree.splitlines():
+        element_match = re.match(r"^(\s*)E:\s+([^\s(]+)", line)
+        if element_match:
+            indent = len(element_match.group(1))
+            name = element_match.group(2)
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            stack.append((indent, name))
+            current_attributes = {}
+            elements.append(ManifestElement(tuple(value for _, value in stack), current_attributes))
+            continue
+
+        attribute_match = re.match(r"^(\s*)A:\s+([^\s(=]+)(?:\([^)]*\))?=(.*)$", line)
+        if not attribute_match or current_attributes is None:
+            continue
+        value = parse_xmltree_string(attribute_match.group(3))
+        if value is not None:
+            current_attributes[attribute_match.group(2)] = value
+
+    if not elements or elements[0].path != ("manifest",):
+        raise RuntimeError("Could not parse the manifest element hierarchy from aapt xmltree output.")
+
+    query_packages: list[str] = []
+    permissions: list[str] = []
+    for element in elements:
+        android_name = element.attributes.get("android:name")
+        if android_name is None:
+            continue
+        if element.path == ("manifest", "queries", "package"):
+            query_packages.append(android_name)
+        elif (
+            len(element.path) == 2
+            and element.path[0] == "manifest"
+            and element.path[1].startswith("uses-permission")
+        ):
+            permissions.append(android_name)
+
+    return ParsedManifest(query_packages, permissions)
+
+
+def parse_badging_permissions(badging: str) -> list[str]:
+    return re.findall(r"^uses-permission(?:-sdk-[^:]*)?:\s+name='([^']+)'", badging, re.MULTILINE)
+
+
 def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.Path, expected: ExpectedArtifact) -> dict[str, object]:
     path = root / expected.relative_path
     if not path.is_file():
@@ -77,6 +147,23 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
     activity = capture(r"^launchable-activity: name='([^']+)'", badging, "launchable activity")
     debuggable = bool(re.search(r"^application-debuggable$", badging, re.MULTILINE))
     extract_native_libs = capture_manifest_bool("extractNativeLibs", manifest_tree)
+    manifest = parse_manifest(manifest_tree)
+    badging_permissions = parse_badging_permissions(badging)
+    declared_permissions = sorted(set(manifest.permissions) | set(badging_permissions))
+    broad_storage_permissions = sorted(
+        set(declared_permissions)
+        & {
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.MANAGE_EXTERNAL_STORAGE",
+        }
+    )
+    privacy_sensitive_permissions = sorted(
+        set(declared_permissions)
+        & {
+            "android.permission.READ_PHONE_STATE",
+        }
+    )
 
     with zipfile.ZipFile(path) as archive:
         native_entries = [
@@ -119,8 +206,17 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "nativeLibrariesStored": native_libraries_stored == expected.native_libraries_stored,
         "signatureV2": v2,
         "signatureV3": v3,
+        "manifestPermissionsAgreeWithBadging": sorted(manifest.permissions) == sorted(badging_permissions),
+        "noQueryAllPackages": "android.permission.QUERY_ALL_PACKAGES" not in declared_permissions,
+        "noBroadStoragePermissions": not broad_storage_permissions,
+        "noUnneededPrivacySensitivePermissions": not privacy_sensitive_permissions,
         "noCommercialGamePayload": not commercial_markers,
     }
+    if expected.query_packages is not None:
+        checks["exactGamePackageQueries"] = (
+            sorted(manifest.query_packages) == sorted(expected.query_packages)
+            and len(manifest.query_packages) == len(expected.query_packages)
+        )
     failures = [name for name, passed in checks.items() if not passed]
     if failures:
         raise RuntimeError(f"{expected.name} failed checks: {', '.join(failures)}")
@@ -143,6 +239,14 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "nativeEntryCount": len(native_entries),
         "nativeLibrariesStored": native_libraries_stored,
         "compressedNativeEntries": compressed_native_entries,
+        "manifest": {
+            "queryPackages": manifest.query_packages,
+            "declaredPermissions": declared_permissions,
+            "xmltreeDeclaredPermissions": manifest.permissions,
+            "badgingDeclaredPermissions": badging_permissions,
+            "broadStoragePermissions": broad_storage_permissions,
+            "privacySensitivePermissions": privacy_sensitive_permissions,
+        },
         "signature": {
             "v2": v2,
             "v3": v3,
@@ -188,6 +292,10 @@ def main() -> int:
             True,
             False,
             True,
+            (
+                "com.chucklefish.stardewvalley",
+                "com.chucklefish.stardewvalleysamsung",
+            ),
         ),
         ExpectedArtifact(
             "app-release",
@@ -197,6 +305,10 @@ def main() -> int:
             False,
             False,
             True,
+            (
+                "com.chucklefish.stardewvalley",
+                "com.chucklefish.stardewvalleysamsung",
+            ),
         ),
     ]
 

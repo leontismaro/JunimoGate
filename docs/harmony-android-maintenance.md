@@ -349,7 +349,7 @@ git apply --check harmony-2.4.2-android.patch
 ```text
 patch apply/check
 → source build + package identity
-→ host 37/37（或更新后的总数）
+→ host 68/68（或更新后的总数）
 → Android Debug 全部 hard cases
 → Android Release 全部 hard cases
 → APK static verification

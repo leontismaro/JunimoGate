@@ -7,7 +7,7 @@ namespace JunimoGate.Extraction;
 /// <summary>A deterministic, versioned identity for an extracted and rewritten workspace.</summary>
 public readonly record struct WorkspaceCacheKey
 {
-    private const string CanonicalFormatVersion = "junimogate-workspace-cache-key:v1";
+    private const string CanonicalFormatVersion = "junimogate-workspace-cache-key:v2";
 
     private WorkspaceCacheKey(Sha256Digest digest)
     {
@@ -20,6 +20,7 @@ public readonly record struct WorkspaceCacheKey
         string packageName,
         long longVersionCode,
         string abi,
+        SigningIdentity signingIdentity,
         IEnumerable<Sha256Digest> apkSourceDigests,
         string extractorSchema,
         string rewriterRecipe,
@@ -32,6 +33,7 @@ public readonly record struct WorkspaceCacheKey
         }
 
         RequireText(abi, nameof(abi));
+        ArgumentNullException.ThrowIfNull(signingIdentity);
         RequireText(extractorSchema, nameof(extractorSchema));
         RequireText(rewriterRecipe, nameof(rewriterRecipe));
         RequireText(smapiBuildId, nameof(smapiBuildId));
@@ -58,6 +60,18 @@ public readonly record struct WorkspaceCacheKey
         AppendField(payload, "packageName", packageName);
         AppendField(payload, "longVersionCode", longVersionCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
         AppendField(payload, "abi", abi);
+        AppendField(payload, "currentSignerCount", signingIdentity.CurrentSignerDigests.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        foreach (var signer in signingIdentity.CurrentSignerDigests)
+        {
+            AppendField(payload, "currentSignerSha256", signer.Value);
+        }
+
+        AppendField(payload, "rotationHistoryCount", signingIdentity.RotationHistory.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        foreach (var signer in signingIdentity.RotationHistory)
+        {
+            AppendField(payload, "rotationHistorySha256", signer.Value);
+        }
+
         AppendField(payload, "extractorSchema", extractorSchema);
         AppendField(payload, "rewriterRecipe", rewriterRecipe);
         AppendField(payload, "smapiBuildId", smapiBuildId);
