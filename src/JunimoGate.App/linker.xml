@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<linker>
+  <!-- Game assemblies are supplied dynamically, so static analysis cannot see their MonoGame or bridge API use. -->
+  <assembly fullname="MonoGame.Framework" preserve="all" />
+  <!-- Patched Harmony/Cecil creates Mono-compatible dynamic modules which bind the mscorlib facade at runtime. -->
+  <assembly fullname="mscorlib" preserve="all" />
+  <assembly fullname="JunimoGate.GameHost">
+    <type fullname="JunimoGate.GameHost.GameHostBridge" preserve="all" />
+  </assembly>
+</linker>

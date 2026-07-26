@@ -32,6 +32,52 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 The package's license and source repository remain authoritative for its complete notice text and attribution.
 
+## Mono.Cecil
+
+`src/JunimoGate.Rewriter` and `tests/JunimoGate.Rewriter.Tests` reference the fixed NuGet package **Mono.Cecil 0.11.6** for bounded, metadata-only compatibility inspection and synthetic assembly generation.
+
+- repository: <https://github.com/jbevain/cecil>
+- release tag: `0.11.6`
+- license: MIT
+- copyright: Copyright (c) 2008 - 2015 Jb Evain; Copyright (c) 2008 - 2011 Novell, Inc.
+
+## Public MonoGame Android runtime provider
+
+`JunimoGate.GameHost` references the ignored, reproducibly generated local package `MonoGame.Framework.Android` version `1.0.0-junimogate.f5d8bf.4`. The package is built by [`build/build-monogame-android.sh`](build/build-monogame-android.sh) from public source only; it does not copy the game-carried MonoGame assembly or OpenAL binary from a commercial APK.
+
+- repository: <https://github.com/MonoGame/MonoGame>
+- exact source commit: `f5d8bfbb4ac9847540b3c898e6237104ee98c149`
+- target: `net9.0-android35.0`
+- assembly identity: `MonoGame.Framework, Version=1.0.0.0`
+- source license: Microsoft Public License (Ms-PL), with separately identified MIT terms for Mono.Xna-derived portions in the upstream license
+- tracked complete source license: [`licenses/MonoGame-f5d8bf.txt`](licenses/MonoGame-f5d8bf.txt)
+- generated package and provenance: ignored `artifacts/nuget/` and `artifacts/build-environment/monogame-android-build.json`
+
+The exact public commit was identified from the installed game's assembly informational-version metadata. JunimoGate independently rebuilds it and verifies that its bounded public/protected API surface and every MonoGame type/member actually referenced by the validated game payload are compatible. The public provider is packaged intentionally; commercial `StardewValley.dll`, game Content, game AOT images, and game runtime libraries remain prohibited.
+
+### MonoGame.Dependencies / OpenAL Soft
+
+The pinned public dependency archive is:
+
+- repository: <https://github.com/ConcernedApe/MonoGame.Dependencies>
+- commit: `417b05a7529882ef90304e91ad0ac55c7f78cf94`
+
+Its `openal-soft/README.txt` states that the included OpenAL library was built from `https://github.com/KonajuGames/openal-soft` and is based on official OpenAL Soft 1.16.0. The dependency archive does not identify the exact fork source commit used for that binary. The official OpenAL Soft 1.16.0 `COPYING` text is the GNU Library General Public License Version 2, June 1991:
+
+- authoritative tag: <https://github.com/kcat/openal-soft/tree/openal-soft-1.16.0>
+- tracked license text: [`licenses/OpenAL-Soft-1.16.0-COPYING.txt`](licenses/OpenAL-Soft-1.16.0-COPYING.txt)
+
+The exact public ARM64 OpenAL binary is hash-pinned by the build and Android artifact verifiers. Before public distribution, JunimoGate must additionally establish and retain the exact corresponding OpenAL fork source commit/source offer and complete GNU Library GPL v2 compliance. This remains an M10 release blocker; the current build is for internal/personal sideload validation.
+
+### StbImageSharp and StbImageWriteSharp
+
+The public MonoGame source build compiles the following pinned StbSharp source trees:
+
+- `StbSharp/StbImageSharp@8a8cbdb30cad1268a3b38fd80f15de8d95367c7c`
+- `StbSharp/StbImageWriteSharp@3aede22e4d8456c4724c83eb72938ebf6ec77b8a`
+
+Each pinned repository README states that the software is public domain. The tracked notice is [`licenses/StbSharp-PUBLIC-DOMAIN.txt`](licenses/StbSharp-PUBLIC-DOMAIN.txt).
+
 ## RuntimeProbe patching and dynamic-method dependencies
 
 `tools/JunimoGate.RuntimeProbe.Core` uses the following fixed NuGet dependencies to test the stock Android runtime. These dependencies are test/probe infrastructure; their licenses do not apply MIT to JunimoGate as a whole.
@@ -57,12 +103,6 @@ The package's license and source repository remain authoritative for its complet
   - package repository commit: `a1b82852b2574742776af08818487b90b0bfab93`
   - license: MIT
   - copyright: Copyright (c) 2024 0x0ade, DaNike
-- **Mono.Cecil 0.11.6**
-  - repository: <https://github.com/jbevain/cecil>
-  - release tag: `0.11.6`
-  - license: MIT
-  - copyright: Copyright (c) 2008 - 2015 Jb Evain; Copyright (c) 2008 - 2011 Novell, Inc.
-
 ## JunimoGate ARM64 instruction-cache helper
 
 `native/JunimoGate.CacheFlush/clear_cache.S` is original JunimoGate glue implementing the standard ARMv8-A cache-maintenance sequence required after patching Mono JIT instructions. It is built with the pinned Zig 0.14.1 compiler from `build/cacheflush-versions.sh` and has no libc or NDK dependency. Its conservative `dc cvau` / `ic ivau` sequence was informed by the public Android/compiler-rt AArch64 `__clear_cache` algorithm; no compiler-rt source file or binary is copied into the repository.

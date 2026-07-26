@@ -27,7 +27,7 @@ public static class AndroidPlatformBoundary
     }
 
     /// <summary>Prepares a live discovery candidate beneath the application's fixed private runtime root.</summary>
-    public static ValueTask<WorkspacePreparationResult> PrepareGameWorkspaceAsync(
+    public static async ValueTask<WorkspacePreparationResult> PrepareGameWorkspaceAsync(
         Context context,
         GameInstallationCandidate candidate,
         IProgress<WorkspaceProgressEvent>? progress = null,
@@ -43,11 +43,8 @@ public static class AndroidPlatformBoundary
         }
 
         var safeContext = context.ApplicationContext ?? context;
-        var filesPath = safeContext.FilesDir?.AbsolutePath;
-        if (string.IsNullOrWhiteSpace(filesPath))
-        {
-            throw new IOException("The application private files directory is unavailable.");
-        }
+        await AndroidPrivateStorage.EnsureMigratedAsync(safeContext, cancellationToken).ConfigureAwait(false);
+        var runtimeRoot = AndroidPrivateStorage.GetRuntimeRoot(safeContext);
 
         var options = new WorkspacePreparationOptions
         {
@@ -58,11 +55,11 @@ public static class AndroidPlatformBoundary
             Progress = progress,
         };
         var request = new WorkspacePreparationRequest(
-            Path.Combine(filesPath, "runtime"),
+            runtimeRoot,
             candidate,
             options);
         var revalidator = new AndroidPackageWorkspaceCandidateRevalidator(safeContext, packageName);
         var preparer = new GameWorkspacePreparer(revalidator);
-        return preparer.PrepareAsync(request, cancellationToken);
+        return await preparer.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -11,10 +11,34 @@
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
     <SelfContained>true</SelfContained>
+    <AndroidUseSharedRuntime>false</AndroidUseSharedRuntime>
+    <UseInterpreter>false</UseInterpreter>
+    <AndroidUseInterpreter>false</AndroidUseInterpreter>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidUseAssemblyStore>false</AndroidUseAssemblyStore>
+    <AndroidEnableAssemblyCompression>false</AndroidEnableAssemblyCompression>
+    <!-- Dynamically loaded game assemblies reference framework/Android APIs invisible to the trimmer. -->
+    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
     <ProjectReference Include="../JunimoGate.GameHost/JunimoGate.GameHost.csproj" />
+    <TrimmerRootDescriptor Include="linker.xml"
+                           Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' == 'true'" />
   </ItemGroup>
+  <Target Name="ValidateGameHostExecutionMode" BeforeTargets="Build">
+    <Error Condition="'$(UseInterpreter)' != 'false'"
+           Text="JunimoGate App must use stock Mono JIT with UseInterpreter=false for GameHost." />
+    <Error Condition="'$(AndroidUseInterpreter)' != 'false'"
+           Text="JunimoGate App must use stock Mono JIT with AndroidUseInterpreter=false for GameHost." />
+    <Error Condition="'$(RunAOTCompilation)' != 'false'"
+           Text="JunimoGate App must not AOT-compile the dynamically supplied game workspace." />
+    <Error Condition="'$(AndroidUseAssemblyStore)' != 'false'"
+           Text="JunimoGate App must use AndroidUseAssemblyStore=false so public runtime providers remain independently verifiable in the final APK." />
+    <Error Condition="'$(AndroidEnableAssemblyCompression)' != 'false'"
+           Text="JunimoGate App must use AndroidEnableAssemblyCompression=false so public managed provider payload hashes are directly verifiable." />
+    <Error Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' != 'false'"
+           Text="JunimoGate App Release must remain untrimmed while dynamically loaded game assemblies have no complete trimmer dependency descriptor." />
+  </Target>
 </Project>

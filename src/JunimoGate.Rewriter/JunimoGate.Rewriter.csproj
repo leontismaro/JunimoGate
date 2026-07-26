@@ -3,6 +3,8 @@
     <TargetFramework>net9.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../JunimoGate.Core/JunimoGate.Core.csproj" />
+    <ProjectReference Include="../JunimoGate.Extraction/JunimoGate.Extraction.csproj" />
   </ItemGroup>
 </Project>

@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import re
+import struct
 import subprocess
 import tempfile
 import zipfile
@@ -23,6 +24,8 @@ class ExpectedArtifact:
     extract_native_libs: bool
     native_libraries_stored: bool
     query_packages: tuple[str, ...] | None = None
+    public_monogame_payload_sha256: str | None = None
+    public_openal_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,62 @@ def parse_badging_permissions(badging: str) -> list[str]:
     return re.findall(r"^uses-permission(?:-sdk-[^:]*)?:\s+name='([^']+)'", badging, re.MULTILINE)
 
 
+def read_elf64_aarch64_section(image: bytes, section_name: str) -> bytes:
+    if (
+        len(image) < 64
+        or image[:4] != b"\x7fELF"
+        or image[4] != 2
+        or image[5] != 1
+        or image[6] != 1
+        or struct.unpack_from("<H", image, 18)[0] != 183
+        or struct.unpack_from("<I", image, 20)[0] != 1
+    ):
+        raise RuntimeError("Managed provider wrapper is not a supported ELF64 little-endian AArch64 image.")
+
+    section_offset = struct.unpack_from("<Q", image, 40)[0]
+    section_entry_size = struct.unpack_from("<H", image, 58)[0]
+    section_count = struct.unpack_from("<H", image, 60)[0]
+    string_table_index = struct.unpack_from("<H", image, 62)[0]
+    if (
+        section_entry_size < 64
+        or section_count < 1
+        or section_count > 4096
+        or string_table_index >= section_count
+        or section_offset > len(image)
+        or section_count * section_entry_size > len(image) - section_offset
+    ):
+        raise RuntimeError("Managed provider ELF section metadata is invalid or exceeds bounds.")
+
+    def section_header(index: int) -> tuple[int, int, int]:
+        offset = section_offset + index * section_entry_size
+        return (
+            struct.unpack_from("<I", image, offset)[0],
+            struct.unpack_from("<Q", image, offset + 24)[0],
+            struct.unpack_from("<Q", image, offset + 32)[0],
+        )
+
+    _, names_offset, names_size = section_header(string_table_index)
+    if names_offset > len(image) or names_size > len(image) - names_offset:
+        raise RuntimeError("Managed provider ELF section-name table is out of bounds.")
+    names = image[names_offset : names_offset + names_size]
+
+    for index in range(section_count):
+        name_offset, payload_offset, payload_size = section_header(index)
+        if name_offset >= len(names):
+            raise RuntimeError("Managed provider ELF section name is out of bounds.")
+        terminator = names.find(b"\0", name_offset)
+        if terminator < 0:
+            raise RuntimeError("Managed provider ELF section name is unterminated.")
+        name = names[name_offset:terminator].decode("ascii", errors="strict")
+        if name != section_name:
+            continue
+        if payload_offset > len(image) or payload_size > len(image) - payload_offset:
+            raise RuntimeError("Managed provider ELF payload section is out of bounds.")
+        return image[payload_offset : payload_offset + payload_size]
+
+    raise RuntimeError(f"Managed provider ELF does not contain the required {section_name!r} section.")
+
+
 def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.Path, expected: ExpectedArtifact) -> dict[str, object]:
     path = root / expected.relative_path
     if not path.is_file():
@@ -178,10 +237,53 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
                 if len(parts := entry.filename.split("/")) >= 3
             }
         )
-        commercial_markers = [
+        archive_names = archive.namelist()
+        game_aot_markers = [
             name
-            for name in archive.namelist()
-            if any(marker in name.casefold() for marker in ("stardewvalley.dll", "assets/content/", "libaot-stardewvalley"))
+            for name in archive_names
+            if pathlib.PurePosixPath(name).name.casefold().startswith("libaot-")
+        ]
+        mono_game_entries = [
+            name for name in archive_names if "monogame.framework.dll" in name.casefold()
+        ]
+        expected_mono_game_entry = "lib/arm64-v8a/lib_MonoGame.Framework.dll.so"
+        public_monogame_payload_sha256 = None
+        if mono_game_entries == [expected_mono_game_entry]:
+            mono_game_elf = archive.read(expected_mono_game_entry)
+            mono_game_payload = read_elf64_aarch64_section(mono_game_elf, "payload")
+            if not mono_game_payload.startswith(b"MZ"):
+                raise RuntimeError("The public MonoGame provider payload is not a managed PE image.")
+            public_monogame_payload_sha256 = hashlib.sha256(mono_game_payload).hexdigest()
+
+        expected_openal_entry = "lib/arm64-v8a/libopenal32.so"
+        openal_entries = [
+            name
+            for name in archive_names
+            if pathlib.PurePosixPath(name).name.casefold() == "libopenal32.so"
+        ]
+        public_openal_sha256 = None
+        if openal_entries == [expected_openal_entry]:
+            public_openal_sha256 = hashlib.sha256(archive.read(expected_openal_entry)).hexdigest()
+
+        mono_game_provider_valid = (
+            public_monogame_payload_sha256 == expected.public_monogame_payload_sha256
+            if expected.public_monogame_payload_sha256 is not None
+            else not mono_game_entries
+        )
+        openal_provider_valid = (
+            public_openal_sha256 == expected.public_openal_sha256
+            if expected.public_openal_sha256 is not None
+            else not openal_entries
+        )
+        prohibited_game_payload_markers = [
+            name
+            for name in archive_names
+            if (
+                "stardewvalley.dll" in name.casefold()
+                or "assets/content/" in name.casefold()
+                or name in game_aot_markers
+                or ("monogame.framework.dll" in name.casefold() and not mono_game_provider_valid)
+            )
         ]
         native_libraries_stored = bool(native_entries) and all(
             entry.compress_type == zipfile.ZIP_STORED for entry in native_entries
@@ -210,7 +312,10 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "noQueryAllPackages": "android.permission.QUERY_ALL_PACKAGES" not in declared_permissions,
         "noBroadStoragePermissions": not broad_storage_permissions,
         "noUnneededPrivacySensitivePermissions": not privacy_sensitive_permissions,
-        "noCommercialGamePayload": not commercial_markers,
+        "noCommercialGamePayload": not prohibited_game_payload_markers,
+        "noGameAotPayload": not game_aot_markers,
+        "publicMonoGameProvider": mono_game_provider_valid,
+        "publicOpenAlProvider": openal_provider_valid,
     }
     if expected.query_packages is not None:
         checks["exactGamePackageQueries"] = (
@@ -239,6 +344,12 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "nativeEntryCount": len(native_entries),
         "nativeLibrariesStored": native_libraries_stored,
         "compressedNativeEntries": compressed_native_entries,
+        "publicRuntimeProviders": {
+            "monoGameEntry": mono_game_entries[0] if len(mono_game_entries) == 1 else None,
+            "monoGamePayloadSha256": public_monogame_payload_sha256,
+            "openAlEntry": openal_entries[0] if len(openal_entries) == 1 else None,
+            "openAlSha256": public_openal_sha256,
+        },
         "manifest": {
             "queryPackages": manifest.query_packages,
             "declaredPermissions": declared_permissions,
@@ -296,6 +407,8 @@ def main() -> int:
                 "com.chucklefish.stardewvalley",
                 "com.chucklefish.stardewvalleysamsung",
             ),
+            "33a406a56f43f74d61a155645483ade9ec698a19b19884ce10462068de93427c",
+            "c972352d7f72966ad3b05be42a425925e8d28efd88a6d0f0e726f6b1cf4bb6d0",
         ),
         ExpectedArtifact(
             "app-release",
@@ -309,6 +422,8 @@ def main() -> int:
                 "com.chucklefish.stardewvalley",
                 "com.chucklefish.stardewvalleysamsung",
             ),
+            "33a406a56f43f74d61a155645483ade9ec698a19b19884ce10462068de93427c",
+            "c972352d7f72966ad3b05be42a425925e8d28efd88a6d0f0e726f6b1cf4bb6d0",
         ),
     ]
 

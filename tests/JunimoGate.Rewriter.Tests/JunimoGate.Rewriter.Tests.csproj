@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Shared/TestHarness.cs" Link="TestHarness.cs" />
+    <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../../src/JunimoGate.Rewriter/JunimoGate.Rewriter.csproj" />
   </ItemGroup>
 </Project>

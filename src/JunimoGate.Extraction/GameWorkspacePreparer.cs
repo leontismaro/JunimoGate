@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using JunimoGate.Core;
 
 namespace JunimoGate.Extraction;
@@ -11,25 +10,7 @@ namespace JunimoGate.Extraction;
 /// <summary>Builds and activates immutable, platform-neutral game workspaces without loading game assemblies.</summary>
 public sealed class GameWorkspacePreparer
 {
-    private const string SourceManifestFileName = "source-manifest.json";
-    private const string ExtractionManifestFileName = "extraction-manifest.json";
-    private const string RewriteManifestFileName = "rewrite-manifest.json";
-    private const string StateFileName = "workspace-state.json";
-    private const string StateFormat = "junimogate-workspace-state";
-    private const string StateSchema = "v1";
-    private const string SourceManifestFormat = "junimogate-source-manifest";
-    private const string ExtractionManifestFormat = "junimogate-extraction-manifest";
-    private const string RewriteManifestFormat = "junimogate-rewrite-manifest";
-    private const string RewriteStatusNotApplied = "not-applied";
-
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> RootLocks = new(StringComparer.Ordinal);
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = false,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        WriteIndented = true,
-    };
 
     private readonly IWorkspaceCandidateRevalidator revalidator;
     private readonly StrictContentExtractor contentExtractor;
@@ -364,7 +345,7 @@ public sealed class GameWorkspacePreparer
             }
 
             outputs = outputs.OrderBy(static output => output.RelativePath, StringComparer.Ordinal).ToList();
-            RequireOutputs(outputs);
+            WorkspaceManifestValidator.RequireOutputs(outputs);
             var statistics = new WorkspaceExtractionStatistics(
                 outputs.Count(static output => output.Kind == "content"),
                 outputs.Where(static output => output.Kind == "content").Sum(static output => output.Size),
@@ -374,7 +355,7 @@ public sealed class GameWorkspacePreparer
             Report(request, WorkspaceProgressStage.WritingManifests, "Writing workspace manifests.");
             var sourceManifest = CreateSourceManifest(request, keyText);
             var extractionManifest = new WorkspaceExtractionManifest(
-                ExtractionManifestFormat,
+                WorkspaceManifestConstants.ExtractionManifestFormat,
                 request.Options.ManifestSchema,
                 keyText,
                 request.Options.ExtractorSchema,
@@ -383,14 +364,14 @@ public sealed class GameWorkspacePreparer
                 outputs,
                 statistics);
             var rewriteManifest = new WorkspaceRewriteManifest(
-                RewriteManifestFormat,
+                WorkspaceManifestConstants.RewriteManifestFormat,
                 request.Options.ManifestSchema,
                 keyText,
                 request.Options.RewriterRecipe,
-                RewriteStatusNotApplied);
-            await WriteJsonFileAsync(Path.Combine(stagingPath, SourceManifestFileName), sourceManifest, cancellationToken).ConfigureAwait(false);
-            await WriteJsonFileAsync(Path.Combine(stagingPath, ExtractionManifestFileName), extractionManifest, cancellationToken).ConfigureAwait(false);
-            await WriteJsonFileAsync(Path.Combine(stagingPath, RewriteManifestFileName), rewriteManifest, cancellationToken).ConfigureAwait(false);
+                WorkspaceManifestConstants.RewriteStatusNotApplied);
+            await WriteJsonFileAsync(Path.Combine(stagingPath, WorkspaceManifestConstants.SourceManifestFileName), sourceManifest, cancellationToken).ConfigureAwait(false);
+            await WriteJsonFileAsync(Path.Combine(stagingPath, WorkspaceManifestConstants.ExtractionManifestFileName), extractionManifest, cancellationToken).ConfigureAwait(false);
+            await WriteJsonFileAsync(Path.Combine(stagingPath, WorkspaceManifestConstants.RewriteManifestFileName), rewriteManifest, cancellationToken).ConfigureAwait(false);
 
             Report(request, WorkspaceProgressStage.ValidatingOutputs, "Validating completed workspace outputs.");
             var validation = await ValidateWorkspaceAsync(stagingPath, keyText, request, cancellationToken).ConfigureAwait(false);
@@ -410,26 +391,8 @@ public sealed class GameWorkspacePreparer
         }
     }
 
-    private static WorkspaceSourceManifest CreateSourceManifest(WorkspacePreparationRequest request, string keyText)
-    {
-        var installation = request.Candidate.Installation;
-        return new WorkspaceSourceManifest(
-            SourceManifestFormat,
-            request.Options.ManifestSchema,
-            keyText,
-            installation.PackageName,
-            installation.VersionName,
-            installation.LongVersionCode,
-            installation.SelectedAbi,
-            new WorkspaceSignerManifest(
-                installation.SigningIdentity.CurrentSignerDigests.Select(static digest => digest.Value).ToArray(),
-                installation.SigningIdentity.RotationHistory.Select(static digest => digest.Value).ToArray()),
-            installation.ApkSources.Select(static source => new WorkspaceSourceManifestEntry(
-                source.Label,
-                source.SplitName,
-                source.Digest.Value,
-                source.Size)).ToArray());
-    }
+    private static WorkspaceSourceManifest CreateSourceManifest(WorkspacePreparationRequest request, string keyText) =>
+        WorkspaceManifestValidator.CreateSourceManifest(request.Candidate, keyText, request.Options.ManifestSchema);
 
     private static async ValueTask<CacheValidation> ValidateWorkspaceAsync(
         string workspacePath,
@@ -437,194 +400,35 @@ public sealed class GameWorkspacePreparer
         WorkspacePreparationRequest request,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var sourceManifest = await ReadJsonFileAsync<WorkspaceSourceManifest>(
-                Path.Combine(workspacePath, SourceManifestFileName), cancellationToken).ConfigureAwait(false);
-            var extractionManifest = await ReadJsonFileAsync<WorkspaceExtractionManifest>(
-                Path.Combine(workspacePath, ExtractionManifestFileName), cancellationToken).ConfigureAwait(false);
-            var rewriteManifest = await ReadRewriteManifestAsync(
-                Path.Combine(workspacePath, RewriteManifestFileName), cancellationToken).ConfigureAwait(false);
-            if (sourceManifest is null || extractionManifest is null || rewriteManifest is null ||
-                !SourceManifestMatches(sourceManifest, CreateSourceManifest(request, keyText)) ||
-                extractionManifest.Format != ExtractionManifestFormat ||
-                extractionManifest.Schema != request.Options.ManifestSchema ||
-                extractionManifest.CacheKey != keyText ||
-                extractionManifest.ExtractorSchema != request.Options.ExtractorSchema ||
-                extractionManifest.RewriterRecipe != request.Options.RewriterRecipe ||
-                extractionManifest.SmapiBuildId != request.Options.SmapiBuildId ||
-                extractionManifest.Files is null || extractionManifest.Statistics is null ||
-                rewriteManifest.Format != RewriteManifestFormat ||
-                rewriteManifest.Schema != request.Options.ManifestSchema ||
-                rewriteManifest.CacheKey != keyText ||
-                rewriteManifest.Recipe != request.Options.RewriterRecipe ||
-                rewriteManifest.Status != RewriteStatusNotApplied)
-            {
-                return CacheValidation.Invalid;
-            }
-
-            var expected = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var file in extractionManifest.Files)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!IsValidManifestFile(file, request) || !expected.Add(file.RelativePath) ||
-                    file.Size < 0 || !Sha256Digest.TryParse(file.Sha256, out _))
-                {
-                    return CacheValidation.Invalid;
-                }
-
-                var fullPath = Path.Combine(workspacePath, file.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                var info = new FileInfo(fullPath);
-                if (!info.Exists || info.Length != file.Size)
-                {
-                    return CacheValidation.Invalid;
-                }
-
-                await using var stream = new FileStream(
-                    fullPath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read,
-                    128 * 1024,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
-                var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
-                if (!hash.Equals(file.Sha256, StringComparison.Ordinal))
-                {
-                    return CacheValidation.Invalid;
-                }
-            }
-
-            var actual = Directory.EnumerateFiles(workspacePath, "*", SearchOption.AllDirectories)
-                .Select(path => Path.GetRelativePath(workspacePath, path).Replace(Path.DirectorySeparatorChar, '/'))
-                .Where(path => path != SourceManifestFileName &&
-                    path != ExtractionManifestFileName &&
-                    path != RewriteManifestFileName)
-                .ToHashSet(StringComparer.Ordinal);
-            if (!actual.SetEquals(expected))
-            {
-                return CacheValidation.Invalid;
-            }
-
-            RequireOutputs(extractionManifest.Files);
-            var computedStatistics = new WorkspaceExtractionStatistics(
-                extractionManifest.Files.Count(static output => output.Kind == "content"),
-                extractionManifest.Files.Where(static output => output.Kind == "content").Sum(static output => output.Size),
-                extractionManifest.Files.Count(static output => output.Kind == "assembly"),
-                extractionManifest.Files.Where(static output => output.Kind == "assembly").Sum(static output => output.Size));
-            if (computedStatistics != extractionManifest.Statistics)
-            {
-                return CacheValidation.Invalid;
-            }
-
-            var totalBytes = Directory.EnumerateFiles(workspacePath, "*", SearchOption.AllDirectories)
-                .Sum(static path => new FileInfo(path).Length);
-            return new CacheValidation(true, extractionManifest.Statistics, totalBytes);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or WorkspacePreparationException)
-        {
-            return CacheValidation.Invalid;
-        }
+        var validation = await WorkspaceManifestValidator.ValidateAsync(
+            workspacePath,
+            keyText,
+            request.Candidate,
+            new WorkspaceManifestValidationExpectations(
+                request.Options.ManifestSchema,
+                request.Options.ExtractorSchema,
+                request.Options.RewriterRecipe,
+                WorkspaceManifestConstants.RewriteStatusNotApplied,
+                request.Options.SmapiBuildId),
+            cancellationToken).ConfigureAwait(false);
+        return validation.IsValid
+            ? new CacheValidation(true, validation.ExtractionManifest!.Statistics, validation.TotalBytes)
+            : CacheValidation.Invalid;
     }
 
-    private static bool SourceManifestMatches(WorkspaceSourceManifest actual, WorkspaceSourceManifest expected) =>
-        actual.Format == expected.Format &&
-        actual.Schema == expected.Schema &&
-        actual.CacheKey == expected.CacheKey &&
-        actual.PackageName == expected.PackageName &&
-        actual.VersionName == expected.VersionName &&
-        actual.LongVersionCode == expected.LongVersionCode &&
-        actual.Abi == expected.Abi &&
-        actual.Signers is not null &&
-        actual.Signers.Current.SequenceEqual(expected.Signers.Current, StringComparer.Ordinal) &&
-        actual.Signers.History.SequenceEqual(expected.Signers.History, StringComparer.Ordinal) &&
-        actual.Sources is not null &&
-        actual.Sources.SequenceEqual(expected.Sources);
-
-    private static void RequireOutputs(IReadOnlyList<WorkspaceExtractedFileManifest> outputs)
-    {
-        if (!outputs.Any(static output => output.Kind == "content") ||
-            !outputs.Any(static output => output.Kind == "assembly" && Path.GetFileName(output.RelativePath).Equals("StardewValley.dll", StringComparison.OrdinalIgnoreCase)) ||
-            !outputs.Any(static output => output.Kind == "assembly" && Path.GetFileName(output.RelativePath).Equals("MonoGame.Framework.dll", StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new WorkspacePreparationException(
-                WorkspaceErrorCodes.RequiredOutputMissing,
-                "The workspace is missing required game assemblies or Content files.");
-        }
-    }
-
-    private static bool IsValidManifestFile(
-        WorkspaceExtractedFileManifest file,
-        WorkspacePreparationRequest request)
-    {
-        if (file is null || !IsSafeWorkspaceRelativePath(file.RelativePath) ||
-            string.IsNullOrWhiteSpace(file.SourceLabel) || string.IsNullOrWhiteSpace(file.SourceEntry) ||
-            !IsSafeWorkspaceRelativePath(file.SourceEntry))
-        {
-            return false;
-        }
-
-        var inventory = request.Candidate.SourceInventories.FirstOrDefault(source => source.SourceLabel == file.SourceLabel);
-        if (inventory is null)
-        {
-            return false;
-        }
-
-        if (file.Kind == "content")
-        {
-            return file.RelativePath.StartsWith("Content/", StringComparison.Ordinal) &&
-                file.SourceEntry.StartsWith("assets/Content/", StringComparison.Ordinal) &&
-                inventory.Roles.Contains(ApkSourceRoleNames.GameContent, StringComparer.Ordinal);
-        }
-
-        return file.Kind == "assembly" &&
-            file.RelativePath.StartsWith("assemblies/", StringComparison.Ordinal) &&
-            AssemblyStoreApkPath.TryParse(file.SourceEntry, out var abi) &&
-            abi.Equals(request.Candidate.Installation.SelectedAbi, StringComparison.OrdinalIgnoreCase) &&
-            inventory.Roles.Contains(ApkSourceRoleNames.ModernAssemblyBlob, StringComparer.Ordinal);
-    }
-
-    private static bool IsSafeWorkspaceRelativePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || path.IndexOfAny(['\\', '\0', '<', '>', ':', '"', '|', '?', '*']) >= 0 ||
-            path.StartsWith("/", StringComparison.Ordinal) || path.Any(char.IsControl))
-        {
-            return false;
-        }
-
-        var segments = path.Split('/', StringSplitOptions.None);
-        return segments.Length >= 2 && segments.All(static segment =>
-            segment.Length > 0 && segment is not "." and not ".." &&
-            !segment.EndsWith(' ') && !segment.EndsWith('.'));
-    }
-
-    private static bool IdentityEquals(GameInstallationCandidate original, GameInstallationCandidate fresh)
-    {
-        var left = original.Installation;
-        var right = fresh.Installation;
-        return left.PackageName == right.PackageName &&
-            left.VersionName == right.VersionName &&
-            left.LongVersionCode == right.LongVersionCode &&
-            left.SelectedAbi == right.SelectedAbi &&
-            left.SigningIdentity.CurrentSignerDigests.SequenceEqual(right.SigningIdentity.CurrentSignerDigests) &&
-            left.SigningIdentity.RotationHistory.SequenceEqual(right.SigningIdentity.RotationHistory) &&
-            left.ApkSources.Select(static source => (source.Label, source.SplitName, source.Digest, source.Size))
-                .SequenceEqual(right.ApkSources.Select(static source => (source.Label, source.SplitName, source.Digest, source.Size)));
-    }
+    private static bool IdentityEquals(GameInstallationCandidate original, GameInstallationCandidate fresh) =>
+        WorkspaceManifestValidator.CandidateIdentityEquals(original, fresh, includeSourcePaths: false);
 
     private static async ValueTask ActivateAsync(string root, string keyText, CancellationToken cancellationToken)
     {
-        var statePath = Path.Combine(root, StateFileName);
+        var statePath = Path.Combine(root, WorkspaceManifestConstants.StateFileName);
         WorkspaceState? current = null;
         if (File.Exists(statePath))
         {
             try
             {
-                current = await ReadJsonFileAsync<WorkspaceState>(statePath, cancellationToken).ConfigureAwait(false);
-                if (current is null || current.Format != StateFormat || current.Schema != StateSchema)
+                current = await WorkspaceJson.ReadBoundedAsync<WorkspaceState>(statePath, 64 * 1024, cancellationToken).ConfigureAwait(false);
+                if (current is null || current.Format != WorkspaceManifestConstants.StateFormat || current.Schema != WorkspaceManifestConstants.StateSchema)
                 {
                     throw new JsonException("Workspace state identity is invalid.");
                 }
@@ -642,11 +446,15 @@ public sealed class GameWorkspacePreparer
             return;
         }
 
-        var next = new WorkspaceState(StateFormat, StateSchema, keyText, current?.ActiveKey);
-        var tempPath = Path.Combine(root, $".{StateFileName}.{Guid.NewGuid():N}.tmp");
+        var next = new WorkspaceState(
+            WorkspaceManifestConstants.StateFormat,
+            WorkspaceManifestConstants.StateSchema,
+            keyText,
+            current?.ActiveKey);
+        var tempPath = Path.Combine(root, $".{WorkspaceManifestConstants.StateFileName}.{Guid.NewGuid():N}.tmp");
         try
         {
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(next, JsonOptions);
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(next, WorkspaceJson.Options);
             await using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
@@ -673,7 +481,7 @@ public sealed class GameWorkspacePreparer
 
     private static async ValueTask WriteJsonFileAsync<T>(string path, T value, CancellationToken cancellationToken)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, WorkspaceJson.Options);
         await using var stream = new FileStream(
             path,
             FileMode.CreateNew,
@@ -683,45 +491,6 @@ public sealed class GameWorkspacePreparer
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<T?> ReadJsonFileAsync<T>(string path, CancellationToken cancellationToken)
-    {
-        await using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            64 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<WorkspaceRewriteManifest?> ReadRewriteManifestAsync(
-        string path,
-        CancellationToken cancellationToken)
-    {
-        var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        using var document = JsonDocument.Parse(bytes);
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var expectedFields = new HashSet<string>(
-            ["format", "schema", "cacheKey", "recipe", "status"],
-            StringComparer.Ordinal);
-        var actualFields = document.RootElement.EnumerateObject()
-            .Select(static property => property.Name)
-            .ToArray();
-        if (actualFields.Length != expectedFields.Count ||
-            actualFields.Distinct(StringComparer.Ordinal).Count() != expectedFields.Count ||
-            !actualFields.ToHashSet(StringComparer.Ordinal).SetEquals(expectedFields))
-        {
-            return null;
-        }
-
-        return JsonSerializer.Deserialize<WorkspaceRewriteManifest>(bytes, JsonOptions);
     }
 
     private static async ValueTask<RootLease> AcquireRootLeaseAsync(string root, CancellationToken cancellationToken)

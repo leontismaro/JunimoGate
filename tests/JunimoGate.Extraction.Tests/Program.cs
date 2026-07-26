@@ -947,6 +947,443 @@ return TestHarness.Run(
         {
             Directory.Delete(directory, recursive: true);
         }
+    }),
+    ("M5 Gate 1 validates the active workspace into an immutable execution plan", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-success", "1.0", [1, 2, 3]);
+            var root = Path.Combine(directory, "workspace-root");
+            var prepared = Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            TestHarness.Equal(WorkspacePreparationStatus.Built, prepared.Status);
+            var revalidator = new SequenceCandidateRevalidator(candidate);
+            var result = ValidateExecution(new WorkspaceExecutionValidator(revalidator), root, candidate);
+
+            TestHarness.Equal(WorkspaceExecutionValidationStatus.Validated, result.Status);
+            TestHarness.True(result.Plan is not null);
+            TestHarness.Equal(prepared.WorkspaceKey, result.Plan!.WorkspaceKey);
+            TestHarness.Equal(prepared.WorkspacePath, result.Plan.WorkspacePath);
+            TestHarness.Equal(candidate.Installation.PackageName, result.Plan.PackageName);
+            TestHarness.Equal(candidate.Installation.VersionName, result.Plan.VersionName);
+            TestHarness.Equal(candidate.Installation.LongVersionCode, result.Plan.LongVersionCode);
+            TestHarness.Equal(candidate.Installation.SelectedAbi, result.Plan.SelectedAbi);
+            TestHarness.True(Sha256Digest.TryParse(result.Plan.IdentityDigest, out _));
+            TestHarness.True(result.Plan.ValidatedAtUtc <= DateTimeOffset.UtcNow);
+            TestHarness.Equal(3, result.Plan.Payloads.Count);
+            TestHarness.Equal(1, revalidator.CallCount);
+            TestHarness.False(JsonSerializer.Serialize(result.Plan).Contains(prepared.WorkspacePath!, StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 rejects an unknown certificate before workspace or live revalidation access", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(
+                directory,
+                "gate1-cert",
+                "1.0",
+                [1],
+                new SigningIdentity([digestA]));
+            var root = Path.Combine(directory, "workspace-root");
+            Directory.CreateDirectory(root);
+            File.WriteAllText(Path.Combine(root, "workspace-state.json"), "not-json");
+            var revalidator = new SequenceCandidateRevalidator(candidate);
+            var result = ValidateExecution(new WorkspaceExecutionValidator(revalidator), root, candidate);
+
+            TestHarness.Equal(WorkspaceExecutionValidationStatus.Rejected, result.Status);
+            TestHarness.True(HasTrustCode(result, WorkspaceExecutionTrustErrorCodes.CertificateBlocked));
+            TestHarness.Equal(0, revalidator.CallCount);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 rejects missing and corrupt active workspace state", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-state", "1.0", [1]);
+            var missingRoot = Path.Combine(directory, "missing-root");
+            Directory.CreateDirectory(missingRoot);
+            var missing = ValidateExecution(
+                new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                missingRoot,
+                candidate);
+            TestHarness.True(HasTrustCode(missing, WorkspaceExecutionTrustErrorCodes.StateMissing));
+
+            var corruptRoot = Path.Combine(directory, "corrupt-root");
+            Directory.CreateDirectory(corruptRoot);
+            File.WriteAllText(Path.Combine(corruptRoot, "workspace-state.json"), "{\"format\":");
+            var corrupt = ValidateExecution(
+                new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                corruptRoot,
+                candidate);
+            TestHarness.True(HasTrustCode(corrupt, WorkspaceExecutionTrustErrorCodes.StateInvalid));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 never accepts a traversal-shaped active key", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-key", "1.0", [1]);
+            var root = Path.Combine(directory, "workspace-root");
+            Directory.CreateDirectory(root);
+            File.WriteAllText(Path.Combine(root, "workspace-state.json"), """
+                {
+                  "format": "junimogate-workspace-state",
+                  "schema": "v1",
+                  "activeKey": "../outside",
+                  "previousKey": null
+                }
+                """);
+            var result = ValidateExecution(
+                new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                root,
+                candidate);
+            TestHarness.True(HasTrustCode(result, WorkspaceExecutionTrustErrorCodes.ActiveKeyInvalid));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 rejects bad manifest JSON schema recipe and status", () =>
+    {
+        var cases = new (string Suffix, string FileName, string OldText, string NewText, string Code)[]
+        {
+            ("json", "source-manifest.json", "{", "not-json{", WorkspaceExecutionTrustErrorCodes.ManifestInvalid),
+            ("schema", "extraction-manifest.json", WorkspacePreparationOptions.DefaultManifestSchema, "junimogate-workspace-manifest:v2", WorkspaceExecutionTrustErrorCodes.ManifestSchemaMismatch),
+            ("recipe", "rewrite-manifest.json", WorkspaceExecutionTrustDefaults.Gate0RewriteRecipe, "unexpected-recipe:v1", WorkspaceExecutionTrustErrorCodes.RewriteRecipeMismatch),
+            ("status", "rewrite-manifest.json", WorkspaceExecutionTrustDefaults.Gate0RewriteStatus, "applied", WorkspaceExecutionTrustErrorCodes.RewriteStatusMismatch),
+        };
+
+        foreach (var testCase in cases)
+        {
+            var directory = CreateTestDirectory();
+            try
+            {
+                var candidate = CreateValidWorkspaceCandidate(directory, $"gate1-{testCase.Suffix}", "1.0", [1]);
+                var root = Path.Combine(directory, "workspace-root");
+                var prepared = Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+                var path = Path.Combine(prepared.WorkspacePath!, testCase.FileName);
+                var text = File.ReadAllText(path);
+                TestHarness.True(text.Contains(testCase.OldText, StringComparison.Ordinal), testCase.Suffix);
+                File.WriteAllText(path, text.Replace(testCase.OldText, testCase.NewText, StringComparison.Ordinal));
+
+                var result = ValidateExecution(
+                    new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                    root,
+                    candidate);
+                TestHarness.True(HasTrustCode(result, testCase.Code), testCase.Suffix);
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }),
+    ("M5 Gate 1 enforces the exact payload file set excluding manifests", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-set", "1.0", [1]);
+            var root = Path.Combine(directory, "workspace-root");
+            var prepared = Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            File.WriteAllBytes(Path.Combine(prepared.WorkspacePath!, "assemblies", "unexpected.dll"), "MZ-extra"u8.ToArray());
+
+            var result = ValidateExecution(
+                new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                root,
+                candidate);
+            TestHarness.True(HasTrustCode(result, WorkspaceExecutionTrustErrorCodes.FileSetMismatch));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 re-hashes every payload and rejects a same-size mutation", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-hash", "1.0", [1, 2, 3]);
+            var root = Path.Combine(directory, "workspace-root");
+            var prepared = Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            File.WriteAllBytes(Path.Combine(prepared.WorkspacePath!, "Content", "Data", "game.xnb"), [3, 2, 1]);
+
+            var result = ValidateExecution(
+                new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                root,
+                candidate);
+            TestHarness.True(HasTrustCode(result, WorkspaceExecutionTrustErrorCodes.PayloadHashMismatch));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 rejects a live package identity race after file validation", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-race", "1.0", [1]);
+            var changed = CreateValidWorkspaceCandidate(directory, "gate1-race-changed", "2.0", [2]);
+            var root = Path.Combine(directory, "workspace-root");
+            Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            var revalidator = new SequenceCandidateRevalidator(changed);
+
+            var result = ValidateExecution(new WorkspaceExecutionValidator(revalidator), root, candidate);
+            TestHarness.True(HasTrustCode(result, WorkspaceExecutionTrustErrorCodes.LiveRevalidationFailed));
+            TestHarness.Equal(1, revalidator.CallCount);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 Gate 1 cancellation is stable and never produces an execution plan", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "gate1-cancel", "1.0", [1]);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var result = ValidateExecution(
+                new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)),
+                Path.Combine(directory, "workspace-root"),
+                candidate,
+                cancellation.Token);
+            TestHarness.Equal(WorkspaceExecutionValidationStatus.Cancelled, result.Status);
+            TestHarness.True(result.Plan is null);
+            TestHarness.True(HasTrustCode(result, WorkspaceExecutionTrustErrorCodes.Cancelled));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 native probe inventories bounded ARM64 ELF metadata without extraction", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var gameElf = BuildNativeElf(flags: 0x11223344, payloadSize: 192);
+            var candidate = CreateWorkspaceCandidate(
+                directory,
+                "native-success",
+                "1.0",
+                [("assets/Content/Data/game.xnb", new byte[] { 1, 2, 3 }, null)],
+                includeStardew: true,
+                includeMonoGame: true,
+                assemblyContentEntries:
+                [
+                    ("lib/arm64-v8a/libgame.so", gameElf, null),
+                    ("lib/x86_64/libignored.so", "not-an-arm64-elf"u8.ToArray(), null),
+                ]);
+            var root = Path.Combine(directory, "workspace-root");
+            Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            var trust = ValidateExecution(new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)), root, candidate);
+            TestHarness.True(trust.Plan is not null);
+
+            var result = ProbeNative(trust.Plan!, candidate);
+            TestHarness.Equal(NativeEntryInventoryStatus.Succeeded, result.Status);
+            TestHarness.Equal("arm64-v8a", result.SelectedAbi);
+            TestHarness.Equal(3, result.Entries.Count);
+            TestHarness.Equal(2, result.Entries.Count(entry =>
+                entry.EntryPath == "lib/arm64-v8a/libassemblies.arm64-v8a.blob.so"));
+            var game = result.Entries.Single(entry => entry.EntryPath == "lib/arm64-v8a/libgame.so");
+            TestHarness.Equal((long)gameElf.Length, game.Size);
+            TestHarness.Equal(Hash(gameElf), game.Sha256);
+            TestHarness.Equal(2, game.Elf.ElfClass);
+            TestHarness.Equal(1, game.Elf.DataEncoding);
+            TestHarness.Equal(3, game.Elf.ObjectType);
+            TestHarness.Equal(183, game.Elf.Machine);
+            TestHarness.Equal(0x11223344U, game.Elf.Flags);
+            TestHarness.True(result.Entries.SequenceEqual(result.Entries
+                .OrderBy(static entry => entry.EntryPath, StringComparer.Ordinal)
+                .ThenBy(static entry => entry.Sha256, StringComparer.Ordinal)
+                .ThenBy(static entry => entry.Size)
+                .ThenBy(static entry => entry.SourceLabel, StringComparer.Ordinal)));
+            TestHarness.False(Directory.EnumerateFiles(root, "*.so", SearchOption.AllDirectories).Any());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 native probe blocks an unknown certificate before APK file access", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "native-cert", "1.0", [1]);
+            var root = Path.Combine(directory, "workspace-root");
+            Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            var trust = ValidateExecution(new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)), root, candidate);
+            TestHarness.True(trust.Plan is not null);
+            var untrusted = ReplaceSigning(candidate, new SigningIdentity([digestA]));
+            foreach (var source in candidate.Installation.ApkSources)
+            {
+                File.Delete(source.SourcePath);
+            }
+
+            var result = ProbeNative(trust.Plan!, untrusted);
+            TestHarness.Equal(NativeEntryInventoryStatus.Failed, result.Status);
+            TestHarness.True(HasNativeCode(result, NativeEntryInventoryErrorCodes.CertificateBlocked));
+            TestHarness.False(HasNativeCode(result, NativeEntryInventoryErrorCodes.InvalidArchive));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 native probe binds the execution plan to the complete live identity", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "native-plan", "1.0", [1]);
+            var root = Path.Combine(directory, "workspace-root");
+            Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            var trust = ValidateExecution(new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)), root, candidate);
+            TestHarness.True(trust.Plan is not null);
+            var changedVersionName = ReplaceVersionName(candidate, "1.0-tampered");
+
+            var result = ProbeNative(trust.Plan!, changedVersionName);
+            TestHarness.Equal(NativeEntryInventoryStatus.Failed, result.Status);
+            TestHarness.True(HasNativeCode(result, NativeEntryInventoryErrorCodes.TrustPlanMismatch));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 native probe re-hashes each APK and rejects a same-size mutation", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "native-source", "1.0", [1]);
+            var root = Path.Combine(directory, "workspace-root");
+            Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            var trust = ValidateExecution(new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)), root, candidate);
+            TestHarness.True(trust.Plan is not null);
+            var sourcePath = candidate.Installation.ApkSources[0].SourcePath;
+            var bytes = File.ReadAllBytes(sourcePath);
+            bytes[^1] ^= 0x01;
+            File.WriteAllBytes(sourcePath, bytes);
+
+            var result = ProbeNative(trust.Plan!, candidate);
+            TestHarness.Equal(NativeEntryInventoryStatus.Failed, result.Status);
+            TestHarness.True(HasNativeCode(result, NativeEntryInventoryErrorCodes.SourceIdentityMismatch));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("M5 native probe rejects unsafe duplicate and malformed selected-ABI entries", () =>
+    {
+        var cases = new (string Suffix, (string Name, byte[] Data, int? Attributes)[] Entries, string Code)[]
+        {
+            ("unsafe", new (string, byte[], int?)[]
+            {
+                ("lib/arm64-v8a/nested/libbad.so", BuildNativeElf(), null),
+            }, NativeEntryInventoryErrorCodes.UnsafeEntry),
+            ("case", new (string, byte[], int?)[]
+            {
+                ("LIB/arm64-v8a/libbad.so", BuildNativeElf(), null),
+            }, NativeEntryInventoryErrorCodes.UnsafeEntry),
+            ("duplicate", new (string, byte[], int?)[]
+            {
+                ("lib/arm64-v8a/libduplicate.so", BuildNativeElf(flags: 1), null),
+                ("lib/arm64-v8a/libduplicate.so", BuildNativeElf(flags: 2), null),
+            }, NativeEntryInventoryErrorCodes.DuplicateEntry),
+            ("invalid", new (string, byte[], int?)[]
+            {
+                ("lib/arm64-v8a/libbad.so", "not-elf"u8.ToArray(), null),
+            }, NativeEntryInventoryErrorCodes.InvalidElf),
+            ("symlink", new (string, byte[], int?)[]
+            {
+                ("lib/arm64-v8a/liblink.so", BuildNativeElf(), unchecked((int)0xA1FF0000U)),
+            }, NativeEntryInventoryErrorCodes.UnsafeEntry),
+        };
+
+        foreach (var testCase in cases)
+        {
+            var directory = CreateTestDirectory();
+            try
+            {
+                var candidate = CreateWorkspaceCandidate(
+                    directory,
+                    $"native-{testCase.Suffix}",
+                    "1.0",
+                    [("assets/Content/Data/game.xnb", new byte[] { 1 }, null)],
+                    includeStardew: true,
+                    includeMonoGame: true,
+                    assemblyContentEntries: testCase.Entries);
+                var root = Path.Combine(directory, "workspace-root");
+                var prepared = Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+                TestHarness.True(prepared.Status == WorkspacePreparationStatus.Built, testCase.Suffix);
+                var trust = ValidateExecution(new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)), root, candidate);
+                TestHarness.True(trust.Plan is not null, testCase.Suffix);
+
+                var result = ProbeNative(trust.Plan!, candidate);
+                TestHarness.True(result.Status == NativeEntryInventoryStatus.Failed, testCase.Suffix);
+                TestHarness.True(HasNativeCode(result, testCase.Code), testCase.Suffix);
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }),
+    ("M5 native probe enforces entry bounds and stable cancellation", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var candidate = CreateValidWorkspaceCandidate(directory, "native-bounds", "1.0", [1]);
+            var root = Path.Combine(directory, "workspace-root");
+            Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(candidate)), root, candidate);
+            var trust = ValidateExecution(new WorkspaceExecutionValidator(new SequenceCandidateRevalidator(candidate)), root, candidate);
+            TestHarness.True(trust.Plan is not null);
+
+            var bounded = ProbeNative(
+                trust.Plan!,
+                candidate,
+                new NativeEntryInventoryLimits { MaximumSelectedEntries = 1 });
+            TestHarness.Equal(NativeEntryInventoryStatus.Failed, bounded.Status);
+            TestHarness.True(HasNativeCode(bounded, NativeEntryInventoryErrorCodes.LimitsExceeded));
+
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var cancelled = ProbeNative(trust.Plan!, candidate, cancellationToken: cancellation.Token);
+            TestHarness.Equal(NativeEntryInventoryStatus.Cancelled, cancelled.Status);
+            TestHarness.True(HasNativeCode(cancelled, NativeEntryInventoryErrorCodes.Cancelled));
+            TestHarness.Equal(0, cancelled.Entries.Count);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }));
 
 static MemoryStream BuildElfStore(
@@ -1042,6 +1479,50 @@ static byte[] BuildXalz(byte[] image, uint descriptorIndex)
     compressed.AsSpan(0, compressedLength).CopyTo(xalz.AsSpan(12));
     return xalz;
 }
+
+static byte[] BuildNativeElf(
+    ushort objectType = 3,
+    ushort machine = 183,
+    uint elfVersion = 1,
+    uint flags = 0,
+    int payloadSize = 64)
+{
+    if (payloadSize < 64)
+    {
+        throw new ArgumentOutOfRangeException(nameof(payloadSize));
+    }
+
+    var elf = new byte[payloadSize];
+    elf[0] = 0x7F;
+    elf[1] = (byte)'E';
+    elf[2] = (byte)'L';
+    elf[3] = (byte)'F';
+    elf[4] = 2;
+    elf[5] = 1;
+    elf[6] = 1;
+    BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(16), objectType);
+    BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(18), machine);
+    BinaryPrimitives.WriteUInt32LittleEndian(elf.AsSpan(20), elfVersion);
+    BinaryPrimitives.WriteUInt32LittleEndian(elf.AsSpan(48), flags);
+    for (var index = 64; index < elf.Length; index++)
+    {
+        elf[index] = checked((byte)(index % 251));
+    }
+
+    return elf;
+}
+
+static NativeEntryInventoryResult ProbeNative(
+    ValidatedExecutionPlan plan,
+    GameInstallationCandidate candidate,
+    NativeEntryInventoryLimits? limits = null,
+    CancellationToken cancellationToken = default) =>
+    new NativeEntryInventoryProbe()
+        .ProbeAsync(plan, candidate, limits, cancellationToken)
+        .AsTask().GetAwaiter().GetResult();
+
+static bool HasNativeCode(NativeEntryInventoryResult result, string code) =>
+    result.Diagnostics.Any(diagnostic => diagnostic.Code.Equals(code, StringComparison.Ordinal));
 
 static int Align(int value, int alignment) => checked((value + alignment - 1) & ~(alignment - 1));
 
@@ -1193,6 +1674,38 @@ static GameInstallationCandidate MakeCandidate(
     return new GameInstallationCandidate(installation, inventories);
 }
 
+static GameInstallationCandidate ReplaceSigning(
+    GameInstallationCandidate candidate,
+    SigningIdentity signing)
+{
+    var original = candidate.Installation;
+    return new GameInstallationCandidate(
+        new GameInstallationIdentity(
+            original.PackageName,
+            original.VersionName,
+            original.LongVersionCode,
+            signing,
+            original.SelectedAbi,
+            original.ApkSources),
+        candidate.SourceInventories);
+}
+
+static GameInstallationCandidate ReplaceVersionName(
+    GameInstallationCandidate candidate,
+    string versionName)
+{
+    var original = candidate.Installation;
+    return new GameInstallationCandidate(
+        new GameInstallationIdentity(
+            original.PackageName,
+            versionName,
+            original.LongVersionCode,
+            original.SigningIdentity,
+            original.SelectedAbi,
+            original.ApkSources),
+        candidate.SourceInventories);
+}
+
 static GameInstallationCandidate ReplaceSourceDigest(
     GameInstallationCandidate candidate,
     string label,
@@ -1249,6 +1762,24 @@ static WorkspacePreparationResult Prepare(
 static bool HasWorkspaceCode(WorkspacePreparationResult result, string code) =>
     result.Diagnostics.Any(diagnostic => diagnostic.Code.Equals(code, StringComparison.Ordinal));
 
+static WorkspaceExecutionValidationResult ValidateExecution(
+    WorkspaceExecutionValidator validator,
+    string root,
+    GameInstallationCandidate candidate,
+    CancellationToken cancellationToken = default) =>
+    validator.ValidateAsync(
+            candidate,
+            root,
+            WorkspacePreparationOptions.DefaultExtractorSchema,
+            WorkspacePreparationOptions.DefaultManifestSchema,
+            WorkspaceExecutionTrustDefaults.Gate0RewriteRecipe,
+            WorkspaceExecutionTrustDefaults.Gate0RewriteStatus,
+            cancellationToken)
+        .AsTask().GetAwaiter().GetResult();
+
+static bool HasTrustCode(WorkspaceExecutionValidationResult result, string code) =>
+    result.Diagnostics.Any(diagnostic => diagnostic.Code.Equals(code, StringComparison.Ordinal));
+
 static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
 static (string? Active, string? Previous) ReadState(string root)
@@ -1281,6 +1812,27 @@ sealed class FixedCandidateRevalidator : IWorkspaceCandidateRevalidator
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(candidate);
+    }
+}
+
+sealed class SequenceCandidateRevalidator : IWorkspaceCandidateRevalidator
+{
+    private readonly Queue<GameInstallationCandidate?> candidates;
+
+    public SequenceCandidateRevalidator(params GameInstallationCandidate?[] candidates)
+    {
+        this.candidates = new Queue<GameInstallationCandidate?>(candidates);
+    }
+
+    public int CallCount { get; private set; }
+
+    public ValueTask<GameInstallationCandidate?> RevalidateAsync(
+        string packageName,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        CallCount++;
+        return ValueTask.FromResult(candidates.Count == 0 ? null : candidates.Dequeue());
     }
 }
 

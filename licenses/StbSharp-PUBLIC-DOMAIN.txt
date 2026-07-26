@@ -1,0 +1,11 @@
+StbSharp public-domain notices used by JunimoGate's pinned MonoGame provider
+
+StbImageSharp
+- repository: https://github.com/StbSharp/StbImageSharp
+- pinned commit: 8a8cbdb30cad1268a3b38fd80f15de8d95367c7c
+- the pinned repository README states: "This software is public domain."
+
+StbImageWriteSharp
+- repository: https://github.com/StbSharp/StbImageWriteSharp
+- pinned commit: 3aede22e4d8456c4724c83eb72938ebf6ec77b8a
+- the pinned repository README states: "This software is public domain."

@@ -12,7 +12,7 @@ The host filter, synthetic extraction tests, read-only game inspector, and platf
 ./build/test-host.sh
 ```
 
-The full host suite currently passes 68/68 tests: Core 12, Extraction 40, Rewriter 5, Mods 6, and RuntimeProbe 5. One of the five RuntimeProbe host tests executes and reports all ten hard cases on CoreCLR; those ten case results are not ten additional host-suite tests. The actual Android runtime decision comes from the physical-device reports described below.
+The full host suite currently passes 129/129 tests: Core 12, Extraction 55, Rewriter 51, Mods 6, and RuntimeProbe 5. One of the five RuntimeProbe host tests executes and reports all ten hard cases on CoreCLR; those ten case results are not ten additional host-suite tests. The actual Android runtime decision comes from the physical-device reports described below.
 
 The inspector identifies APK roles by ZIP contents rather than split filenames. It can inventory AssemblyStore v2 entries, extract managed assembly images supplied by the user, and inspect .NET metadata without decompiling source or extracting `assets/Content/`:
 
@@ -47,8 +47,18 @@ M3 is complete for the current Google Play scope. On a ARM64 test device running
 
 M4 is complete for the same Play scope. It builds an immutable app-private Content/assembly workspace behind the tested-certificate gate, writes and strictly validates source/extraction/rewrite manifests, commits the whole staging directory atomically, revalidates the installed identity before activation, preserves active/previous state on failure, and fully re-hashes payload files on every CacheHit. App workspace report format 2 exposes extraction statistics, duration/temporary/final byte metrics, and de-duplicated real progress stages without paths. M4 records `unrewritten:v1` / `not-applied`; it does not rewrite, load, or execute game assemblies. See [`docs/game-workspace-result.md`](docs/game-workspace-result.md).
 
+M5 is complete for the tested Play 1.6.15.3 support identity on the ARM64 test device Android 16/API 36 baseline. Under `TrustedInstalledSource`, every host launch rebuilds live package/certificate/APK/workspace trust; the hosted bootstrap does not call original package/UID-bound `DoLicenseCheck`, and no mutation targets the three `LicensingChecker` callbacks. This proves trusted source provenance and current installation integrity, not Google-account purchase entitlement.
+
+Exact public MonoGame commit `f5d8bf...` is reproducibly rebuilt as the complete Android runtime provider. Catalog recipe `play-1.6.15.3-gamehost-bridge@1` uses 13 complete-method pre/post SHA-256 contracts to adapt all 14 non-licensing `MainActivity.instance` reads while leaving the original `OnCreate` write and three licensing reads untouched. The product pipeline now builds and activates an immutable three-file applied workspace, loads the rewritten game and all dependencies through a sealed plan-owned context, redirects XNB Content through exact path/size/SHA guards, and starts `GameRunner` in a framework-created `GameHostActivity`.
+
+
 ```bash
 ./build/bootstrap-android.sh
+
+# Rebuilds the exact public-source MonoGame Android provider into the ignored local NuGet feed.
+# JUNIMOGATE_PROXY_URL is optional and is never stored in repository configuration.
+JUNIMOGATE_PROXY_URL=http://127.0.0.1:10808 ./build/build-monogame-android.sh
+
 ./build/build-android.sh Debug all
 ./build/build-android.sh Release all
 ./build/verify-android-artifacts.sh
@@ -64,6 +74,10 @@ M4 is complete for the same Play scope. It builds an immutable app-private Conte
 # Verifies interrupted staging recovery, Built, CacheHit, manifests, hashes,
 # report v2 metrics/progress, state, redaction, and App-PID logcat.
 ./build/verify-game-workspace.sh
+
+# Requires the tested Play installation on one ARM64 device. Runs the metadata-only
+# Gate 0 probe twice, independently recomputes evidence keys, and copies only redacted JSON.
+./build/verify-gamehost-probe.sh
 ```
 
 ## Boundaries
@@ -72,14 +86,14 @@ M4 is complete for the same Play scope. It builds an immutable app-private Conte
 - `GameHost -> Core, Android, Extraction, Rewriter`
 - `Mods -> Core`
 - `Extraction -> Core`
-- `Rewriter -> Core`
+- `Rewriter -> Core, Extraction`
 
-UI and Mods do not reference game assemblies. Extraction uses the pinned `K4os.Compression.LZ4` 1.3.8 package only for bounded XALZ block decoding. The inspector does not extract commercial Content assets and does not decompile game source. Mod installation transaction interfaces remain boundaries; the scaffold does not claim a completed Mod installer. M4 now atomically commits and activates a fully validated immutable workspace, but deliberately performs no rewrite and never loads or executes extracted assemblies. M5 must revalidate the tested certificate plus all workspace manifests, file identities, and hashes before any rewrite/load/execute step.
+UI and Mods do not reference game assemblies. Extraction uses the pinned `K4os.Compression.LZ4` 1.3.8 package only for bounded XALZ block decoding. The inspector does not extract commercial Content assets and does not decompile game source. Mod installation transaction interfaces remain boundaries; the scaffold does not claim a completed Mod installer. M4 atomically commits and activates a fully validated immutable source workspace, deliberately performs no rewrite, and never loads or executes extracted assemblies. M5 keeps that source workspace immutable, builds a distinct catalog-bound applied workspace, and permits rewrite/load/bootstrap only after the shared execution validator and exact recipe guards pass.
 
 ## Distribution and licensing
 
 Do not commit or distribute Stardew Valley assemblies, assets, APKs, native libraries, decompiled source, inspector output, or other commercial game material. Users must supply a legally installed game on their own device. Keep all local extraction and inspection output in `/tmp`, `artifacts/`, `local-game/`, or an explicitly permitted sibling analysis directory, never in tracked source paths.
 
-The JunimoGate license is not yet decided. [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) records the MIT-licensed `dotnet/android` AssemblyStore format baseline and the LZ4 dependency without applying MIT to this repository as a whole. Before incorporating or distributing SMAPI, MonoMod, Harmony, Mono.Cecil, AssemblyStore code, or code informed by existing Android loaders, perform and document the applicable GPL/LGPL and third-party license compliance assessment. This notice is an engineering reminder, not legal advice.
+The JunimoGate license is not yet decided. [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) records the MIT-licensed `dotnet/android` AssemblyStore baseline, LZ4, Cecil/Harmony dependencies, and the exact public MonoGame provider's Ms-PL/MIT, OpenAL GNU Library GPL v2, and Stb public-domain notices. The provider build includes the tracked notices in its ignored local package. Public distribution remains blocked until M10 establishes exact corresponding-source and relink/replacement compliance for the pinned OpenAL binary. These notices do not apply any third-party license to JunimoGate as a whole, and this is an engineering reminder rather than legal advice.
 
-See [`docs/implementation-milestones.md`](docs/implementation-milestones.md), [`docs/game-discovery-result.md`](docs/game-discovery-result.md), [`docs/game-workspace-result.md`](docs/game-workspace-result.md), [`docs/runtime-probe-result.md`](docs/runtime-probe-result.md), [`docs/harmony-android-maintenance.md`](docs/harmony-android-maintenance.md), [`docs/startup-chain.md`](docs/startup-chain.md), [`docs/compatibility.md`](docs/compatibility.md), and [`docs/build-environment.md`](docs/build-environment.md).
+See [`docs/implementation-milestones.md`](docs/implementation-milestones.md), [`docs/m5-implementation-plan.md`](docs/m5-implementation-plan.md), [`docs/gamehost-activity-bridge-result.md`](docs/gamehost-activity-bridge-result.md), [`docs/gamehost-probe-result.md`](docs/gamehost-probe-result.md), [`docs/gamehost-gate2-contracts.md`](docs/gamehost-gate2-contracts.md), [`docs/game-discovery-result.md`](docs/game-discovery-result.md), [`docs/game-workspace-result.md`](docs/game-workspace-result.md), [`docs/runtime-probe-result.md`](docs/runtime-probe-result.md), [`docs/harmony-android-maintenance.md`](docs/harmony-android-maintenance.md), [`docs/startup-chain.md`](docs/startup-chain.md), [`docs/compatibility.md`](docs/compatibility.md), and [`docs/build-environment.md`](docs/build-environment.md).

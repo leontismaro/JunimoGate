@@ -6,5 +6,6 @@
   <ItemGroup>
     <ProjectReference Include="../JunimoGate.Core/JunimoGate.Core.csproj" />
     <ProjectReference Include="../JunimoGate.Extraction/JunimoGate.Extraction.csproj" />
+    <ProjectReference Include="../JunimoGate.Rewriter/JunimoGate.Rewriter.csproj" />
   </ItemGroup>
 </Project>
