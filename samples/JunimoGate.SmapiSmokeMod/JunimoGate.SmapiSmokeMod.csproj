@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-android35.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>JunimoGate.SmapiSmokeMod</AssemblyName>
+    <RootNamespace>JunimoGate.SmapiSmokeMod</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../third_party/smapi-android/src/SMAPI/SMAPI.csproj" />
+    <Reference Include="StardewValley"><HintPath>$(JunimoGateGameReferenceDir)/StardewValley.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="PublishSmokeMod" AfterTargets="Build">
+    <PropertyGroup><SmokeOutput>$(MSBuildThisFileDirectory)../../artifacts/smapi-smoke-mod</SmokeOutput></PropertyGroup>
+    <MakeDir Directories="$(SmokeOutput)" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildThisFileDirectory)manifest.json" DestinationFolder="$(SmokeOutput)" />
+  </Target>
+</Project>

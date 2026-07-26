@@ -1,0 +1,9 @@
+{
+  "Name": "JunimoGate SMAPI Smoke Test",
+  "Author": "JunimoGate",
+  "Version": "1.0.0",
+  "Description": "Visible Android SMAPI integration smoke test.",
+  "UniqueID": "JunimoGate.SmapiSmokeTest",
+  "EntryDll": "JunimoGate.SmapiSmokeMod.dll",
+  "MinimumApiVersion": "4.3.2"
+}
