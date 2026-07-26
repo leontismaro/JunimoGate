@@ -1,0 +1,34 @@
+using System;
+using System.Collections.Generic;
+
+namespace StardewModdingAPI.Internal.ConsoleWriting;
+
+/// <summary>The console color scheme options.</summary>
+internal class ColorSchemeConfig
+{
+    /*********
+    ** Accessors
+    *********/
+    /// <summary>The default color scheme ID to use, or <see cref="MonitorColorScheme.AutoDetect"/> to select one automatically.</summary>
+    public MonitorColorScheme UseScheme { get; set; }
+
+    /// <summary>The available console color schemes.</summary>
+    public IDictionary<MonitorColorScheme, IDictionary<ConsoleLogLevel, ConsoleColor>> Schemes { get; set; }
+
+
+    /*********
+    ** Public methods
+    *********/
+    /// <summary>Construct an instance.</summary>
+    /// <param name="useScheme">The default color scheme ID to use, or <see cref="MonitorColorScheme.AutoDetect"/> to select one automatically.</param>
+    /// <param name="schemes">The available console color schemes.</param>
+    public ColorSchemeConfig(MonitorColorScheme useScheme, IDictionary<MonitorColorScheme, IDictionary<ConsoleLogLevel, ConsoleColor>> schemes)
+    {
+#if SMAPI_FOR_ANDROID
+        this.UseScheme = MonitorColorScheme.None;
+#else
+        this.UseScheme = useScheme;
+#endif
+        this.Schemes = schemes;
+    }
+}

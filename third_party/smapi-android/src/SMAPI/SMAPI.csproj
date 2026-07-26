@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-android35.0</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <OutputType>Library</OutputType>
+    <AssemblyName>StardewModdingAPI</AssemblyName>
+    <RootNamespace>StardewModdingAPI</RootNamespace>
+    <Version>4.3.2</Version>
+    <AssemblyVersion>4.3.2.0</AssemblyVersion>
+    <FileVersion>4.3.2.5</FileVersion>
+    <InformationalVersion>4.3.2.5-junimogate.6a34bbeb</InformationalVersion>
+    <PlatformTarget>ARM64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TieredCompilation>false</TieredCompilation>
+    <IsTrimmable>false</IsTrimmable>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);SMAPI_FOR_ANDROID;JUNIMOGATE_SMAPI_HOST</DefineConstants>
+    <NoWarn>$(NoWarn);CS0436;CA1416;CS0809;NU1701</NoWarn>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DeepCloner" />
+    <PackageReference Include="Lib.Harmony" />
+    <PackageReference Include="Mono.Cecil" />
+    <PackageReference Include="MonoGame.Framework.Android" />
+    <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="NVorbis" />
+    <PackageReference Include="Pathoschild.Http.FluentClient" />
+    <PackageReference Include="Pintail" />
+    <PackageReference Include="Platonymous.TMXTile" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="StbImageWriteSharp" />
+    <PackageReference Include="System.Reflection.Emit" />
+    <PackageReference Include="TextCopy" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BmFont">
+      <HintPath>$(JunimoGateGameReferenceDir)/BmFont.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Lidgren.Network">
+      <HintPath>$(JunimoGateGameReferenceDir)/Lidgren.Network.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="StardewValley">
+      <HintPath>$(JunimoGateGameReferenceDir)/StardewValley.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="StardewValley.GameData">
+      <HintPath>$(JunimoGateGameReferenceDir)/StardewValley.GameData.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="xTile">
+      <HintPath>$(JunimoGateGameReferenceDir)/xTile.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SMAPI.Toolkit.CoreInterfaces/SMAPI.Toolkit.CoreInterfaces.csproj" />
+    <ProjectReference Include="../SMAPI.Toolkit/SMAPI.Toolkit.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../SMAPI.Toolkit/Framework/LowLevelEnvironmentUtility.cs"
+             Link="Framework/Utilities/LowLevelEnvironmentUtility.cs" />
+  </ItemGroup>
+
+  <Import Project="../SMAPI.Internal/SMAPI.Internal.projitems" Label="Shared" />
+
+  <Target Name="ValidateJunimoGateGameReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(JunimoGateGameReferenceDir)' == ''"
+           Text="Set JunimoGateGameReferenceDir (or JUNIMOGATE_GAME_REFERENCE_DIR) to an absolute local directory containing the legally extracted game compile references." />
+    <Error Condition="!$([System.IO.Path]::IsPathFullyQualified('$(JunimoGateGameReferenceDir)'))"
+           Text="JunimoGateGameReferenceDir must be an absolute path." />
+    <Error Condition="!Exists('$(JunimoGateGameReferenceDir)/StardewValley.dll')"
+           Text="JunimoGateGameReferenceDir is missing StardewValley.dll." />
+    <Error Condition="!Exists('$(JunimoGateGameReferenceDir)/StardewValley.GameData.dll')"
+           Text="JunimoGateGameReferenceDir is missing StardewValley.GameData.dll." />
+    <Error Condition="!Exists('$(JunimoGateGameReferenceDir)/BmFont.dll') or !Exists('$(JunimoGateGameReferenceDir)/Lidgren.Network.dll') or !Exists('$(JunimoGateGameReferenceDir)/xTile.dll')"
+           Text="JunimoGateGameReferenceDir is missing BmFont.dll, Lidgren.Network.dll, or xTile.dll." />
+  </Target>
+</Project>

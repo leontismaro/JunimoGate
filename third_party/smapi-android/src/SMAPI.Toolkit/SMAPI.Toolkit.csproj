@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>StardewModdingAPI.Toolkit</AssemblyName>
+    <RootNamespace>StardewModdingAPI.Toolkit</RootNamespace>
+    <Version>4.3.2</Version>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsTrimmable>false</IsTrimmable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" />
+    <PackageReference Include="Markdig" />
+    <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="Pathoschild.Http.FluentClient" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SMAPI.Toolkit.CoreInterfaces/SMAPI.Toolkit.CoreInterfaces.csproj" />
+  </ItemGroup>
+</Project>

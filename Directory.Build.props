@@ -6,5 +6,6 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <JunimoGateGameReferenceDir Condition="'$(JunimoGateGameReferenceDir)' == '' and '$(JUNIMOGATE_GAME_REFERENCE_DIR)' != ''">$(JUNIMOGATE_GAME_REFERENCE_DIR)</JunimoGateGameReferenceDir>
   </PropertyGroup>
 </Project>

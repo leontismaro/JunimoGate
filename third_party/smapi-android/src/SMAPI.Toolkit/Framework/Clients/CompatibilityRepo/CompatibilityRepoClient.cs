@@ -1,0 +1,204 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Markdig;
+using Newtonsoft.Json;
+using Pathoschild.Http.Client;
+using StardewModdingAPI.Toolkit.Framework.Clients.CompatibilityRepo.Internal;
+using StardewModdingAPI.Toolkit.Framework.Clients.CompatibilityRepo.RawDataModels;
+using StardewModdingAPI.Toolkit.Framework.MarkdownExtensions;
+using StardewModdingAPI.Toolkit.Utilities;
+
+namespace StardewModdingAPI.Toolkit.Framework.Clients.CompatibilityRepo;
+
+/// <summary>An HTTP client for fetching data from the mod compatibility repo.</summary>
+public class CompatibilityRepoClient : IDisposable
+{
+    /*********
+    ** Fields
+    *********/
+    /// <summary>The underlying HTTP client.</summary>
+    private readonly IClient Client;
+
+    /// <summary>The Markdown pipeline with which to format Markdown summaries.</summary>
+    private readonly MarkdownPipeline MarkdownPipeline;
+
+
+    /*********
+    ** Public methods
+    *********/
+    /// <summary>Construct an instance.</summary>
+    /// <param name="fetchBaseUrl">The base URL from which to fetch the compatibility list JSON files.</param>
+    /// <param name="userAgent">The user agent for the API client.</param>
+    public CompatibilityRepoClient(string userAgent, string fetchBaseUrl = "https://raw.githubusercontent.com/Pathoschild/SmapiCompatibilityList/refs/heads/release/data")
+    {
+        this.Client = new FluentClient(fetchBaseUrl)
+            .SetUserAgent(userAgent);
+        this.Client.Filters.Add(new ForceJsonResponseTypeFilter());
+
+        this.MarkdownPipeline = new MarkdownPipelineBuilder()
+            .Use(new ExpandCompatibilityListAnchorLinksExtension())
+            .Build();
+    }
+
+    /// <summary>Fetch mods from the compatibility list.</summary>
+    public async Task<ModCompatibilityEntry[]> FetchModsAsync()
+    {
+        RawCompatibilityList mods = await this.Client.GetAsync("mods.jsonc").As<RawCompatibilityList>();
+        RawCompatibilityList brokenContentPacks = await this.Client.GetAsync("broken-content-packs.jsonc").As<RawCompatibilityList>();
+
+        return
+            (mods.Mods ?? [])
+            .Concat(brokenContentPacks.BrokenContentPacks ?? [])
+            .Select(this.ParseRawModEntry)
+            .ToArray();
+    }
+
+    /// <summary>Fetch mods from the compatibility list by reading a local copy of the compatibility list repo.</summary>
+    /// <param name="gitRepoPath">The full path to the compatibility list repo folder.</param>
+    public async Task<ModCompatibilityEntry[]> FetchModsFromLocalGitFolderAsync(string gitRepoPath)
+    {
+        string modsJsonPath = Path.Combine(gitRepoPath, "data", "mods.jsonc");
+        string contentPacksJsonPath = Path.Combine(gitRepoPath, "data", "broken-content-packs.jsonc");
+        if (!File.Exists(modsJsonPath) || !File.Exists(contentPacksJsonPath))
+            throw new InvalidOperationException("The compatibility list repo folder doesn't contain the required JSON files.");
+
+        RawCompatibilityList? mods = JsonConvert.DeserializeObject<RawCompatibilityList>(File.ReadAllText(modsJsonPath));
+        RawCompatibilityList? brokenContentPacks = JsonConvert.DeserializeObject<RawCompatibilityList>(File.ReadAllText(contentPacksJsonPath));
+
+        return
+            (mods?.Mods ?? [])
+            .Concat(brokenContentPacks?.BrokenContentPacks ?? [])
+            .Select(this.ParseRawModEntry)
+            .ToArray();
+    }
+
+    /// <summary>Get the inline HTML produced by a Markdown string in a compatibility repo field.</summary>
+    /// <param name="markdown">The Markdown to parse.</param>
+    /// <remarks>This is a low-level method. Most code should use <see cref="FetchModsAsync"/> instead.</remarks>
+    public string ParseMarkdownToInlineHtml(string markdown)
+    {
+        string html = Markdown.ToHtml(markdown, this.MarkdownPipeline);
+
+        // Markdown wraps all content with <p></p>, and there's no non-hacky way to disable it.
+        // We need to strip them since the content is shown inline.
+        html = html.Trim();
+        if (html.StartsWith("<p>", StringComparison.OrdinalIgnoreCase) && html.EndsWith("</p>", StringComparison.OrdinalIgnoreCase) && html.IndexOf("<p>", 3, StringComparison.OrdinalIgnoreCase) == -1)
+            html = html.Substring(3, html.Length - 7);
+
+        return html;
+    }
+
+    /// <summary>Parse a mod compatibility entry.</summary>
+    /// <param name="rawModEntry">The HTML compatibility entries.</param>
+    /// <remarks>This is a low-level method. Most code should use <see cref="FetchModsAsync"/> instead.</remarks>
+    public ModCompatibilityEntry ParseRawModEntry(RawModEntry rawModEntry)
+    {
+        // parse main fields
+        string[] modIds = this.GetCsv(rawModEntry.Id);
+        string[] modNames = this.GetCsv(rawModEntry.Name);
+        string[] authorNames = this.GetCsv(rawModEntry.Author);
+        ModCompatibilityStatus status = rawModEntry.GetStatus();
+        ModCompatibilityReasonAbandoned reasonAbandoned = rawModEntry.GetReasonAbandoned();
+        rawModEntry.GetCompatibilitySummary(out string summary, out bool hasMarkdown);
+
+        // get HTML summary
+        string? htmlSummary = null;
+        if (hasMarkdown)
+        {
+            htmlSummary = this.ParseMarkdownToInlineHtml(summary);
+            if (htmlSummary == summary)
+                htmlSummary = null;
+        }
+
+        // build model
+        return new ModCompatibilityEntry(
+            id: modIds,
+            name: modNames,
+            author: authorNames,
+            nexusId: rawModEntry.Nexus,
+            chucklefishId: rawModEntry.Chucklefish,
+            curseForgeId: rawModEntry.Curse,
+            modDropId: rawModEntry.ModDrop,
+            githubRepo: rawModEntry.GitHub,
+            customSourceUrl: rawModEntry.Source,
+            customUrl: rawModEntry.Url,
+            contentPackFor: rawModEntry.ContentPackFor,
+            compatibility: new ModCompatibilityInfo(
+                status: status,
+                summary: summary,
+                htmlSummary: htmlSummary,
+                brokeIn: rawModEntry.BrokeIn,
+                unofficialVersion: this.GetSemanticVersion(rawModEntry.UnofficialUpdate?.Version),
+                unofficialUrl: rawModEntry.UnofficialUpdate?.Url,
+                abandonedReason: reasonAbandoned
+            ),
+            warnings: rawModEntry.Warnings ?? [],
+            devNote: rawModEntry.DeveloperNotes,
+            overrides: this.ParseOverrideEntries(modIds, rawModEntry.OverrideModData),
+            anchor: PathUtilities.CreateSlug(modNames.FirstOrDefault())?.ToLower()
+        );
+    }
+
+    /// <summary>Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.</summary>
+    public void Dispose()
+    {
+        this.Client.Dispose();
+    }
+
+
+    /*********
+    ** Private methods
+    *********/
+    /// <summary>Parse valid mod data override entries.</summary>
+    /// <param name="modIds">The mod's unique IDs.</param>
+    /// <param name="overrides">The raw data override entries to parse.</param>
+    private ModDataOverrideEntry? ParseOverrideEntries(string[] modIds, RawModDataOverride[]? overrides)
+    {
+        if (overrides?.Length is not > 0)
+            return null;
+
+        ModDataOverrideEntry parsed = new() { Ids = modIds };
+        foreach (RawModDataOverride @override in overrides)
+        {
+            switch (@override.Type?.ToLower())
+            {
+                case "updatekey":
+                    parsed.ChangeUpdateKeys ??= new(raw => raw);
+                    parsed.ChangeUpdateKeys.AddChange(@override.From, @override.To);
+                    break;
+
+                case "localversion":
+                    parsed.ChangeLocalVersions ??= new(raw => SemanticVersion.TryParse(raw, out ISemanticVersion? version) ? version.ToString() : raw);
+                    parsed.ChangeLocalVersions.AddChange(@override.From, @override.To);
+                    break;
+
+                case "remoteversion":
+                    parsed.ChangeRemoteVersions ??= new(raw => SemanticVersion.TryParse(raw, out ISemanticVersion? version) ? version.ToString() : raw);
+                    parsed.ChangeRemoteVersions.AddChange(@override.From, @override.To);
+                    break;
+            }
+        }
+
+        return parsed;
+    }
+
+    /// <summary>Parse a raw value as a comma-delimited list of strings.</summary>
+    /// <param name="rawValue">The raw value to parse.</param>
+    private string[] GetCsv(string? rawValue)
+    {
+        return !string.IsNullOrWhiteSpace(rawValue)
+            ? rawValue.Split([','], StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToArray()
+            : [];
+    }
+
+    /// <summary>Get a raw value as a semantic version.</summary>
+    /// <param name="rawValue">The raw value to parse.</param>
+    private ISemanticVersion? GetSemanticVersion(string? rawValue)
+    {
+        return SemanticVersion.TryParse(rawValue, out ISemanticVersion? version)
+            ? version
+            : null;
+    }
+}
