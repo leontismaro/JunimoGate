@@ -1,5 +1,7 @@
 # M4 游戏 workspace 验收结果
 
+> **历史 M4/M5-PoC 验收证据。** 本文的全量 CacheHit re-hash、重复安装身份验证和设备 verifier 仍可用于 Deep Prepare、修复和显式验收，但不得作为正常 Fast Launch 或日常开发要求。当前启动/验证分层见 [`../AGENTS.md`](../AGENTS.md) 与 [`m5-implementation-plan.md`](m5-implementation-plan.md)。
+
 ## 1. 结论
 
 M4 产品级 Content、Assembly 与 app-private workspace 管线已完成当前 Google Play 范围的实现与收口。它从 M3 的实时 `GameInstallationCandidate` 出发，在允许执行的已测试证书身份门槛之后：
@@ -10,7 +12,6 @@ M4 产品级 Content、Assembly 与 app-private workspace 管线已完成当前 
 - 对文件集合、大小、SHA-256、必需程序集、统计和 manifest identity 做完整验证；
 - 以目录重命名提交 immutable workspace；
 - 再次读取安装身份，确认 package/version/ABI/signer/source hash 未变化后才原子更新 active/previous state；
-- CacheHit 仍逐文件重算完整 workspace payload SHA-256，不以 manifest 存在替代验证。
 
 
 ## 2. Workspace 设计
