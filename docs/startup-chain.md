@@ -28,7 +28,7 @@ MainActivity 诊断页
 
 这些限制不再作为继续研究的理由。当前冻结它，直接复用已工作的游戏宿主能力接入 SMAPI。
 
-## 2. 当前目标链：源码级 SMAPI 运行核心
+## 2. 当前已实现链：源码级 SMAPI 运行核心
 
 JunimoGate 保持单 APK，但游戏运行在独立 `:game` 进程，以便退出后清理 SMAPI、Harmony、Mods 和游戏的静态状态。
 
@@ -150,6 +150,8 @@ Android fork 中通过 `MainActivity.instance` 查 Activity、硬编码 `Externa
 8. 增加最小 Mods 导入、列表、启停和日志
 ```
 
+
+当前真机范围是 Play 1.6.15.3/versionCode 245、ARM64、ARM64 test device、Android 16/API36。正常 Fast Launch 不执行 APK/workspace 全量 hash、metadata/native probe、Cecil workspace rewrite 或 applied workspace 重建；只有首次导入、检测到游戏更新、workspace 缺失/损坏或显式修复才进入 Deep Prepare。默认 Profile 当前保持零 Mod，Smoke Mod 仅作为可重复验收 fixture 存放在 `disabled`。
 
 ## 7. 保留边界
 
