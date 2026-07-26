@@ -87,7 +87,7 @@ public static class GameHostBridge
     /// <summary>Returns the versionCode bound into the fresh trusted installed-source plan.</summary>
     public static int GetBuild()
     {
-        var versionCode = GetSession().Plan.LongVersionCode;
+        var versionCode = GetSession().VersionCode;
         if (versionCode is < int.MinValue or > int.MaxValue)
         {
             throw new InvalidOperationException("The trusted game versionCode does not fit the tested game API.");
@@ -150,11 +150,28 @@ public static class GameHostBridge
                 throw new InvalidOperationException("A different GameHost bridge session is already active.");
             }
 
-            session = new BridgeSession(activity, plan, decision);
+            session = new BridgeSession(activity, plan.LongVersionCode);
         }
     }
 
-    internal static void Detach(GameHostActivity activity)
+    internal static void Attach(Activity activity, PreparedGameSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(activity);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.PackageName != GameHostRecipeCatalog.TestedPlayPackageName ||
+            snapshot.VersionName != GameHostRecipeCatalog.TestedPlayVersionName ||
+            snapshot.VersionCode != GameHostRecipeCatalog.TestedPlayLongVersionCode ||
+            snapshot.Abi != GameHostRecipeCatalog.TestedPlayAbi || activity.IsFinishing || activity.IsDestroyed)
+            throw new InvalidOperationException("The prepared SMAPI bridge snapshot is not usable.");
+        lock (SessionLock)
+        {
+            if (session is not null && !ReferenceEquals(session.Activity, activity))
+                throw new InvalidOperationException("A different GameHost bridge session is already active.");
+            session = new BridgeSession(activity, snapshot.VersionCode);
+        }
+    }
+
+    internal static void Detach(Activity activity)
     {
         ArgumentNullException.ThrowIfNull(activity);
         lock (SessionLock)
@@ -175,8 +192,5 @@ public static class GameHostBridge
         }
     }
 
-    private sealed record BridgeSession(
-        GameHostActivity Activity,
-        ValidatedExecutionPlan Plan,
-        GameHostRecipeDecision Decision);
+    private sealed record BridgeSession(Activity Activity, long VersionCode);
 }

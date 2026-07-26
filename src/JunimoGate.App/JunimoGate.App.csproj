@@ -24,9 +24,32 @@
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
     <ProjectReference Include="../JunimoGate.GameHost/JunimoGate.GameHost.csproj" />
+    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI/bin/$(Configuration)/net9.0-android35.0/StardewModdingAPI.dll"
+                  Link="smapi-managed/StardewModdingAPI.dll" />
+    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI.Toolkit/bin/$(Configuration)/net9.0/StardewModdingAPI.Toolkit.dll"
+                  Link="smapi-managed/StardewModdingAPI.Toolkit.dll" />
+    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI.Toolkit.CoreInterfaces/bin/$(Configuration)/net9.0/StardewModdingAPI.Toolkit.CoreInterfaces.dll"
+                  Link="smapi-managed/StardewModdingAPI.Toolkit.CoreInterfaces.dll" />
     <TrimmerRootDescriptor Include="linker.xml"
                            Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' == 'true'" />
   </ItemGroup>
+  <Target Name="AddSmapiCommercialLinkReferences" BeforeTargets="_LinkAssembliesNoShrinkInputs">
+    <ItemGroup>
+      <ResolvedAssemblies Include="$(JunimoGateGameReferenceDir)/StardewValley.dll" AndroidSkipAddToPackage="true" Abi="arm64-v8a" DestinationSubPath="StardewValley.dll" />
+      <ResolvedAssemblies Include="$(JunimoGateGameReferenceDir)/StardewValley.GameData.dll" AndroidSkipAddToPackage="true" Abi="arm64-v8a" DestinationSubPath="StardewValley.GameData.dll" />
+      <ResolvedAssemblies Include="$(JunimoGateGameReferenceDir)/BmFont.dll" AndroidSkipAddToPackage="true" Abi="arm64-v8a" DestinationSubPath="BmFont.dll" />
+      <ResolvedAssemblies Include="$(JunimoGateGameReferenceDir)/Lidgren.Network.dll" AndroidSkipAddToPackage="true" Abi="arm64-v8a" DestinationSubPath="Lidgren.Network.dll" />
+      <ResolvedAssemblies Include="$(JunimoGateGameReferenceDir)/xTile.dll" AndroidSkipAddToPackage="true" Abi="arm64-v8a" DestinationSubPath="xTile.dll" />
+    </ItemGroup>
+  </Target>
+  <Target Name="RemoveSmapiCommercialPackageItems" AfterTargets="_LinkAssembliesNoShrink">
+    <ItemGroup>
+      <ResolvedAssemblies Remove="$(JunimoGateGameReferenceDir)/StardewValley.dll;$(JunimoGateGameReferenceDir)/StardewValley.GameData.dll;$(JunimoGateGameReferenceDir)/BmFont.dll;$(JunimoGateGameReferenceDir)/Lidgren.Network.dll;$(JunimoGateGameReferenceDir)/xTile.dll" />
+      <_ResolvedAssemblies Remove="$(MonoAndroidIntermediateAssemblyDir)StardewValley.dll;$(MonoAndroidIntermediateAssemblyDir)StardewValley.GameData.dll;$(MonoAndroidIntermediateAssemblyDir)BmFont.dll;$(MonoAndroidIntermediateAssemblyDir)Lidgren.Network.dll;$(MonoAndroidIntermediateAssemblyDir)xTile.dll" />
+      <_ResolvedUserAssemblies Remove="$(MonoAndroidIntermediateAssemblyDir)StardewValley.dll;$(MonoAndroidIntermediateAssemblyDir)StardewValley.GameData.dll;$(MonoAndroidIntermediateAssemblyDir)BmFont.dll;$(MonoAndroidIntermediateAssemblyDir)Lidgren.Network.dll;$(MonoAndroidIntermediateAssemblyDir)xTile.dll" />
+      <_ResolvedUserMonoAndroidAssemblies Remove="$(MonoAndroidIntermediateAssemblyDir)StardewValley.dll;$(MonoAndroidIntermediateAssemblyDir)StardewValley.GameData.dll;$(MonoAndroidIntermediateAssemblyDir)BmFont.dll;$(MonoAndroidIntermediateAssemblyDir)Lidgren.Network.dll;$(MonoAndroidIntermediateAssemblyDir)xTile.dll" />
+    </ItemGroup>
+  </Target>
   <Target Name="ValidateGameHostExecutionMode" BeforeTargets="Build">
     <Error Condition="'$(UseInterpreter)' != 'false'"
            Text="JunimoGate App must use stock Mono JIT with UseInterpreter=false for GameHost." />

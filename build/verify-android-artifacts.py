@@ -26,6 +26,7 @@ class ExpectedArtifact:
     query_packages: tuple[str, ...] | None = None
     public_monogame_payload_sha256: str | None = None
     public_openal_sha256: str | None = None
+    require_smapi_host: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class ManifestElement:
 class ParsedManifest:
     query_packages: list[str]
     permissions: list[str]
+    activities: dict[str, dict[str, str]]
 
 
 def run(*command: str) -> str:
@@ -80,7 +82,12 @@ def parse_xmltree_string(raw_value: str) -> str | None:
     if raw_match:
         return raw_match.group(1)
     string_match = re.match(r'"([^"]*)"', raw_value)
-    return string_match.group(1) if string_match else None
+    if string_match:
+        return string_match.group(1)
+    bool_match = re.match(r"\(type 0x12\)(0x[0-9a-fA-F]+)", raw_value)
+    if bool_match:
+        return "true" if int(bool_match.group(1), 16) != 0 else "false"
+    return None
 
 
 def parse_manifest(xmltree: str) -> ParsedManifest:
@@ -112,6 +119,7 @@ def parse_manifest(xmltree: str) -> ParsedManifest:
 
     query_packages: list[str] = []
     permissions: list[str] = []
+    activities: dict[str, dict[str, str]] = {}
     for element in elements:
         android_name = element.attributes.get("android:name")
         if android_name is None:
@@ -124,8 +132,10 @@ def parse_manifest(xmltree: str) -> ParsedManifest:
             and element.path[1].startswith("uses-permission")
         ):
             permissions.append(android_name)
+        elif element.path == ("manifest", "application", "activity"):
+            activities[android_name] = element.attributes
 
-    return ParsedManifest(query_packages, permissions)
+    return ParsedManifest(query_packages, permissions, activities)
 
 
 def parse_badging_permissions(badging: str) -> list[str]:
@@ -280,6 +290,12 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             for name in archive_names
             if (
                 "stardewvalley.dll" in name.casefold()
+                or "stardewvalley.gamedata.dll" in name.casefold()
+                or pathlib.PurePosixPath(name).name.casefold() in {
+                    "lib_bmfont.dll.so",
+                    "lib_lidgren.network.dll.so",
+                    "lib_xtile.dll.so",
+                }
                 or "assets/content/" in name.casefold()
                 or name in game_aot_markers
                 or ("monogame.framework.dll" in name.casefold() and not mono_game_provider_valid)
@@ -291,6 +307,20 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         compressed_native_entries = [
             entry.filename for entry in native_entries if entry.compress_type != zipfile.ZIP_STORED
         ]
+        smapi_managed_payloads = {
+            "lib/arm64-v8a/lib_StardewModdingAPI.dll.so",
+            "lib/arm64-v8a/lib_StardewModdingAPI.Toolkit.dll.so",
+            "lib/arm64-v8a/lib_StardewModdingAPI.Toolkit.CoreInterfaces.dll.so",
+        }
+        smapi_internal_assets = {
+            "assets/smapi-internal/config.json",
+            "assets/smapi-internal/metadata.json",
+            "assets/smapi-internal/blacklist.json",
+            "assets/smapi-internal/i18n/default.json",
+        }
+        smapi_payload_complete = smapi_managed_payloads.issubset(archive_names) and smapi_internal_assets.issubset(archive_names)
+
+    smapi_activity = manifest.activities.get("org.junimogate.gamehost.SmapiGameActivity")
 
     v2 = "Verified using v2 scheme (APK Signature Scheme v2): true" in signatures
     v3 = "Verified using v3 scheme (APK Signature Scheme v3): true" in signatures
@@ -317,6 +347,13 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "publicMonoGameProvider": mono_game_provider_valid,
         "publicOpenAlProvider": openal_provider_valid,
     }
+    if expected.require_smapi_host:
+        checks["smapiPayloadComplete"] = smapi_payload_complete
+        checks["smapiActivityIsolated"] = (
+            smapi_activity is not None
+            and smapi_activity.get("android:exported") in {"false", "0"}
+            and smapi_activity.get("android:process") == ":game"
+        )
     if expected.query_packages is not None:
         checks["exactGamePackageQueries"] = (
             sorted(manifest.query_packages) == sorted(expected.query_packages)
@@ -344,11 +381,16 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "nativeEntryCount": len(native_entries),
         "nativeLibrariesStored": native_libraries_stored,
         "compressedNativeEntries": compressed_native_entries,
-        "publicRuntimeProviders": {
+            "publicRuntimeProviders": {
             "monoGameEntry": mono_game_entries[0] if len(mono_game_entries) == 1 else None,
             "monoGamePayloadSha256": public_monogame_payload_sha256,
             "openAlEntry": openal_entries[0] if len(openal_entries) == 1 else None,
             "openAlSha256": public_openal_sha256,
+        },
+        "smapiHost": {
+            "required": expected.require_smapi_host,
+            "payloadComplete": smapi_payload_complete,
+            "activity": smapi_activity,
         },
         "manifest": {
             "queryPackages": manifest.query_packages,
@@ -409,6 +451,7 @@ def main() -> int:
             ),
             "33a406a56f43f74d61a155645483ade9ec698a19b19884ce10462068de93427c",
             "c972352d7f72966ad3b05be42a425925e8d28efd88a6d0f0e726f6b1cf4bb6d0",
+            True,
         ),
         ExpectedArtifact(
             "app-release",
@@ -424,6 +467,7 @@ def main() -> int:
             ),
             "33a406a56f43f74d61a155645483ade9ec698a19b19884ce10462068de93427c",
             "c972352d7f72966ad3b05be42a425925e8d28efd88a6d0f0e726f6b1cf4bb6d0",
+            True,
         ),
     ]
 

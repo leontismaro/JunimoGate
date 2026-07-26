@@ -37,6 +37,7 @@ public sealed class MainActivity : Activity
     private CancellationTokenSource? discoveryCancellation;
     private TextView? diagnosticText;
     private Button? launchGameHostButton;
+    private string? pendingSmapiLaunchKey;
     private volatile bool destroyed;
 
     protected override void OnCreate(Bundle? savedInstanceState)
@@ -45,7 +46,7 @@ public sealed class MainActivity : Activity
 
         diagnosticText = new TextView(this)
         {
-            Text = "JunimoGate M3 game discovery diagnostics\n\nScanning the two supported package candidates…",
+            Text = "JunimoGate SMAPI launcher\n\nChecking prepared game state…",
             TextSize = 14,
             Typeface = Typeface.Monospace,
         };
@@ -58,14 +59,21 @@ public sealed class MainActivity : Activity
 
         launchGameHostButton = new Button(this)
         {
-            Text = "Open validated GameHost",
+            Text = "Launch through SMAPI",
             Enabled = false,
         };
         launchGameHostButton.Click += (_, _) =>
         {
             if (!destroyed && launchGameHostButton?.Enabled == true)
             {
-                StartActivity(new Intent(this, typeof(GameHostActivity)));
+                var key = Interlocked.Exchange(ref pendingSmapiLaunchKey, null);
+                if (key is not null)
+                {
+                    var intent = new Intent(this, typeof(SmapiGameActivity));
+                    intent.PutExtra(SmapiGameActivity.LaunchKeyExtra, key);
+                    StartActivity(intent);
+                    launchGameHostButton.Enabled = false;
+                }
             }
         };
 
@@ -106,86 +114,12 @@ public sealed class MainActivity : Activity
         try
         {
             var context = ApplicationContext ?? this;
-            var discovery = await AndroidPlatformBoundary
-                .DiscoverGamesAsync(context, cancellationToken)
-                .ConfigureAwait(false);
+            UpdateUi("JunimoGate\n\nSMAPI launch\nStatus: checking the prepared snapshot…\n", cancellationToken);
+            var handle = await GameDeepPrepareCoordinator.PrepareOrReuseAsync(context, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-
-            var discoveryDocument = CreateDiscoveryReportDocument(discovery);
-            var discoveryReportSaved = await TryWriteReportAtomicallyAsync(
-                discoveryDocument,
-                DiscoveryReportFileName,
-                cancellationToken).ConfigureAwait(false);
-            var discoveryText = RenderDiscoveryDiagnostics(discoveryDocument, discoveryReportSaved);
-
-            UpdateUi(
-                discoveryText + "\nJunimoGate M4 game workspace\nStatus: preparing…\n",
-                cancellationToken);
-
-            var playCandidate = discovery.Candidates.FirstOrDefault(candidate =>
-                candidate.Installation.PackageName.Equals(
-                    AndroidPlatformBoundary.PlayPackageName,
-                    StringComparison.Ordinal));
-            var workspaceDocument = await CreateWorkspaceReportDocumentAsync(
-                context,
-                playCandidate,
-                cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var workspaceReportSaved = await TryWriteReportAtomicallyAsync(
-                workspaceDocument,
-                WorkspaceReportFileName,
-                cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            var workspaceText = RenderWorkspaceDiagnostics(workspaceDocument, workspaceReportSaved);
-
-            UpdateUi(
-                discoveryText + "\n" + workspaceText +
-                "\nJunimoGate M5 Gate 0 metadata-only compatibility probe\nStatus: inspecting…\n",
-                cancellationToken);
-
-            var gameHostProbeDocument = await CreateGameHostProbeReportDocumentAsync(
-                context,
-                playCandidate,
-                workspaceDocument,
-                cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            var gameHostProbeReportSaved = await TryWriteReportAtomicallyAsync(
-                gameHostProbeDocument,
-                GameHostProbeReportFileName,
-                cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var gameHostProbeText = RenderGameHostProbeDiagnostics(
-                gameHostProbeDocument,
-                gameHostProbeReportSaved);
-            UpdateUi(
-                discoveryText + "\n" + workspaceText + "\n" + gameHostProbeText +
-                "\nJunimoGate M5 exact applied workspace\nStatus: preparing…\n",
-                cancellationToken);
-
-            string appliedWorkspaceText;
-            var gameHostLaunchReady = false;
-            if (playCandidate is not null &&
-                gameHostProbeDocument.Status == AndroidGameHostProbeStatus.Succeeded.ToString())
-            {
-                var applied = await AndroidGameHostAppliedWorkspaceBoundary
-                    .PrepareAsync(context, playCandidate, cancellationToken)
-                    .ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                appliedWorkspaceText = RenderAppliedWorkspaceDiagnostics(applied);
-                gameHostLaunchReady = applied.IsSuccess;
-            }
-            else
-            {
-                appliedWorkspaceText =
-                    "JunimoGate M5 exact applied workspace\nStatus: not attempted\nReason: Gate 0 did not produce an approved trusted support identity.\n";
-            }
-
-            UpdateUi(
-                discoveryText + "\n" + workspaceText + "\n" + gameHostProbeText + "\n" + appliedWorkspaceText,
-                cancellationToken);
-            SetGameHostLaunchEnabled(gameHostLaunchReady, cancellationToken);
+            pendingSmapiLaunchKey = handle.Key;
+            UpdateUi($"JunimoGate\n\nSMAPI launch\nStatus: ready\nCapability expires: {handle.ExpiresAtUtc:O}\nFast launch checks PackageManager marker, active snapshot schema and file existence only.\n", cancellationToken);
+            SetGameHostLaunchEnabled(true, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
