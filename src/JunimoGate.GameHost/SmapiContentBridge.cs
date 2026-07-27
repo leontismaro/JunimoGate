@@ -14,15 +14,11 @@ internal static class SmapiContentBridge
     private static Dictionary<string, Entry>? entries;
     private static bool patched;
 
-    internal static void Install(PreparedGameSnapshot snapshot)
+    internal static void Install(PreparedRuntimeFiles runtimeFiles)
     {
         var next = new Dictionary<string, Entry>(StringComparer.Ordinal);
-        foreach (var item in snapshot.ContentFiles)
-        {
-            if (!IsContentPath(item.RelativePath)) throw new InvalidDataException("A prepared Content path is invalid.");
-            var path = Resolve(snapshot.SourceWorkspacePath, item.RelativePath);
-            if (!next.TryAdd(item.RelativePath, new Entry(path, item.Size))) throw new InvalidDataException("Duplicate prepared Content path.");
-        }
+        foreach (var item in runtimeFiles.ContentPaths)
+            next.Add(item.Key, new Entry(item.Value));
         lock (Gate)
         {
             if (!patched)
@@ -50,7 +46,6 @@ internal static class SmapiContentBridge
             if (entries is null || !entries.TryGetValue(relative, out entry!)) throw new FileNotFoundException("The requested Content file is not prepared.");
         }
         var stream = new FileStream(entry.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
-        if (stream.Length != entry.Size) { stream.Dispose(); throw new InvalidDataException("A prepared Content file size changed."); }
         __result = stream;
         return false;
     }
@@ -89,15 +84,5 @@ internal static class SmapiContentBridge
         return AssemblyLoadContext.Default.Assemblies.FirstOrDefault(assembly =>
             assembly.GetName().Name?.Equals(requested.Name, StringComparison.OrdinalIgnoreCase) == true);
     }
-    private static string Resolve(string root, string relative)
-    {
-        var canonicalRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        var path = Path.GetFullPath(Path.Combine(canonicalRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
-        if (!path.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(path))
-            throw new FileNotFoundException("A prepared Content file is missing or escaped its workspace.");
-        return path;
-    }
-    private static bool IsContentPath(string path) => path.StartsWith("Content/", StringComparison.Ordinal) &&
-        !path.Contains("//", StringComparison.Ordinal) && path.Split('/').All(static part => part.Length > 0 && part is not "." and not "..");
-    private sealed record Entry(string Path, long Size);
+    private sealed record Entry(string Path);
 }

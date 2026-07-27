@@ -8,8 +8,6 @@ using Android.Views;
 using Android.Widget;
 using Android.Window;
 using Microsoft.Xna.Framework;
-using JunimoGate.Android;
-using JunimoGate.Core;
 using StardewModdingAPI.AndroidHost;
 
 namespace JunimoGate.GameHost;
@@ -52,12 +50,12 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         {
             var key = Intent?.GetStringExtra(LaunchKeyExtra) ?? throw new InvalidDataException("The launch capability is missing.");
             var snapshot = await GameLaunchRegistry.ConsumeAsync(this, key, CancellationToken.None);
-            await VerifyPackageMarkerAsync(snapshot);
+            var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot);
             GameSessionRegistry.MarkActive(this);
             await ProvisionInternalFilesAsync(snapshot.InternalDirectory);
-            loader = new SmapiDefaultAssemblyLoader(snapshot);
+            loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles);
             loader.Install();
-            SmapiContentBridge.Install(snapshot);
+            SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
             _ = loader.LoadGameAssembly();
             Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameLaunchSchema.BuildId}:smapi=4.3.2.5");
@@ -117,17 +115,6 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         base.OnDestroy();
         if (terminateGameProcess)
             global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
-    }
-
-    private async Task VerifyPackageMarkerAsync(PreparedGameSnapshot snapshot)
-    {
-        var package = await new AndroidPackageInstallationSnapshotProvider(this).GetSnapshotAsync(snapshot.PackageName, CancellationToken.None)
-            ?? throw new InvalidOperationException("The prepared game package is no longer installed.");
-        if (package.VersionName != snapshot.VersionName || package.LongVersionCode != snapshot.VersionCode ||
-            package.SigningIdentity is null ||
-            !KnownGameCertificate.Verify(snapshot.PackageName, package.SigningIdentity).AllowsCodeExecution ||
-            PackageUpdateMarker.Create(package) != snapshot.PackageMarker)
-            throw new InvalidOperationException("The game identity changed after Deep Prepare.");
     }
 
     private async Task ProvisionInternalFilesAsync(string target)

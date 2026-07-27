@@ -204,4 +204,98 @@ return TestHarness.Run(
             signing,
             "arm64-v8a",
             [new ApkSourceIdentity(Path.Combine(root, "split.apk"), digest2, 1, "split-1", "feature")]));
+    }),
+    ("Prepared runtime inventory resolves valid files once", () =>
+    {
+        using var fixture = new RuntimeInventoryFixture();
+        var assembly = fixture.Write("assemblies/Game.dll", [1, 2, 3]);
+        var content = fixture.Write("Content/Maps/Farm.xnb", [4, 5, 6, 7]);
+
+        var assemblies = PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            fixture.Root,
+            [new PreparedRuntimeFileSpec("Game", "assemblies/Game.dll", assembly)],
+            StringComparer.OrdinalIgnoreCase,
+            "managed assembly");
+        var contentFiles = PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            fixture.Root,
+            [new PreparedRuntimeFileSpec("Content/Maps/Farm.xnb", "Content/Maps/Farm.xnb", content)],
+            StringComparer.Ordinal,
+            "Content",
+            "Content/");
+
+        TestHarness.Equal(Path.Combine(fixture.Root, "assemblies", "Game.dll"), assemblies["game"]);
+        TestHarness.Equal(Path.Combine(fixture.Root, "Content", "Maps", "Farm.xnb"), contentFiles["Content/Maps/Farm.xnb"]);
+    }),
+    ("Prepared runtime inventory rejects missing and changed files", () =>
+    {
+        using var fixture = new RuntimeInventoryFixture();
+        fixture.Write("assemblies/Game.dll", [1, 2, 3]);
+        TestHarness.Throws<FileNotFoundException>(() => PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            fixture.Root,
+            [new PreparedRuntimeFileSpec("Missing", "assemblies/Missing.dll", 1)],
+            StringComparer.OrdinalIgnoreCase,
+            "managed assembly"));
+        TestHarness.Throws<InvalidDataException>(() => PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            fixture.Root,
+            [new PreparedRuntimeFileSpec("Game", "assemblies/Game.dll", 4)],
+            StringComparer.OrdinalIgnoreCase,
+            "managed assembly"));
+    }),
+    ("Prepared runtime inventory rejects duplicate identities and Content paths", () =>
+    {
+        using var fixture = new RuntimeInventoryFixture();
+        var first = fixture.Write("assemblies/First.dll", [1]);
+        var second = fixture.Write("assemblies/Second.dll", [2]);
+        TestHarness.Throws<InvalidDataException>(() => PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            fixture.Root,
+            [
+                new PreparedRuntimeFileSpec("Game", "assemblies/First.dll", first),
+                new PreparedRuntimeFileSpec("game", "assemblies/Second.dll", second),
+            ],
+            StringComparer.OrdinalIgnoreCase,
+            "managed assembly"));
+
+        var content = fixture.Write("Content/Test.xnb", [3]);
+        TestHarness.Throws<InvalidDataException>(() => PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            fixture.Root,
+            [
+                new PreparedRuntimeFileSpec("Content/Test.xnb", "Content/Test.xnb", content),
+                new PreparedRuntimeFileSpec("Content/Test.xnb", "Content/Test.xnb", content),
+            ],
+            StringComparer.Ordinal,
+            "Content",
+            "Content/"));
+    }),
+    ("Prepared runtime inventory rejects escaping and noncanonical paths", () =>
+    {
+        using var fixture = new RuntimeInventoryFixture();
+        foreach (var path in new[] { "../escape.dll", "/absolute.dll", "assemblies\\Game.dll", "Content//Test.xnb" })
+        {
+            TestHarness.Throws<InvalidDataException>(() => PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+                fixture.Root,
+                [new PreparedRuntimeFileSpec("Game", path, 1)],
+                StringComparer.OrdinalIgnoreCase,
+                "managed assembly"));
+        }
     }));
+
+sealed class RuntimeInventoryFixture : IDisposable
+{
+    public RuntimeInventoryFixture()
+    {
+        Root = Path.Combine(Path.GetTempPath(), $"junimogate-runtime-inventory-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Root);
+    }
+
+    public string Root { get; }
+
+    public long Write(string relativePath, byte[] bytes)
+    {
+        var path = Path.Combine(Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+        return bytes.LongLength;
+    }
+
+    public void Dispose() => Directory.Delete(Root, recursive: true);
+}

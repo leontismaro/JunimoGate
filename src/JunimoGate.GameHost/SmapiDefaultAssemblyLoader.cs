@@ -20,17 +20,13 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
     private readonly string rewriteCache;
     private bool installed;
 
-    public SmapiDefaultAssemblyLoader(PreparedGameSnapshot snapshot)
+    public SmapiDefaultAssemblyLoader(PreparedGameSnapshot snapshot, PreparedRuntimeFiles runtimeFiles)
     {
         this.snapshot = snapshot;
         rewriteCache = Path.Combine(Path.GetDirectoryName(snapshot.InternalDirectory)!, "mod-rewrite-cache");
         Directory.CreateDirectory(rewriteCache);
-        foreach (var entry in snapshot.ManagedAssemblies)
-        {
-            if (string.IsNullOrWhiteSpace(entry.SimpleName) || !gamePaths.TryAdd(entry.SimpleName, ResolveSource(entry.RelativePath)))
-                throw new InvalidDataException("The prepared managed assembly index contains a duplicate identity.");
-        }
-        gamePaths["StardewValley"] = Path.GetFullPath(snapshot.OverlayAssemblyPath);
+        foreach (var entry in runtimeFiles.ManagedAssemblyPaths)
+            gamePaths.Add(entry.Key, entry.Value);
     }
 
     public void Install()
@@ -96,7 +92,6 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         var existing = LoadExisting(name);
         if (existing is not null) return existing;
         if (!gamePaths.TryGetValue(name, out var path)) throw new FileNotFoundException("The prepared assembly index has no requested game assembly.", name);
-        if (!File.Exists(path)) throw new FileNotFoundException("A prepared game assembly is missing.");
         return AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
     }
 
@@ -118,11 +113,6 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
     {
         if (ProtectedNames.Contains(name) || name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("Microsoft.", StringComparison.Ordinal))
             throw new FileLoadException("A Mod attempted to shadow a protected host or framework assembly.");
-    }
-    private string ResolveSource(string relative)
-    {
-        var path = Path.GetFullPath(Path.Combine(snapshot.SourceWorkspacePath, relative.Replace('/', Path.DirectorySeparatorChar)));
-        return RequireContained(path, snapshot.SourceWorkspacePath);
     }
     private static string RequireContained(string path, string root)
     {
