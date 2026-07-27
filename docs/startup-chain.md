@@ -1,6 +1,6 @@
 # Startup chain
 
-> 当前产品主线是 Android SMAPI 与真实 Mod 闭环。现有 M5-PoC 启动链仍会重复 discovery、hash、probe 和 rewrite；该代码保持可用并冻结，不再扩展为新的产品门禁。
+> 当前产品入口是已实现的 Launch Alpha：首次/更新时 Deep Prepare，正常打开时 Fast Launch，用户点击后进入独立的 SMAPI 游戏进程。固定版本的 M5-PoC exact rewrite 仍只作为当前 1.6.15.3 基线，不得扩展为逐版本白名单。
 
 ## 1. 当前已验证链：M5-PoC
 
@@ -28,16 +28,20 @@ MainActivity 诊断页
 
 这些限制不再作为继续研究的理由。当前冻结它，直接复用已工作的游戏宿主能力接入 SMAPI。
 
-## 2. 当前已实现链：源码级 SMAPI 运行核心
+## 2. 当前产品链：Launch Alpha
 
 JunimoGate 保持单 APK，但游戏运行在独立 `:game` 进程，以便退出后清理 SMAPI、Harmony、Mods 和游戏的静态状态。
 
 ```text
-MainActivity
-  -> GameLaunchCoordinator
-  -> 一次准备/选择 active workspace
-  -> 持久化 GameLaunchDescriptor
-  -> 传递短 session key
+MainActivity / LauncherCoordinator
+  -> 读取 active prepared snapshot
+  -> PackageManager marker + signer + schema + 必要文件轻量检查
+  -> 命中：Ready（Fast Launch，不 hash APK，不 probe，不 rewrite）
+  -> 未命中：一个事务内完成 discovery / extraction / exact compatibility / rewrite（Deep Prepare）
+  -> Ready，等待用户点击 Launch game
+  -> 点击时再次做轻量检查
+  -> 创建一次性 GameLaunchDescriptor
+  -> 传递随机 session key
   -> SmapiGameActivity (:game)
   -> 读取受控 descriptor
   -> 注册统一程序集解析
@@ -55,6 +59,9 @@ MainActivity
   -> 游戏
 ```
 
+
+当前 Deep Prepare 的冷构建预算是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；managed probe、native inventory、recipe evaluation、rewrite 各 1 次。提取与 native inventory 借用同一个 APK/ZIP session。若 applied cache 已有效命中，则 rewrite 为 0；若复用已有 source workspace cache，则该旧 cache 仍完整验证 1 次。最后一次计数写入 Logcat 与 app-private `runtime/diagnostics/last-deep-prepare.json`。
+
 产品路径不使用：
 
 - `StardewModdingAPI.Program.Main`；
@@ -67,11 +74,11 @@ MainActivity
 
 ### `JunimoGate.App`
 
-- 启动器和最小 Mod 管理界面；
+- 启动器状态、首次准备和启动按钮；
 - 选择 active workspace/Profile；
 - 创建 `GameLaunchDescriptor`；
 - 启动 `SmapiGameActivity`；
-- 展示 SMAPI/Mod 日志和失败原因。
+- 当前展示准备/不支持/失败的最小状态；SMAPI/Mod 日志产品界面后置。
 
 ### `JunimoGate.Android`
 
@@ -84,7 +91,7 @@ MainActivity
 
 - 复用现有 Play 1.6.15.3 source/applied workspace；
 - 不为 SMAPI 新增 support key、probe、完整方法 SHA 或重复全量验证；
-- 后续再把首次/更新 Deep Prepare 与正常 Fast Launch 分开。
+- 首次/更新 Deep Prepare 与正常 Fast Launch 已分开；同一 Deep Prepare 复用一个 APK session。
 
 ### `JunimoGate.GameHost`
 

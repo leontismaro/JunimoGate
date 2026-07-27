@@ -12,7 +12,7 @@ The host filter, synthetic extraction tests, read-only game inspector, and platf
 ./build/test-host.sh
 ```
 
-The full host suite currently passes 129/129 tests: Core 12, Extraction 55, Rewriter 51, Mods 6, and RuntimeProbe 5. One of the five RuntimeProbe host tests executes and reports all ten hard cases on CoreCLR; those ten case results are not ten additional host-suite tests. The actual Android runtime decision comes from the physical-device reports described below.
+The full host suite currently passes 130/130 tests: Core 13, Extraction 55, Rewriter 51, Mods 6, and RuntimeProbe 5. One of the five RuntimeProbe host tests executes and reports all ten hard cases on CoreCLR; those ten case results are not ten additional host-suite tests. The actual Android runtime decision comes from the physical-device reports described below.
 
 The inspector identifies APK roles by ZIP contents rather than split filenames. It can inventory AssemblyStore v2 entries, extract managed assembly images supplied by the user, and inspect .NET metadata without decompiling source or extracting `assets/Content/`:
 
