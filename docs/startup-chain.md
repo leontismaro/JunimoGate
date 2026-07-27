@@ -62,7 +62,7 @@ MainActivity / LauncherCoordinator
 ```
 
 
-当前 Deep Prepare 的冷构建预算仍是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；managed probe、native inventory、recipe evaluation、rewrite 各 1 次。正常复用启动的目标预算是：Launcher snapshot 读取 1 次、PackageManager snapshot 1 次、descriptor snapshot 读取 0 次、`:game` snapshot 读取 1 次、runtime inventory 1 次；所有 APK/workspace hash、probe 和 rewrite 均为 0。runtime inventory 只读取文件元数据，不读取或 hash Content 内容，并且后续每次 Content 打开或程序集加载不再重复校验。
+当前 Deep Prepare 的冷构建预算仍是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；managed probe、native inventory、recipe evaluation、rewrite 各 1 次。正常复用启动已经达到：Launcher snapshot 读取 1 次、PackageManager snapshot 1 次、descriptor snapshot 读取 0 次、`:game` snapshot 读取 1 次、runtime inventory 1 次；所有 APK/workspace hash、probe 和 rewrite 均为 0。2026-07-27 真机 inventory 覆盖 65 个程序集和 3556 个 Content 文件，耗时 102ms。runtime inventory 只读取文件元数据，不读取或 hash Content 内容，并且后续每次 Content 打开或程序集加载不再重复校验。
 
 产品路径不使用：
 

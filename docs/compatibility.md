@@ -27,7 +27,7 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 
 ## Launch compatibility
 
-正常启动使用 Fast Launch，不重复运行 APK/workspace 全量 hash、metadata/native probe 或 Cecil rewrite。当前重型工作已经分层，但轻量链仍重复反序列化 snapshot、读取 PackageManager，并在程序集/Content 使用路径重复检查文件。目标职责是 Launcher snapshot 一次、点击时 PackageManager 一次、`:game` snapshot 一次、SMAPI 前 runtime inventory 一次；后续 load/open 不再额外校验。完整 Deep Prepare 只在首次导入、游戏更新、schema 变化、明确损坏、手动修复或显式验收时执行。
+正常启动使用 Fast Launch，不重复运行 APK/workspace 全量 hash、metadata/native probe 或 Cecil rewrite。轻量链已经单次化为 Launcher snapshot 一次、点击时 PackageManager 一次、descriptor snapshot 零次、`:game` snapshot 一次、SMAPI 前 runtime inventory 一次；后续 load/open 不再额外校验。完整 Deep Prepare 只在首次导入、游戏更新、schema 变化、明确损坏、手动修复或显式验收时执行。
 
 ## SMAPI and Mod compatibility
 
