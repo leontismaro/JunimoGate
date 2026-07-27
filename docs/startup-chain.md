@@ -35,15 +35,17 @@ JunimoGate 保持单 APK，但游戏运行在独立 `:game` 进程，以便退�
 ```text
 MainActivity / LauncherCoordinator
   -> 读取 active prepared snapshot
-  -> PackageManager marker + signer + schema + 必要文件轻量检查
-  -> 命中：Ready（Fast Launch，不 hash APK，不 probe，不 rewrite）
-  -> 未命中：一个事务内完成 discovery / extraction / exact compatibility / rewrite（Deep Prepare）
+  -> 只验证 snapshot envelope，不读取 PackageManager，不遍历程序集/Content
+  -> 有效：保留 PreparedGameHandle 并显示 Ready
+  -> 缺失/失效：一个事务内完成 discovery / extraction / exact compatibility / rewrite（Deep Prepare）
   -> Ready，等待用户点击 Launch game
-  -> 点击时再次做轻量检查
-  -> 创建一次性 GameLaunchDescriptor
+  -> 复用状态在点击时读取一次 PackageManager marker
+  -> 更新则完成一次 Deep Prepare 并自动继续同一次启动请求
+  -> 使用内存 handle 创建一次性 GameLaunchDescriptor，不重读 snapshot
   -> 传递随机 session key
   -> SmapiGameActivity (:game)
-  -> 读取受控 descriptor
+  -> 读取受控 descriptor 与 snapshot 各一次
+  -> 一次性建立并验证 PreparedRuntimeFiles inventory
   -> 注册统一程序集解析
   -> 在 Default AssemblyLoadContext 加载提取的游戏程序集
   -> 安装 GameHostBridge / ContentBridge / audio bridge
@@ -60,7 +62,7 @@ MainActivity / LauncherCoordinator
 ```
 
 
-当前 Deep Prepare 的冷构建预算是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；managed probe、native inventory、recipe evaluation、rewrite 各 1 次。提取与 native inventory 借用同一个 APK/ZIP session。若 applied cache 已有效命中，则 rewrite 为 0；若复用已有 source workspace cache，则该旧 cache 仍完整验证 1 次。最后一次计数写入 Logcat 与 app-private `runtime/diagnostics/last-deep-prepare.json`。
+当前 Deep Prepare 的冷构建预算仍是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；managed probe、native inventory、recipe evaluation、rewrite 各 1 次。正常复用启动的目标预算是：Launcher snapshot 读取 1 次、PackageManager snapshot 1 次、descriptor snapshot 读取 0 次、`:game` snapshot 读取 1 次、runtime inventory 1 次；所有 APK/workspace hash、probe 和 rewrite 均为 0。runtime inventory 只读取文件元数据，不读取或 hash Content 内容，并且后续每次 Content 打开或程序集加载不再重复校验。
 
 产品路径不使用：
 
