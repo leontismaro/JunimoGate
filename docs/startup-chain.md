@@ -138,13 +138,26 @@ Mods
 - 游戏 Content 目录；
 - Mods 目录；
 - `smapi-internal` 目录；
-- config、log、save 目录；
+- config、log、live save、save backup 目录；
 - 主线程 dispatcher；
 - 统一 managed assembly loader；
 - View 挂载回调；
 - 结构化错误和退出回调。
 
 Android fork 中通过 `MainActivity.instance` 查 Activity、硬编码 `ExternalFilesDir/Mods`、根据 `Assembly.Location` 猜 GamePath、自行 `SetContentView`/`Finish` 和依赖 Loader 目录结构的逻辑，应改成使用这些宿主参数。
+
+当前存档与备份链路是：
+
+```text
+Stardew Game1
+  -> /storage/emulated/0/Android/data/org.junimogate.app/files/Saves
+  -> SMAPI Constants.SavesPath（同一目录）
+  -> SMAPI SaveBackupZip 读取实时存档
+  -> no_backup/junimogate/user-data/save-backups（最多 20 份每日备份）
+```
+
+workspace、程序集改写结果、SMAPI internal 和 Mod rewrite cache 位于 `runtime`，可以重建；Mods、config、logs 和 save-backups 位于 `user-data`，Deep Prepare 与 runtime 重建不得删除。旧 `runtime/smapi` 用户目录由 storage layout v2 一次性迁移；旧实时 saves 跨 Android 内外存储时采用复制后删除，且不会覆盖非空的新目录。
+
 
 ## 6. 当前验收顺序
 
