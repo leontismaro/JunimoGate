@@ -178,7 +178,7 @@ public class FarmerFacade : Farmer, IRewriteFacade
         }
     }
 
-    public bool hasItemInInventoryNamed(string? name)
+    public new bool hasItemInInventoryNamed(string? name)
     {
         if (name is not null)
         {

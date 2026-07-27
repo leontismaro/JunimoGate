@@ -57,7 +57,7 @@ public class CompatibilityRepoClient : IDisposable
 
     /// <summary>Fetch mods from the compatibility list by reading a local copy of the compatibility list repo.</summary>
     /// <param name="gitRepoPath">The full path to the compatibility list repo folder.</param>
-    public async Task<ModCompatibilityEntry[]> FetchModsFromLocalGitFolderAsync(string gitRepoPath)
+    public Task<ModCompatibilityEntry[]> FetchModsFromLocalGitFolderAsync(string gitRepoPath)
     {
         string modsJsonPath = Path.Combine(gitRepoPath, "data", "mods.jsonc");
         string contentPacksJsonPath = Path.Combine(gitRepoPath, "data", "broken-content-packs.jsonc");
@@ -67,11 +67,12 @@ public class CompatibilityRepoClient : IDisposable
         RawCompatibilityList? mods = JsonConvert.DeserializeObject<RawCompatibilityList>(File.ReadAllText(modsJsonPath));
         RawCompatibilityList? brokenContentPacks = JsonConvert.DeserializeObject<RawCompatibilityList>(File.ReadAllText(contentPacksJsonPath));
 
-        return
+        ModCompatibilityEntry[] entries =
             (mods?.Mods ?? [])
             .Concat(brokenContentPacks?.BrokenContentPacks ?? [])
             .Select(this.ParseRawModEntry)
             .ToArray();
+        return Task.FromResult(entries);
     }
 
     /// <summary>Get the inline HTML produced by a Markdown string in a compatibility repo field.</summary>

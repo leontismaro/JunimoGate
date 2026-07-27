@@ -95,9 +95,9 @@ internal class LogManager : IDisposable
     {
 #if SMAPI_FOR_ANDROID
         return;
-#endif
-
+#else
         Console.Title = title;
+#endif
     }
 
     /****
@@ -154,13 +154,13 @@ internal class LogManager : IDisposable
 #if SMAPI_FOR_ANDROID
         SMAPIActivityTool.ExitGame();
         return;
-#endif
-
+#else
         if (showMessage)
             this.Monitor.Log("Game has ended. Press any key to exit.");
         Thread.Sleep(100);
         Console.ReadKey();
         Environment.Exit(0);
+#endif
     }
 
     /****

@@ -100,10 +100,6 @@ internal static class AndroidModLoaderManager
         {
             taskModEntry.Wait();
         }
-        catch (Exception ex)
-        {
-            throw taskModEntry.Exception;
-        }
         finally
         {
             //Console.WriteLine("finally taskModEntry.Wait()");

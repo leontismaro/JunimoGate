@@ -17,7 +17,7 @@ public class Stats_1615_Facade : Stats, IRewriteFacade
         get => base.specificMonstersKilled;
     }
 
-    public SerializableDictionaryWithCaseInsensitiveKeys<uint> Values
+    public new SerializableDictionaryWithCaseInsensitiveKeys<uint> Values
     {
         get => base.Values;
     }

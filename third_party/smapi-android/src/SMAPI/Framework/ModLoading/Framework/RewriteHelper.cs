@@ -199,7 +199,7 @@ internal static class RewriteHelper
     /// <summary>Get whether a type reference and definition have the same namespace and name. This does <strong>not</strong> guarantee they point to the same type due to generics.</summary>
     /// <param name="typeReference">The type reference.</param>
     /// <param name="typeDefinition">The type definition.</param>
-    /// <remarks>This avoids an issue where we can't compare <see cref="TypeReference.FullName"/> to <see cref="TypeReference.FullName"/> because of the different ways they handle generics (e.g. <c>List`1&lt;System.String&gt;</c> vs <c>List`1</c>).</remarks>
+    /// <remarks>This avoids an issue where we can't compare <c>TypeReference.FullName</c> values because of the different ways they handle generics (e.g. <c>List`1&lt;System.String&gt;</c> vs <c>List`1</c>).</remarks>
     public static bool HasSameNamespaceAndName(TypeReference? typeReference, TypeDefinition? typeDefinition)
     {
         return

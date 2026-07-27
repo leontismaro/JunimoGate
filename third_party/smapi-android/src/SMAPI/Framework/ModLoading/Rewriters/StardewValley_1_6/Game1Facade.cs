@@ -18,7 +18,7 @@ public class Game1Facade : Game1, IRewriteFacade
     public bool gamePadControlsImplemented { get; set; }              // never used
     public static bool menuUp { get; set; }                           // mostly unused and always false
     public static Color morningColor { get; set; } = Color.LightBlue; // never used
-    public static IList<GameLocation> locations => game1._locations;         // make like PC
+    public new static IList<GameLocation> locations => game1._locations;         // make like PC
 
 
     /*********
@@ -178,7 +178,7 @@ public class Game1Facade : Game1, IRewriteFacade
 
 #if SMAPI_FOR_ANDROID
 
-    public static IList<IClickableMenu> onScreenMenus
+    public new static IList<IClickableMenu> onScreenMenus
     {
         get => Game1.onScreenMenus;
         set => Game1.onScreenMenus = new List<IClickableMenu>(value);

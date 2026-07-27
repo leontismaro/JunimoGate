@@ -57,7 +57,6 @@ internal static class SveFix
     //src code
     //https://github.com/FlashShifter/StardewValleyExpanded/blob/be7e471a8090fced91007d6caf91380097d3a0b3/Code/HarmonyPatch_TMXLLoadMapFacingDirection.cs#L68
     /// <summary>Detects the "facing direction" parameter in a TMXL LoadMap tile property and, if found, modifies the local player's facing direction after warping.</summary>
-    /// <param name="__instance">The instance calling the original method.</param>
     /// <param name="facingDirectionAfterWarp">The direction the player will face after warping.</param>
 
     static void Sve_TXMLMapFacingDir_warpFarmer(LocationRequest locationRequest, int tileX, int tileY,

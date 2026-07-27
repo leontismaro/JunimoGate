@@ -273,8 +273,7 @@ internal class Program
         AndroidLogger.Log("PrintErrorAndExit: msg: " + message);
         AndroidLogger.Log("technicalMsg: " + technicalMessage);
         return;
-#endif
-
+#else
         Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine(message);
         Console.ResetColor();
@@ -289,6 +288,7 @@ internal class Program
         }
 
         Program.PressAnyKeyToExit(showMessage: true);
+#endif
     }
 
     /// <summary>Show a 'press any key to exit' message, and exit when they press a key.</summary>
@@ -299,12 +299,12 @@ internal class Program
         AndroidLogger.Log("PressAnyKeyToExit: Game has ended. Press any key to exit.");
         SMAPIActivityTool.ExitGame();
         return;
-#endif
-
+#else
         if (showMessage)
             Console.WriteLine("Game has ended. Press any key to exit.");
         Thread.Sleep(100);
         Console.ReadKey();
         Environment.Exit(0);
+#endif
     }
 }

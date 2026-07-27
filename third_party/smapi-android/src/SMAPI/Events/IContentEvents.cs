@@ -6,8 +6,6 @@ namespace StardewModdingAPI.Events;
 public interface IContentEvents
 {
     /// <summary>Raised when an asset is being requested from the content pipeline.</summary>
-    /// <param name="sender">The event sender. This isn't applicable to SMAPI events, and is always null.</param>
-    /// <param name="e">The event data.</param>
     /// <remarks>
     /// The asset isn't necessarily being loaded yet (e.g. the game may be checking if it exists). Mods can register the changes they want to apply using methods on the event arguments. These will be applied when the asset is actually loaded.
     ///
@@ -16,19 +14,13 @@ public interface IContentEvents
     event EventHandler<AssetRequestedEventArgs> AssetRequested;
 
     /// <summary>Raised after one or more assets were invalidated from the content cache by a mod, so they'll be reloaded next time they're requested. If the assets will be reloaded or propagated automatically, this event is raised before that happens.</summary>
-    /// <param name="sender">The event sender. This isn't applicable to SMAPI events, and is always null.</param>
-    /// <param name="e">The event data.</param>
     event EventHandler<AssetsInvalidatedEventArgs> AssetsInvalidated;
 
     /// <summary>Raised after an asset is loaded by the content pipeline, after all mod edits specified via <see cref="AssetRequested"/> have been applied.</summary>
-    /// <param name="sender">The event sender. This isn't applicable to SMAPI events, and is always null.</param>
-    /// <param name="e">The event data.</param>
     /// <remarks>This event is only raised if something requested the asset from the content pipeline. Invalidating an asset from the content cache won't necessarily reload it automatically.</remarks>
     event EventHandler<AssetReadyEventArgs> AssetReady;
 
     /// <summary>Raised after the game language changes.</summary>
-    /// <param name="sender">The event sender. This isn't applicable to SMAPI events, and is always null.</param>
-    /// <param name="e">The event data.</param>
     /// <remarks>For non-English players, this may be raised during startup when the game switches to the previously selected language.</remarks>
     event EventHandler<LocaleChangedEventArgs> LocaleChanged;
 }

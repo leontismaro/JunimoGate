@@ -343,8 +343,7 @@ public static class Constants
         if (smapiPath is not null && File.Exists(smapiPath))
             resolver.Add(AssemblyDefinition.ReadAssembly(smapiPath));
         return;
-#endif
-
+#else
         // add search paths
         resolver.TryAddSearchDirectory(Constants.GamePath);
         resolver.TryAddSearchDirectory(Constants.InternalFilesPath);
@@ -361,6 +360,7 @@ public static class Constants
         //   - 'Stardew Valley': assembly name on Windows;
         //   - 'Netcode': an assembly that was separate on Windows only before Stardew Valley 1.5.5.
         resolver.AddWithExplicitNames(AssemblyDefinition.ReadAssembly(typeof(Game1).Assembly.Location), "StardewValley", "Stardew Valley", "Netcode");
+#endif
     }
 
     /// <summary>Get metadata for mapping assemblies to the current platform.</summary>

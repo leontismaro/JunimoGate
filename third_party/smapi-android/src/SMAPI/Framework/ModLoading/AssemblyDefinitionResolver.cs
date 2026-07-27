@@ -50,7 +50,7 @@ internal class AssemblyDefinitionResolver : IAssemblyResolver
 
     /// <summary>Resolve an assembly reference.</summary>
     /// <param name="name">The assembly name.</param>
-    /// <exception cref="AssemblyResolutionException">The assembly can't be resolved.</exception>
+    /// <exception cref="T:Mono.Cecil.AssemblyResolutionException">The assembly can't be resolved.</exception>
     public AssemblyDefinition Resolve(AssemblyNameReference name)
     {
         return this.ResolveName(name.Name) ?? this.Resolver.Resolve(name);
@@ -59,7 +59,7 @@ internal class AssemblyDefinitionResolver : IAssemblyResolver
     /// <summary>Resolve an assembly reference.</summary>
     /// <param name="name">The assembly name.</param>
     /// <param name="parameters">The assembly reader parameters.</param>
-    /// <exception cref="AssemblyResolutionException">The assembly can't be resolved.</exception>
+    /// <exception cref="T:Mono.Cecil.AssemblyResolutionException">The assembly can't be resolved.</exception>
     public AssemblyDefinition Resolve(AssemblyNameReference name, ReaderParameters parameters)
     {
         return this.ResolveName(name.Name) ?? this.Resolver.Resolve(name, parameters);
@@ -112,7 +112,7 @@ internal class AssemblyDefinitionResolver : IAssemblyResolver
             : null;
     }
 
-    /// <summary>An internal wrapper around <see cref="DefaultAssemblyResolver"/> to allow access to its protected methods.</summary>
+    /// <summary>An internal wrapper around <see cref="T:Mono.Cecil.DefaultAssemblyResolver"/> to allow access to its protected methods.</summary>
     private class DefaultAssemblyResolverWrapper : DefaultAssemblyResolver
     {
         /// <summary>Add an assembly to the resolver.</summary>

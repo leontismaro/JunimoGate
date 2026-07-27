@@ -5,9 +5,9 @@ using Mono.Cecil;
 
 namespace StardewModdingAPI.Framework.ModLoading;
 
-/// <summary>Performs heuristic equality checks for <see cref="TypeReference"/> instances.</summary>
+/// <summary>Performs heuristic equality checks for <see cref="T:Mono.Cecil.TypeReference"/> instances.</summary>
 /// <remarks>
-/// This implementation compares <see cref="TypeReference"/> instances to see if they likely
+/// This implementation compares <see cref="T:Mono.Cecil.TypeReference"/> instances to see if they likely
 /// refer to the same type. While the implementation is obvious for types like <c>System.Bool</c>,
 /// this class mainly exists to handle cases like <c>System.Collections.Generic.Dictionary`2&lt;!0,Netcode.NetRoot`1&lt;!1&gt;&gt;</c>
 /// and <c>System.Collections.Generic.Dictionary`2&lt;TKey,Netcode.NetRoot`1&lt;TValue&gt;&gt;</c>

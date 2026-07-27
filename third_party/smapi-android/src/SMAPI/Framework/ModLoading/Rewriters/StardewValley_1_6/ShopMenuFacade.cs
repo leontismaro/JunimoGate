@@ -51,7 +51,7 @@ public class ShopMenuFacade : ShopMenu, IRewriteFacade
 
 
     List<ShopTabClickableTextureComponentFacade> _tabButtons = new();
-    public List<ShopTabClickableTextureComponentFacade> tabButtons
+    public new List<ShopTabClickableTextureComponentFacade> tabButtons
     {
         get => this._tabButtons;
         set => this._tabButtons = value;

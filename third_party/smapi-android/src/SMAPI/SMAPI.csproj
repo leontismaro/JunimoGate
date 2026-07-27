@@ -15,6 +15,9 @@
     <IsTrimmable>false</IsTrimmable>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <ImplicitUsings>disable</ImplicitUsings>
+    <!-- The vendored Android fork predates a complete nullable-flow migration. Keep nullable
+         annotations available without presenting legacy optional adapters as fully audited. -->
+    <Nullable>annotations</Nullable>
     <DefineConstants>$(DefineConstants);SMAPI_FOR_ANDROID;JUNIMOGATE_SMAPI_HOST</DefineConstants>
     <NoWarn>$(NoWarn);CS0436;CA1416;CS0809;NU1701</NoWarn>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

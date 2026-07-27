@@ -77,8 +77,8 @@ internal class SModHooks : DelegatingModHooks
         this.Monitor.Log($"Synchronizing '{id}' task...");
         task.RunSynchronously();
         this.Monitor.Log("   task complete.");
-#endif
         return task;
+#endif
     }
 
     /// <inheritdoc />

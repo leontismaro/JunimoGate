@@ -33,7 +33,7 @@ public class TerrainFeatureFacade : TerrainFeature, IRewriteFacade
         base.dayUpdate();
     }
 
-    public Rectangle getBoundingBox(Vector2 tileLocation)
+    public new Rectangle getBoundingBox(Vector2 tileLocation)
     {
         return base.getBoundingBox();
     }

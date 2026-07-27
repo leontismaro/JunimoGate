@@ -55,7 +55,6 @@ using xTile.Display;
 using LanguageCode = StardewValley.LocalizedContentManager.LanguageCode;
 using MiniMonoModHotfix = MonoMod.Utils.MiniMonoModHotfix;
 using PathUtilities = StardewModdingAPI.Toolkit.Utilities.PathUtilities;
-using System.Security.Cryptography;
 using StardewValley.Characters;
 using StardewModdingAPI.Mobile;
 using StardewModdingAPI.AndroidHost;
@@ -1745,7 +1744,7 @@ internal class SCore : IDisposable
     {
 #if SMAPI_FOR_ANDROID
         return;
-#endif
+#else
         string consoleTitle = $"SMAPI {Constants.ApiVersion} - running Stardew Valley {Constants.GameVersion}";
         string gameTitle = $"Stardew Valley {Constants.GameVersion} - running SMAPI {Constants.ApiVersion}";
 
@@ -1757,6 +1756,7 @@ internal class SCore : IDisposable
 
         this.Game.Window.Title = gameTitle + suffix;
         this.LogManager.SetConsoleTitle(consoleTitle + suffix);
+#endif
     }
 
     /// <summary>Log a warning if software known to cause issues is installed.</summary>

@@ -62,7 +62,7 @@ public abstract class NpcFacade : NPC, IRewriteFacade
             && base.Birthday_Day == day;
     }
 
-    public static void populateRoutesFromLocationToLocationList()
+    public new static void populateRoutesFromLocationToLocationList()
     {
         WarpPathfindingCache.PopulateCache();
     }

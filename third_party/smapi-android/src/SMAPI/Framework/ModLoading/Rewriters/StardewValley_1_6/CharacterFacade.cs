@@ -32,7 +32,7 @@ public class CharacterFacade : Character, IRewriteFacade
         return base.StandingPixel;
     }
 
-    public Vector2 getTileLocation()
+    public new Vector2 getTileLocation()
     {
         return base.Tile;
     }
@@ -42,12 +42,12 @@ public class CharacterFacade : Character, IRewriteFacade
         return base.TilePoint;
     }
 
-    public int getTileX()
+    public new int getTileX()
     {
         return base.TilePoint.X;
     }
 
-    public int getTileY()
+    public new int getTileY()
     {
         return base.TilePoint.Y;
     }

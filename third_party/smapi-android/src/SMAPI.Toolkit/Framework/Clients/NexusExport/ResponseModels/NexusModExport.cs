@@ -44,7 +44,7 @@ public class NexusModExport
     public bool Adult { get; set; }
 
     /// <summary>The raw file description, containing BBCode with HTML <c>&lt;&lt;br /&gt;</c> tags.</summary>
-    public string Description { get; set; }
+    public string Description { get; set; } = "";
 
     /// <summary>The files uploaded for the mod.</summary>
     public Dictionary<uint, NexusFileExport> Files { get; set; } = new();

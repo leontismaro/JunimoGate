@@ -23,7 +23,7 @@ public class MenuWithInventoryFacade : MenuWithInventory, IRewriteFacade
 
     /// <summary>
     /// Whether to allow exiting the menu while the player has a held item on their cursor.
-    /// The <see cref="StardewValley.Menus.MenuWithInventory.HeldItemExitBehavior" /> will be applied.
+    /// The <see cref="HeldItemExitBehavior" /> will be applied.
     /// </summary>
     public bool AllowExitWithHeldItem
     {
@@ -32,7 +32,7 @@ public class MenuWithInventoryFacade : MenuWithInventory, IRewriteFacade
     }
     bool m_AllowExitWithHeldItem;
 
-    public Item heldItem
+    public new Item heldItem
     {
         get
         {
