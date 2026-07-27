@@ -83,6 +83,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             ConfigDirectory = snapshot.ConfigDirectory,
             LogDirectory = snapshot.LogDirectory,
             SaveDirectory = snapshot.SaveDirectory,
+            BackupDirectory = snapshot.BackupDirectory,
             MainThread = new ActivityDispatcher(this),
             AssemblyLoader = assemblyLoader,
             AttachGameView = view => RunOnUiThread(() => SetContentView(view)),

@@ -16,7 +16,7 @@ internal class SaveBackupZip
 {
     IMonitor Monitor => SCore.Instance.SMAPIMonitor;
     readonly int BackupsToKeep = 20;
-    readonly string BackupFolder = Path.Combine(EarlyConstants.ExternalFilesDir, "save-backups");
+    readonly string BackupFolder = EarlyConstants.SaveBackupPath;
 
     readonly string BackupLabel =
        $"{DateTime.UtcNow:yyyy-MM-dd}" +

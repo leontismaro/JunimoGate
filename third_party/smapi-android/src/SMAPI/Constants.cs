@@ -44,6 +44,8 @@ internal static class EarlyConstants
     public static string LogPath => logPath ?? Path.Combine(ExternalFilesDir, "ErrorLogs");
     private static string? savesPath;
     public static string SavesPath => savesPath ?? Path.Combine(ExternalFilesDir, "Saves");
+    private static string? saveBackupPath;
+    public static string SaveBackupPath => saveBackupPath ?? Path.Combine(ExternalFilesDir, "save-backups");
 
     /// <summary>The path to the game folder.</summary>
     private static string? gamePath;
@@ -53,15 +55,16 @@ internal static class EarlyConstants
     private static string? internalFilesPath;
     public static string InternalFilesPath => internalFilesPath ?? Path.Combine(EarlyConstants.GamePath, "smapi-internal");
 
-    internal static void Configure(string gameAssemblyDirectory, string contentDirectory, string internalDirectory, string configDirectory, string logDirectory, string savesDirectory, string dataDirectory)
+    internal static void Configure(string gameAssemblyDirectory, string contentDirectory, string internalDirectory, string configDirectory, string logDirectory, string savesDirectory, string saveBackupDirectory, string externalFilesDirectory)
     {
         gamePath = Path.GetFullPath(gameAssemblyDirectory);
         contentPath = Path.GetFullPath(contentDirectory);
-        externalFilesDir = Path.GetFullPath(dataDirectory);
+        externalFilesDir = Path.GetFullPath(externalFilesDirectory);
         internalFilesPath = Path.GetFullPath(internalDirectory);
         configPath = Path.GetFullPath(configDirectory);
         logPath = Path.GetFullPath(logDirectory);
         savesPath = Path.GetFullPath(savesDirectory);
+        saveBackupPath = Path.GetFullPath(saveBackupDirectory);
         _ = Directory.CreateDirectory(internalFilesPath);
     }
 

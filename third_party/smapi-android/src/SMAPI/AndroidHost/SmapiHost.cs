@@ -32,6 +32,7 @@ public sealed record SmapiRuntimeOptions
     public required string ConfigDirectory { get; init; }
     public required string LogDirectory { get; init; }
     public required string SaveDirectory { get; init; }
+    public required string BackupDirectory { get; init; }
     public required IMainThreadDispatcher MainThread { get; init; }
     public required IManagedAssemblyLoader AssemblyLoader { get; init; }
     public required Action<View> AttachGameView { get; init; }
@@ -55,6 +56,7 @@ public static class AndroidHostServices
         Directory.CreateDirectory(options.ConfigDirectory);
         Directory.CreateDirectory(options.LogDirectory);
         Directory.CreateDirectory(options.SaveDirectory);
+        Directory.CreateDirectory(options.BackupDirectory);
         Directory.CreateDirectory(options.ModsDirectory);
         EarlyConstants.Configure(
             options.GameAssemblyDirectory,
@@ -63,7 +65,8 @@ public static class AndroidHostServices
             options.ConfigDirectory,
             options.LogDirectory,
             options.SaveDirectory,
-            Path.GetDirectoryName(options.ConfigDirectory)!);
+            options.BackupDirectory,
+            Path.GetDirectoryName(options.SaveDirectory)!);
         Mobile.SMAPIActivityTool.Configure(options.Activity);
         Mobile.AndroidMainThread.Init([]);
     }

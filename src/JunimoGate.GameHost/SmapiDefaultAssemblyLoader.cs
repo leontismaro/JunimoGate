@@ -23,7 +23,7 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
     public SmapiDefaultAssemblyLoader(PreparedGameSnapshot snapshot)
     {
         this.snapshot = snapshot;
-        rewriteCache = Path.Combine(Path.GetDirectoryName(snapshot.ModsDirectory)!, "rewrite-cache");
+        rewriteCache = Path.Combine(Path.GetDirectoryName(snapshot.InternalDirectory)!, "mod-rewrite-cache");
         Directory.CreateDirectory(rewriteCache);
         foreach (var entry in snapshot.ManagedAssemblies)
         {

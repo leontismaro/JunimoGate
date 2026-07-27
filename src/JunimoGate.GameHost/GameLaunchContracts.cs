@@ -11,9 +11,9 @@ namespace JunimoGate.GameHost;
 
 public static class GameLaunchSchema
 {
-    public const string Snapshot = "junimogate-prepared-game-snapshot/v2";
+    public const string Snapshot = "junimogate-prepared-game-snapshot/v3";
     public const string Descriptor = "junimogate-game-launch-descriptor/v2";
-    public const string BuildId = "smapi-4.3.2.5-junimogate.2";
+    public const string BuildId = "smapi-4.3.2.5-junimogate.3";
 }
 
 public sealed record PreparedManagedAssembly(string SimpleName, string RelativePath, long Size);
@@ -36,6 +36,7 @@ public sealed record PreparedGameSnapshot(
     string ConfigDirectory,
     string LogDirectory,
     string SaveDirectory,
+    string BackupDirectory,
     IReadOnlyList<PreparedManagedAssembly> ManagedAssemblies,
     IReadOnlyList<PreparedContentFile> ContentFiles,
     DateTimeOffset PreparedAtUtc)
@@ -51,11 +52,13 @@ public sealed record PreparedGameSnapshot(
             throw new InvalidDataException("The prepared game snapshot is malformed.");
         }
 
-        var runtimeRoot = Path.GetFullPath(AndroidPrivateStorage.GetRuntimeRoot(context.ApplicationContext ?? context));
+        var safeContext = context.ApplicationContext ?? context;
+        var runtimeRoot = Path.GetFullPath(AndroidPrivateStorage.GetRuntimeRoot(safeContext));
+        var userDataRoot = Path.GetFullPath(AndroidPrivateStorage.GetUserDataRoot(safeContext));
+        var gameSaveRoot = Path.GetFullPath(AndroidPrivateStorage.GetGameSaveRoot(safeContext));
         foreach (var path in new[]
                  {
-                     SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath, ModsDirectory,
-                     InternalDirectory, ConfigDirectory, LogDirectory, SaveDirectory,
+                     SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath, InternalDirectory,
                  })
         {
             if (!Path.IsPathFullyQualified(path) || !IsContained(path, runtimeRoot) ||
@@ -63,6 +66,22 @@ public sealed record PreparedGameSnapshot(
             {
                 throw new FileNotFoundException("A prepared game snapshot path is missing.");
             }
+        }
+
+        foreach (var path in new[] { ModsDirectory, ConfigDirectory, LogDirectory, BackupDirectory })
+        {
+            if (!Path.IsPathFullyQualified(path) || !IsContained(path, userDataRoot) ||
+                (!File.Exists(path) && !Directory.Exists(path)))
+            {
+                throw new FileNotFoundException("A prepared SMAPI user-data path is missing.");
+            }
+        }
+
+        if (!Path.IsPathFullyQualified(SaveDirectory) ||
+            !Path.GetFullPath(SaveDirectory).Equals(gameSaveRoot, StringComparison.Ordinal) ||
+            !Directory.Exists(SaveDirectory))
+        {
+            throw new DirectoryNotFoundException("The prepared game save path is missing or is not host-owned.");
         }
 
         if (!File.Exists(OverlayAssemblyPath))
@@ -343,7 +362,7 @@ public static class GameDeepPrepareCoordinator
             .Select(item => new PreparedContentFile(item.RelativePath, item.Size))
             .ToArray();
         var runtimeRoot = AndroidPrivateStorage.GetRuntimeRoot(context);
-        var smapiRoot = Path.Combine(runtimeRoot, "smapi");
+        var userDataRoot = AndroidPrivateStorage.GetUserDataRoot(context);
         var snapshot = new PreparedGameSnapshot(
             GameLaunchSchema.Snapshot,
             GameLaunchSchema.BuildId,
@@ -355,18 +374,19 @@ public static class GameDeepPrepareCoordinator
             source.WorkspacePath,
             capability.AppliedExecutionPlan.AppliedWorkspacePath,
             capability.AppliedExecutionPlan.OverlayAssemblyPath,
-            Path.Combine(smapiRoot, "profiles", "default", "Mods", "enabled"),
-            Path.Combine(smapiRoot, "runtime", "smapi-internal"),
-            Path.Combine(smapiRoot, "config"),
-            Path.Combine(smapiRoot, "logs"),
-            Path.Combine(smapiRoot, "saves"),
+            Path.Combine(userDataRoot, "profiles", "default", "Mods", "enabled"),
+            Path.Combine(runtimeRoot, "smapi", "smapi-internal"),
+            Path.Combine(userDataRoot, "config"),
+            Path.Combine(userDataRoot, "logs"),
+            AndroidPrivateStorage.GetGameSaveRoot(context),
+            Path.Combine(userDataRoot, "save-backups"),
             managed,
             content,
             DateTimeOffset.UtcNow);
         foreach (var directory in new[]
                  {
                      snapshot.ModsDirectory, snapshot.InternalDirectory, snapshot.ConfigDirectory,
-                     snapshot.LogDirectory, snapshot.SaveDirectory,
+                     snapshot.LogDirectory, snapshot.SaveDirectory, snapshot.BackupDirectory,
                  })
         {
             Directory.CreateDirectory(directory);
