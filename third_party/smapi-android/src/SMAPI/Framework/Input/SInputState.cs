@@ -87,14 +87,13 @@ internal sealed class SInputState : InputState
             Vector2? playerTilePos = Context.IsPlayerFree ? Game1.player.Tile : null;
             HashSet<SButton> reallyDown = new(this.GetPressedButtons(keyboard, mouse, controller));
 
-            // Binding Back button to Escape
-            foreach (var btn in keyboard.GetPressedButtons())
+            // Bind Android Back to one game-visible Escape press. Activity callbacks queue the
+            // same logical input here so predictive Back never needs to finish the game Activity.
+            bool backRequested = StardewModdingAPI.AndroidHost.AndroidHostServices.TryConsumeBackPress();
+            if (backRequested)
             {
-                if (btn == SButton.Back)
-                {
-                    this.OverrideButton(SButton.Escape, true);
-                    break;
-                }
+                this.OverrideButton(SButton.Escape, true);
+                Android.Util.Log.Info("JunimoGate.SMAPI", "back-escape-consumed");
             }
 
             // apply overrides

@@ -1,10 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 using Android.App;
 using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using Android.Views;
 using Android.Widget;
+using Android.Window;
 using Microsoft.Xna.Framework;
 using JunimoGate.Android;
 using JunimoGate.Core;
@@ -13,31 +15,45 @@ using StardewModdingAPI.AndroidHost;
 namespace JunimoGate.GameHost;
 
 [Activity(
-    Name = "org.junimogate.gamehost.SmapiGameActivity",
+    Name = ActivityName,
     Label = "JunimoGate SMAPI",
     Exported = false,
     Process = ":game",
+    LaunchMode = LaunchMode.SingleTop,
     ScreenOrientation = ScreenOrientation.SensorLandscape,
     ConfigurationChanges = ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden | ConfigChanges.Orientation |
         ConfigChanges.ScreenLayout | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
 public sealed class SmapiGameActivity : AndroidGameActivity
 {
+    public const string ActivityName = "org.junimogate.gamehost.SmapiGameActivity";
     public const string LaunchKeyExtra = "org.junimogate.extra.LAUNCH_KEY";
     private SmapiDefaultAssemblyLoader? loader;
     private SmapiSession? session;
     private TextView? status;
+    private BackInvokedCallback? backInvokedCallback;
+    private long lastBackHandledUptime;
     private bool destroyed;
 
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        if (OperatingSystem.IsAndroidVersionAtLeast(33))
+            RegisterBackInvokedCallback();
         status = new TextView(this) { Text = "JunimoGate SMAPI\n\nStarting prepared session…", TextSize = 16 };
         SetContentView(status);
+        if (savedInstanceState is not null)
+        {
+            Log.Warn("JunimoGate.SMAPI", "session-recreation-returning-to-launcher");
+            Finish();
+            return;
+        }
+
         try
         {
             var key = Intent?.GetStringExtra(LaunchKeyExtra) ?? throw new InvalidDataException("The launch capability is missing.");
             var snapshot = await GameLaunchRegistry.ConsumeAsync(this, key, CancellationToken.None);
             await VerifyPackageMarkerAsync(snapshot);
+            GameSessionRegistry.MarkActive(this);
             await ProvisionInternalFilesAsync(snapshot.InternalDirectory);
             loader = new SmapiDefaultAssemblyLoader(snapshot);
             loader.Install();
@@ -71,7 +87,6 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             AssemblyLoader = assemblyLoader,
             AttachGameView = view => RunOnUiThread(() => SetContentView(view)),
             ReportFailure = failure => Log.Error("JunimoGate.SMAPI", $"{failure.Code}:{failure.Exception?.GetType().Name ?? "none"}"),
-            RequestExit = RequestExit,
         });
         session = runtime.CreateSession();
         session.Run();
@@ -79,17 +94,21 @@ public sealed class SmapiGameActivity : AndroidGameActivity
 
     protected override void OnResume() { base.OnResume(); session?.OnResume(); SetImmersive(); }
     protected override void OnPause() { session?.OnPause(); base.OnPause(); }
+    protected override void OnNewIntent(global::Android.Content.Intent? intent) { base.OnNewIntent(intent); Log.Info("JunimoGate.SMAPI", "session-routed-to-front"); }
     public override void OnWindowFocusChanged(bool hasFocus) { base.OnWindowFocusChanged(hasFocus); session?.OnWindowFocusChanged(hasFocus); if (hasFocus) SetImmersive(); }
 #pragma warning disable CS0672
-    public override void OnBackPressed() { if (session?.OnBackPressed() != true) RequestExit(); }
+    public override void OnBackPressed() => HandleSystemBack();
 #pragma warning restore CS0672
 
     protected override void OnDestroy()
     {
         var terminateGameProcess = IsFinishing;
         destroyed = true;
+        if (OperatingSystem.IsAndroidVersionAtLeast(33))
+            UnregisterBackInvokedCallback();
         session?.Dispose();
         session = null;
+        GameSessionRegistry.ClearCurrentProcess(this);
         SmapiContentBridge.Detach();
         GameHostBridge.Detach(this);
         loader?.Dispose();
@@ -104,7 +123,9 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         var package = await new AndroidPackageInstallationSnapshotProvider(this).GetSnapshotAsync(snapshot.PackageName, CancellationToken.None)
             ?? throw new InvalidOperationException("The prepared game package is no longer installed.");
         if (package.VersionName != snapshot.VersionName || package.LongVersionCode != snapshot.VersionCode ||
-            package.SigningIdentity is null || !KnownGameCertificate.Verify(snapshot.PackageName, package.SigningIdentity).AllowsCodeExecution)
+            package.SigningIdentity is null ||
+            !KnownGameCertificate.Verify(snapshot.PackageName, package.SigningIdentity).AllowsCodeExecution ||
+            PackageUpdateMarker.Create(package) != snapshot.PackageMarker)
             throw new InvalidOperationException("The game identity changed after Deep Prepare.");
     }
 
@@ -137,12 +158,60 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         File.Move(target + ".tmp", target, overwrite: false);
     }
     private void ShowFailure(string message) => RunOnUiThread(() => { if (!destroyed && status is not null) status.Text = message; });
-    private void RequestExit() { if (!IsFinishing) FinishAndRemoveTask(); }
+    private void HandleSystemBack()
+    {
+        if (destroyed || IsFinishing)
+            return;
+        var now = SystemClock.UptimeMillis();
+        if (now - lastBackHandledUptime < 250)
+            return;
+        lastBackHandledUptime = now;
+        if (session?.TryHandleBack() == true)
+        {
+            Log.Info("JunimoGate.SMAPI", "back-forwarded-to-game");
+            return;
+        }
+
+        Log.Info("JunimoGate.SMAPI", "back-backgrounded-before-session-ready");
+        MoveTaskToBack(nonRoot: true);
+    }
+
+    [SupportedOSPlatform("android33.0")]
+    private void RegisterBackInvokedCallback()
+    {
+        backInvokedCallback = new BackInvokedCallback(this);
+        OnBackInvokedDispatcher.RegisterOnBackInvokedCallback(
+            IOnBackInvokedDispatcher.PriorityDefault,
+            backInvokedCallback);
+    }
+
+    [SupportedOSPlatform("android33.0")]
+    private void UnregisterBackInvokedCallback()
+    {
+        if (backInvokedCallback is null)
+            return;
+        OnBackInvokedDispatcher.UnregisterOnBackInvokedCallback(backInvokedCallback);
+        backInvokedCallback.Dispose();
+        backInvokedCallback = null;
+    }
     private void SetImmersive()
     {
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            var controller = Window?.InsetsController;
+            if (controller is not null)
+            {
+                controller.Hide(WindowInsets.Type.SystemBars());
+                controller.SystemBarsBehavior = (int)WindowInsetsControllerBehavior.ShowTransientBarsBySwipe;
+            }
+            return;
+        }
+
         var decor = Window?.DecorView;
         if (decor is not null)
-            decor.SystemUiVisibility = (StatusBarVisibility)(SystemUiFlags.ImmersiveSticky | SystemUiFlags.Fullscreen | SystemUiFlags.HideNavigation | SystemUiFlags.LayoutFullscreen | SystemUiFlags.LayoutHideNavigation | SystemUiFlags.LayoutStable);
+            decor.SystemUiFlags = SystemUiFlags.ImmersiveSticky | SystemUiFlags.Fullscreen |
+                SystemUiFlags.HideNavigation | SystemUiFlags.LayoutFullscreen |
+                SystemUiFlags.LayoutHideNavigation | SystemUiFlags.LayoutStable;
     }
 
     private sealed class ActivityDispatcher(Activity activity) : IMainThreadDispatcher
@@ -154,6 +223,18 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             Exception? error = null; using var done = new ManualResetEventSlim();
             activity.RunOnUiThread(() => { try { callback(); } catch (Exception ex) { error = ex; } finally { done.Set(); } });
             done.Wait(); if (error is not null) throw error;
+        }
+    }
+
+    private sealed class BackInvokedCallback(SmapiGameActivity activity)
+        : Java.Lang.Object, IOnBackInvokedCallback
+    {
+        private readonly WeakReference<SmapiGameActivity> target = new(activity);
+
+        public void OnBackInvoked()
+        {
+            if (target.TryGetTarget(out var activity))
+                activity.HandleSystemBack();
         }
     }
 }

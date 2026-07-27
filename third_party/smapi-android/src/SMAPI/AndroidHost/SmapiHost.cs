@@ -36,11 +36,11 @@ public sealed record SmapiRuntimeOptions
     public required IManagedAssemblyLoader AssemblyLoader { get; init; }
     public required Action<View> AttachGameView { get; init; }
     public required Action<SmapiFailure> ReportFailure { get; init; }
-    public required Action RequestExit { get; init; }
 }
 
 public static class AndroidHostServices
 {
+    private static int pendingBackPress;
     internal static SmapiRuntimeOptions? Options { get; private set; }
     internal static IManagedAssemblyLoader? AssemblyLoader => Options?.AssemblyLoader;
     internal static string? ManagedAssemblyDirectory => Options is null
@@ -49,6 +49,7 @@ public static class AndroidHostServices
 
     internal static void Configure(SmapiRuntimeOptions options)
     {
+        Interlocked.Exchange(ref pendingBackPress, 0);
         Options = options;
         Directory.CreateDirectory(options.InternalDirectory);
         Directory.CreateDirectory(options.ConfigDirectory);
@@ -66,6 +67,10 @@ public static class AndroidHostServices
         Mobile.SMAPIActivityTool.Configure(options.Activity);
         Mobile.AndroidMainThread.Init([]);
     }
+
+    internal static void QueueBackPress() => Interlocked.Exchange(ref pendingBackPress, 1);
+    internal static bool TryConsumeBackPress() => Interlocked.Exchange(ref pendingBackPress, 0) != 0;
+    internal static void ClearPendingInput() => Interlocked.Exchange(ref pendingBackPress, 0);
 }
 
 public sealed class SmapiRuntime
@@ -119,10 +124,17 @@ public sealed class SmapiSession : IDisposable
             options.MainThread.Invoke(PauseGame);
     }
     public void OnWindowFocusChanged(bool hasFocus) { }
-    public bool OnBackPressed() { options.RequestExit(); return true; }
+    public bool TryHandleBack()
+    {
+        if (game is null || gameView is null || disposed)
+            return false;
+        AndroidHostServices.QueueBackPress();
+        return true;
+    }
     public void Dispose()
     {
         disposed = true;
+        AndroidHostServices.ClearPendingInput();
         gameView = null;
         game = null;
     }
