@@ -25,6 +25,7 @@ internal sealed class LauncherCoordinator : IDisposable
 {
     private readonly Context context;
     private readonly SemaphoreSlim operationLock = new(1, 1);
+    private PreparedGameHandle? preparedGame;
     private bool disposed;
 
     public LauncherCoordinator(Context context)
@@ -48,6 +49,12 @@ internal sealed class LauncherCoordinator : IDisposable
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (preparedGame is not null)
+            {
+                Publish(ReadyState(preparedGame));
+                return;
+            }
+
             Publish(new LauncherState(
                 LauncherStatus.Checking,
                 "Checking the installed game and prepared workspace…",
@@ -57,7 +64,7 @@ internal sealed class LauncherCoordinator : IDisposable
             var result = await GameDeepPrepareCoordinator
                 .PrepareOrReuseAsync(context, progress, cancellationToken)
                 .ConfigureAwait(false);
-            Publish(Map(result));
+            PublishPreparationResult(result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -66,6 +73,7 @@ internal sealed class LauncherCoordinator : IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException)
         {
+            preparedGame = null;
             Publish(FailedState());
         }
         finally
@@ -77,30 +85,56 @@ internal sealed class LauncherCoordinator : IDisposable
     public async ValueTask<GameLaunchHandle?> TryCreateLaunchAsync(CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        var needsRefresh = false;
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (CurrentState.Status != LauncherStatus.Ready)
+            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null)
                 return null;
 
-            Publish(new LauncherState(
-                LauncherStatus.Launching,
-                "Starting Stardew Valley through SMAPI…",
-                ShowProgress: true,
-                CanLaunch: false));
-            var handle = await GameLaunchRegistry
-                .TryIssueActiveLaunchAsync(context, cancellationToken)
+            PublishLaunching();
+            var issue = await GameLaunchRegistry
+                .TryIssueLaunchAsync(context, preparedGame, cancellationToken)
                 .ConfigureAwait(false);
-            if (handle is not null)
-                return handle;
+            if (issue.IsIssued)
+                return issue.Launch;
 
-            needsRefresh = true;
+            if (issue.Status == GameLaunchIssueStatus.ActiveSnapshotChanged)
+            {
+                preparedGame = null;
+                Publish(new LauncherState(
+                    LauncherStatus.Checking,
+                    "The prepared game changed. Checking it again…",
+                    ShowProgress: true,
+                    CanLaunch: false));
+                var refreshed = await GameDeepPrepareCoordinator
+                    .PrepareOrReuseAsync(context, new PreparationProgress(this), cancellationToken)
+                    .ConfigureAwait(false);
+                PublishPreparationResult(refreshed);
+                return null;
+            }
+
             Publish(new LauncherState(
-                LauncherStatus.Checking,
-                "The installed game changed. Checking it again…",
+                LauncherStatus.Preparing,
+                "The installed game changed. Preparing it again…",
                 ShowProgress: true,
                 CanLaunch: false));
+            var prepared = await GameDeepPrepareCoordinator
+                .PrepareAsync(context, new PreparationProgress(this), cancellationToken)
+                .ConfigureAwait(false);
+            PublishPreparationResult(prepared);
+            if (!prepared.IsReady || preparedGame is null)
+                return null;
+
+            PublishLaunching();
+            issue = await GameLaunchRegistry
+                .TryIssueLaunchAsync(context, preparedGame, cancellationToken)
+                .ConfigureAwait(false);
+            if (issue.IsIssued)
+                return issue.Launch;
+
+            preparedGame = null;
+            Publish(FailedState("launch_state_changed_after_prepare"));
+            return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -109,6 +143,7 @@ internal sealed class LauncherCoordinator : IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException)
         {
+            preparedGame = null;
             Publish(FailedState());
         }
         finally
@@ -116,15 +151,16 @@ internal sealed class LauncherCoordinator : IDisposable
             operationLock.Release();
         }
 
-        if (needsRefresh)
-            await InitializeAsync(cancellationToken).ConfigureAwait(false);
         return null;
     }
 
     public void ReportLaunchFailure()
     {
         if (!disposed)
+        {
+            preparedGame = null;
             Publish(FailedState());
+        }
     }
 
     public void Dispose()
@@ -142,13 +178,15 @@ internal sealed class LauncherCoordinator : IDisposable
         StateChanged?.Invoke(state);
     }
 
+    private void PublishPreparationResult(GamePreparationResult result)
+    {
+        preparedGame = result.IsReady ? result.PreparedGame : null;
+        Publish(Map(result));
+    }
+
     private static LauncherState Map(GamePreparationResult result) => result.Status switch
     {
-        GamePreparationStatus.Ready => new LauncherState(
-            LauncherStatus.Ready,
-            $"Stardew Valley {result.PreparedGame!.VersionName}\n\nReady to launch through SMAPI.",
-            ShowProgress: false,
-            CanLaunch: true),
+        GamePreparationStatus.Ready => ReadyState(result.PreparedGame!),
         GamePreparationStatus.GameNotInstalled => new LauncherState(
             LauncherStatus.GameNotInstalled,
             "Stardew Valley is not installed for the current Android user.",
@@ -167,6 +205,18 @@ internal sealed class LauncherCoordinator : IDisposable
         $"JunimoGate could not prepare the game. Reopen the app to retry.\n\nCode: {code}",
         ShowProgress: false,
         CanLaunch: false);
+
+    private static LauncherState ReadyState(PreparedGameHandle handle) => new(
+        LauncherStatus.Ready,
+        $"Stardew Valley {handle.VersionName}\n\nReady to launch through SMAPI.",
+        ShowProgress: false,
+        CanLaunch: true);
+
+    private void PublishLaunching() => Publish(new LauncherState(
+        LauncherStatus.Launching,
+        "Starting Stardew Valley through SMAPI…",
+        ShowProgress: true,
+        CanLaunch: false));
 
     private void ThrowIfDisposed()
     {

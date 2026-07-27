@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Android.Content;
+using Android.Util;
 using JunimoGate.Android;
 using JunimoGate.Core;
 using JunimoGate.Extraction;
@@ -41,13 +42,14 @@ public sealed record PreparedGameSnapshot(
     IReadOnlyList<PreparedContentFile> ContentFiles,
     DateTimeOffset PreparedAtUtc)
 {
-    public void ValidateFast(Context context)
+    public void ValidateEnvelope(Context context)
     {
         if (Schema != GameLaunchSchema.Snapshot || BuildId != GameLaunchSchema.BuildId ||
             string.IsNullOrWhiteSpace(PackageName) || VersionCode <= 0 ||
             !Sha256Digest.TryParse(PackageMarker, out _) ||
             string.IsNullOrWhiteSpace(SourceWorkspacePath) || string.IsNullOrWhiteSpace(AppliedWorkspacePath) ||
-            string.IsNullOrWhiteSpace(OverlayAssemblyPath) || ManagedAssemblies.Count == 0 || ContentFiles.Count == 0)
+            string.IsNullOrWhiteSpace(OverlayAssemblyPath) || ManagedAssemblies is null || ManagedAssemblies.Count == 0 ||
+            ContentFiles is null || ContentFiles.Count == 0)
         {
             throw new InvalidDataException("The prepared game snapshot is malformed.");
         }
@@ -61,67 +63,21 @@ public sealed record PreparedGameSnapshot(
                      SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath, InternalDirectory,
                  })
         {
-            if (!Path.IsPathFullyQualified(path) || !IsContained(path, runtimeRoot) ||
-                (!File.Exists(path) && !Directory.Exists(path)))
-            {
-                throw new FileNotFoundException("A prepared game snapshot path is missing.");
-            }
+            if (!Path.IsPathFullyQualified(path) || !IsContained(path, runtimeRoot))
+                throw new InvalidDataException("A prepared game snapshot path is not host-owned.");
         }
 
         foreach (var path in new[] { ModsDirectory, ConfigDirectory, LogDirectory, BackupDirectory })
         {
-            if (!Path.IsPathFullyQualified(path) || !IsContained(path, userDataRoot) ||
-                (!File.Exists(path) && !Directory.Exists(path)))
-            {
-                throw new FileNotFoundException("A prepared SMAPI user-data path is missing.");
-            }
+            if (!Path.IsPathFullyQualified(path) || !IsContained(path, userDataRoot))
+                throw new InvalidDataException("A prepared SMAPI user-data path is not host-owned.");
         }
 
         if (!Path.IsPathFullyQualified(SaveDirectory) ||
-            !Path.GetFullPath(SaveDirectory).Equals(gameSaveRoot, StringComparison.Ordinal) ||
-            !Directory.Exists(SaveDirectory))
+            !Path.GetFullPath(SaveDirectory).Equals(gameSaveRoot, StringComparison.Ordinal))
         {
-            throw new DirectoryNotFoundException("The prepared game save path is missing or is not host-owned.");
+            throw new InvalidDataException("The prepared game save path is not host-owned.");
         }
-
-        if (!File.Exists(OverlayAssemblyPath))
-            throw new FileNotFoundException("The rewritten game assembly is missing.");
-        if (!Directory.Exists(Path.Combine(SourceWorkspacePath, "Content")))
-            throw new DirectoryNotFoundException("The prepared Content root is missing.");
-
-        foreach (var assembly in ManagedAssemblies)
-        {
-            ValidateRelativePath(assembly.RelativePath);
-            if (assembly.Size < 0)
-                throw new InvalidDataException("The prepared managed assembly size is invalid.");
-            var path = ResolveContainedRelativePath(SourceWorkspacePath, assembly.RelativePath);
-            var file = new FileInfo(path);
-            if (!file.Exists || file.Length != assembly.Size)
-                throw new FileNotFoundException("A required prepared managed assembly is missing or changed.");
-        }
-
-        foreach (var entry in ContentFiles.Select(static item => item.RelativePath))
-            ValidateRelativePath(entry);
-    }
-
-    private static void ValidateRelativePath(string entry)
-    {
-        if (string.IsNullOrWhiteSpace(entry) || Path.IsPathRooted(entry) ||
-            entry.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).Any(static part => part == ".."))
-        {
-            throw new InvalidDataException("The prepared snapshot contains an escaping relative path.");
-        }
-    }
-
-    private static string ResolveContainedRelativePath(string root, string relativePath)
-    {
-        var normalized = relativePath
-            .Replace('/', Path.DirectorySeparatorChar)
-            .Replace('\\', Path.DirectorySeparatorChar);
-        var path = Path.GetFullPath(Path.Combine(root, normalized));
-        if (!IsContained(path, root))
-            throw new InvalidDataException("The prepared snapshot contains an escaping relative path.");
-        return path;
     }
 
     private static bool IsContained(string path, string root)
@@ -150,11 +106,21 @@ public enum GamePreparationStatus
     Failed,
 }
 
-public sealed record PreparedGameHandle(
-    string SnapshotId,
-    string VersionName,
-    long VersionCode,
-    bool Reused);
+public sealed class PreparedGameHandle
+{
+    internal PreparedGameHandle(string snapshotId, PreparedGameSnapshot snapshot, bool reused)
+    {
+        SnapshotId = snapshotId;
+        Snapshot = snapshot;
+        Reused = reused;
+    }
+
+    public string SnapshotId { get; }
+    public string VersionName => Snapshot.VersionName;
+    public long VersionCode => Snapshot.VersionCode;
+    public bool Reused { get; }
+    internal PreparedGameSnapshot Snapshot { get; }
+}
 
 public sealed record GamePreparationResult(
     GamePreparationStatus Status,
@@ -174,12 +140,37 @@ public sealed record GameLaunchDescriptor(
 
 public sealed record GameLaunchHandle(string Key);
 
+public enum GameLaunchIssueStatus
+{
+    Issued,
+    PackageChanged,
+    ActiveSnapshotChanged,
+}
+
+public sealed record GameLaunchIssueResult(GameLaunchIssueStatus Status, GameLaunchHandle? Launch)
+{
+    public bool IsIssued => Status == GameLaunchIssueStatus.Issued && Launch is not null;
+}
+
 public static class GameDeepPrepareCoordinator
 {
     public static async ValueTask<GamePreparationResult> PrepareOrReuseAsync(
         Context context,
         IProgress<GamePreparationProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await PrepareCoreAsync(context, allowReuse: true, progress, cancellationToken).ConfigureAwait(false);
+
+    public static async ValueTask<GamePreparationResult> PrepareAsync(
+        Context context,
+        IProgress<GamePreparationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        await PrepareCoreAsync(context, allowReuse: false, progress, cancellationToken).ConfigureAwait(false);
+
+    private static async ValueTask<GamePreparationResult> PrepareCoreAsync(
+        Context context,
+        bool allowReuse,
+        IProgress<GamePreparationProgress>? progress,
+        CancellationToken cancellationToken)
     {
         var safe = context.ApplicationContext ?? context;
         DeepPrepareMetricsBuilder? deepPrepare = null;
@@ -189,9 +180,12 @@ public static class GameDeepPrepareCoordinator
             progress?.Report(new GamePreparationProgress(
                 GamePreparationStage.Checking,
                 "Checking the installed game and prepared workspace…"));
-            var fast = await GameLaunchRegistry.TryGetReusableActiveAsync(safe, cancellationToken).ConfigureAwait(false);
-            if (fast is not null)
-                return Ready(fast with { Reused = true });
+            if (allowReuse)
+            {
+                var fast = await GameLaunchRegistry.TryOpenActiveAsync(safe, cancellationToken).ConfigureAwait(false);
+                if (fast is not null)
+                    return Ready(fast);
+            }
 
             deepPrepare = new DeepPrepareMetricsBuilder();
             progress?.Report(new GamePreparationProgress(
@@ -507,7 +501,7 @@ public static class GameLaunchRegistry
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        snapshot.ValidateFast(context);
+        snapshot.ValidateEnvelope(context);
         var root = GetRoot(context);
         var snapshotId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         await WriteJsonAsync(Path.Combine(root, $"snapshot-{snapshotId}.json"), snapshot, cancellationToken)
@@ -517,35 +511,41 @@ public static class GameLaunchRegistry
         return CreateHandle(snapshotId, snapshot, reused: false);
     }
 
-    public static async ValueTask<PreparedGameHandle?> TryGetReusableActiveAsync(
+    public static async ValueTask<PreparedGameHandle?> TryOpenActiveAsync(
         Context context,
         CancellationToken cancellationToken)
     {
         var active = await TryReadActiveAsync(context, cancellationToken).ConfigureAwait(false);
-        if (active is null || !await IsCurrentPackageAsync(context, active.Value.Snapshot, cancellationToken).ConfigureAwait(false))
-            return null;
-        return CreateHandle(active.Value.SnapshotId, active.Value.Snapshot, reused: true);
+        return active is null ? null : CreateHandle(active.Value.SnapshotId, active.Value.Snapshot, reused: true);
     }
 
-    public static async ValueTask<GameLaunchHandle?> TryIssueActiveLaunchAsync(
+    public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
+        PreparedGameHandle preparedGame,
         CancellationToken cancellationToken)
     {
-        var active = await TryReadActiveAsync(context, cancellationToken).ConfigureAwait(false);
-        if (active is null || !await IsCurrentPackageAsync(context, active.Value.Snapshot, cancellationToken).ConfigureAwait(false))
-            return null;
+        ArgumentNullException.ThrowIfNull(preparedGame);
+        var activeSnapshotId = await TryReadActiveSnapshotIdAsync(context, cancellationToken).ConfigureAwait(false);
+        if (!preparedGame.SnapshotId.Equals(activeSnapshotId, StringComparison.Ordinal))
+            return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
+        if (preparedGame.Reused &&
+            !await IsCurrentPackageAsync(context, preparedGame.Snapshot, cancellationToken).ConfigureAwait(false))
+        {
+            return new GameLaunchIssueResult(GameLaunchIssueStatus.PackageChanged, null);
+        }
 
         var root = GetRoot(context);
         CleanupStaleDescriptors(root);
         var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         var descriptor = new GameLaunchDescriptor(
             GameLaunchSchema.Descriptor,
-            active.Value.SnapshotId,
+            preparedGame.SnapshotId,
             key,
             DateTimeOffset.UtcNow);
         await WriteJsonAsync(Path.Combine(root, $"descriptor-{key}.json"), descriptor, cancellationToken)
             .ConfigureAwait(false);
-        return new GameLaunchHandle(key);
+        Log.Info("JunimoGate.LaunchTrace", "descriptor-issued descriptorSnapshotReads=0");
+        return new GameLaunchIssueResult(GameLaunchIssueStatus.Issued, new GameLaunchHandle(key));
     }
 
     public static async ValueTask<PreparedGameSnapshot> ConsumeAsync(
@@ -587,7 +587,8 @@ public static class GameLaunchRegistry
                     MaximumSnapshotBytes,
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The prepared game snapshot is invalid.");
-            snapshot.ValidateFast(context);
+            snapshot.ValidateEnvelope(context);
+            Log.Info("JunimoGate.LaunchTrace", "game snapshotReads=1");
             return snapshot;
         }
         finally
@@ -602,13 +603,11 @@ public static class GameLaunchRegistry
     {
         try
         {
+            var stopwatch = Stopwatch.StartNew();
+            var snapshotId = await TryReadActiveSnapshotIdAsync(context, cancellationToken).ConfigureAwait(false);
+            if (snapshotId is null)
+                return null;
             var root = GetRoot(context);
-            var activePath = Path.Combine(root, "active-snapshot.json");
-            if (!File.Exists(activePath))
-                return null;
-            var snapshotId = (await File.ReadAllTextAsync(activePath, cancellationToken).ConfigureAwait(false)).Trim();
-            if (snapshotId.Length != 32 || snapshotId.Any(static c => !Uri.IsHexDigit(c)))
-                return null;
             var snapshotPath = Path.Combine(root, $"snapshot-{snapshotId}.json");
             if (!File.Exists(snapshotPath))
                 return null;
@@ -619,7 +618,10 @@ public static class GameLaunchRegistry
                 .ConfigureAwait(false);
             if (snapshot is null)
                 return null;
-            snapshot.ValidateFast(context);
+            snapshot.ValidateEnvelope(context);
+            Log.Info(
+                "JunimoGate.LaunchTrace",
+                $"launcher snapshotReads=1 durationMs={Math.Max(1, stopwatch.ElapsedMilliseconds)}");
             return (snapshotId, snapshot);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -640,13 +642,18 @@ public static class GameLaunchRegistry
     {
         try
         {
+            var stopwatch = Stopwatch.StartNew();
             var package = await new AndroidPackageInstallationSnapshotProvider(context)
                 .GetSnapshotAsync(snapshot.PackageName, cancellationToken)
                 .ConfigureAwait(false);
-            return package is not null && package.VersionName == snapshot.VersionName &&
+            var current = package is not null && package.VersionName == snapshot.VersionName &&
                 package.LongVersionCode == snapshot.VersionCode && package.SigningIdentity is not null &&
                 KnownGameCertificate.Verify(snapshot.PackageName, package.SigningIdentity).AllowsCodeExecution &&
                 PackageUpdateMarker.Create(package) == snapshot.PackageMarker;
+            Log.Info(
+                "JunimoGate.LaunchTrace",
+                $"launcher packageSnapshots=1 current={(current ? 1 : 0)} durationMs={Math.Max(1, stopwatch.ElapsedMilliseconds)}");
+            return current;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -660,7 +667,18 @@ public static class GameLaunchRegistry
     }
 
     private static PreparedGameHandle CreateHandle(string snapshotId, PreparedGameSnapshot snapshot, bool reused) =>
-        new(snapshotId, snapshot.VersionName, snapshot.VersionCode, reused);
+        new(snapshotId, snapshot, reused);
+
+    private static async ValueTask<string?> TryReadActiveSnapshotIdAsync(
+        Context context,
+        CancellationToken cancellationToken)
+    {
+        var activePath = Path.Combine(GetRoot(context), "active-snapshot.json");
+        if (!File.Exists(activePath))
+            return null;
+        var snapshotId = (await File.ReadAllTextAsync(activePath, cancellationToken).ConfigureAwait(false)).Trim();
+        return snapshotId.Length == 32 && snapshotId.All(static c => Uri.IsHexDigit(c)) ? snapshotId : null;
+    }
 
     private static string GetRoot(Context context)
     {
