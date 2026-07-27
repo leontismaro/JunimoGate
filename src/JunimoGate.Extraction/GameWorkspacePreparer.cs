@@ -24,11 +24,26 @@ public sealed class GameWorkspacePreparer
         this.contentExtractor = contentExtractor ?? new StrictContentExtractor();
     }
 
+    public ValueTask<WorkspacePreparationResult> PrepareAsync(
+        WorkspacePreparationRequest request,
+        CancellationToken cancellationToken = default) =>
+        PrepareAsync(request, preparationSession: null, cancellationToken);
+
     public async ValueTask<WorkspacePreparationResult> PrepareAsync(
         WorkspacePreparationRequest request,
+        GameInstallationPreparationSession? preparationSession,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (preparationSession is not null &&
+            !WorkspaceManifestValidator.CandidateIdentityEquals(
+                request.Candidate,
+                preparationSession.Candidate,
+                includeSourcePaths: true))
+        {
+            throw new ArgumentException("The preparation session does not match the workspace candidate.", nameof(preparationSession));
+        }
+
         var stopwatch = Stopwatch.StartNew();
         var diagnostics = new List<DiagnosticRecord>();
         string? stagingPath = null;
@@ -37,6 +52,10 @@ public sealed class GameWorkspacePreparer
         WorkspaceExtractionStatistics? statistics = null;
         long peakTemporaryBytes = 0;
         long finalWorkspaceBytes = 0;
+        IReadOnlyList<WorkspaceExtractedFileManifest>? preparedFiles = null;
+        GameInstallationCandidate? planCandidate = null;
+        var workspacePayloadHashPassCount = 0;
+        long workspacePayloadBytesHashed = 0;
         RootLease? rootLease = null;
 
         try
@@ -91,6 +110,9 @@ public sealed class GameWorkspacePreparer
                     cacheHit = true;
                     statistics = cacheValidation.Statistics;
                     finalWorkspaceBytes = cacheValidation.TotalBytes;
+                    preparedFiles = cacheValidation.Files;
+                    workspacePayloadHashPassCount = 1;
+                    workspacePayloadBytesHashed = cacheValidation.Files?.Sum(static file => file.Size) ?? 0;
                 }
                 else
                 {
@@ -123,8 +145,10 @@ public sealed class GameWorkspacePreparer
                     request,
                     keyText,
                     stagingPath,
+                    preparationSession,
                     cancellationToken).ConfigureAwait(false);
                 statistics = built.Statistics;
+                preparedFiles = built.Files;
                 peakTemporaryBytes = built.TotalBytes;
                 finalWorkspaceBytes = built.TotalBytes;
 
@@ -140,35 +164,60 @@ public sealed class GameWorkspacePreparer
                 stagingPath = null;
             }
 
-            Report(request, WorkspaceProgressStage.RevalidatingInstallation, "Revalidating installation identity.");
-            var freshCandidate = await revalidator.RevalidateAsync(installation.PackageName, cancellationToken).ConfigureAwait(false);
-            if (freshCandidate is null || !IdentityEquals(request.Candidate, freshCandidate) ||
-                !KnownGameCertificate.Verify(
-                    freshCandidate.Installation.PackageName,
-                    freshCandidate.Installation.SigningIdentity).AllowsCodeExecution)
+            if (request.Options.RevalidateInstallation)
             {
-                diagnostics.Add(Diagnostic(
-                    WorkspaceErrorCodes.SourceIdentityMismatch,
-                    DiagnosticSeverity.Error,
-                    "The installed package identity changed before workspace activation."));
-                return Result(WorkspacePreparationStatus.Failed, workspacePath, keyText, diagnostics, statistics);
+                Report(request, WorkspaceProgressStage.RevalidatingInstallation, "Revalidating installation identity.");
+                var freshCandidate = await revalidator.RevalidateAsync(installation.PackageName, cancellationToken).ConfigureAwait(false);
+                if (freshCandidate is null || !IdentityEquals(request.Candidate, freshCandidate) ||
+                    !KnownGameCertificate.Verify(
+                        freshCandidate.Installation.PackageName,
+                        freshCandidate.Installation.SigningIdentity).AllowsCodeExecution)
+                {
+                    diagnostics.Add(Diagnostic(
+                        WorkspaceErrorCodes.SourceIdentityMismatch,
+                        DiagnosticSeverity.Error,
+                        "The installed package identity changed before workspace activation."));
+                    return Result(WorkspacePreparationStatus.Failed, workspacePath, keyText, diagnostics, statistics);
+                }
+
+                planCandidate = freshCandidate;
+            }
+            else
+            {
+                planCandidate = request.Candidate;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            Report(request, WorkspaceProgressStage.Activating, "Activating workspace state.");
-            await ActivateAsync(root, keyText, cancellationToken).ConfigureAwait(false);
+            if (request.Options.ActivateWorkspace)
+            {
+                Report(request, WorkspaceProgressStage.Activating, "Activating workspace state.");
+                await ActivateAsync(root, keyText, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (preparedFiles is null || planCandidate is null)
+                throw new WorkspacePreparationException(WorkspaceErrorCodes.ManifestInvalid, "Workspace evidence is incomplete.");
+            var executionPlan = CreateExecutionPlan(planCandidate, keyText, workspacePath, preparedFiles);
             Report(request, WorkspaceProgressStage.Completed, cacheHit ? "Workspace cache hit." : "Workspace built.");
             stopwatch.Stop();
+            var metrics = new WorkspacePreparationMetrics(
+                Math.Max(1, stopwatch.ElapsedMilliseconds),
+                cacheHit ? 0 : peakTemporaryBytes,
+                finalWorkspaceBytes)
+            {
+                ApkSourceOpenCount = preparationSession?.ApkSourceCount ?? 0,
+                ApkFullHashCount = preparationSession?.ApkSourceCount ?? 0,
+                ApkBytesHashed = preparationSession?.ApkBytesHashed ?? 0,
+                WorkspacePayloadHashPassCount = workspacePayloadHashPassCount,
+                WorkspacePayloadBytesHashed = workspacePayloadBytesHashed,
+            };
             return Result(
                 cacheHit ? WorkspacePreparationStatus.CacheHit : WorkspacePreparationStatus.Built,
                 workspacePath,
                 keyText,
                 diagnostics,
                 statistics,
-                new WorkspacePreparationMetrics(
-                    Math.Max(1, stopwatch.ElapsedMilliseconds),
-                    cacheHit ? 0 : peakTemporaryBytes,
-                    finalWorkspaceBytes));
+                metrics,
+                executionPlan);
         }
         catch (OperationCanceledException)
         {
@@ -207,6 +256,7 @@ public sealed class GameWorkspacePreparer
         WorkspacePreparationRequest request,
         string keyText,
         string stagingPath,
+        GameInstallationPreparationSession? preparationSession,
         CancellationToken cancellationToken)
     {
         var installation = request.Candidate.Installation;
@@ -214,7 +264,20 @@ public sealed class GameWorkspacePreparer
         var openedSources = new List<OpenedSource>();
         try
         {
-            for (var index = 0; index < installation.ApkSources.Count; index++)
+            if (preparationSession is not null)
+            {
+                for (var index = 0; index < preparationSession.Sources.Count; index++)
+                {
+                    var source = preparationSession.Sources[index];
+                    openedSources.Add(new OpenedSource(
+                        source.Identity,
+                        request.Candidate.SourceInventories[index],
+                        source.Stream,
+                        source.Archive,
+                        ownsResources: false));
+                }
+            }
+            else for (var index = 0; index < installation.ApkSources.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var source = installation.ApkSources[index];
@@ -256,7 +319,7 @@ public sealed class GameWorkspacePreparer
 
                     stream.Position = 0;
                     var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
-                    openedSources.Add(new OpenedSource(source, inventory, stream, archive));
+                    openedSources.Add(new OpenedSource(source, inventory, stream, archive, ownsResources: true));
                 }
                 catch
                 {
@@ -374,7 +437,12 @@ public sealed class GameWorkspacePreparer
             await WriteJsonFileAsync(Path.Combine(stagingPath, WorkspaceManifestConstants.RewriteManifestFileName), rewriteManifest, cancellationToken).ConfigureAwait(false);
 
             Report(request, WorkspaceProgressStage.ValidatingOutputs, "Validating completed workspace outputs.");
-            var validation = await ValidateWorkspaceAsync(stagingPath, keyText, request, cancellationToken).ConfigureAwait(false);
+            var validation = await ValidateWorkspaceAsync(
+                stagingPath,
+                keyText,
+                request,
+                cancellationToken,
+                request.Options.ValidateWrittenPayloadHashes).ConfigureAwait(false);
             if (!validation.IsValid)
             {
                 throw new WorkspacePreparationException(WorkspaceErrorCodes.ManifestInvalid, "Completed workspace validation failed.");
@@ -398,7 +466,8 @@ public sealed class GameWorkspacePreparer
         string workspacePath,
         string keyText,
         WorkspacePreparationRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool validatePayloadHashes = true)
     {
         var validation = await WorkspaceManifestValidator.ValidateAsync(
             workspacePath,
@@ -410,14 +479,48 @@ public sealed class GameWorkspacePreparer
                 request.Options.RewriterRecipe,
                 WorkspaceManifestConstants.RewriteStatusNotApplied,
                 request.Options.SmapiBuildId),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            validatePayloadHashes).ConfigureAwait(false);
         return validation.IsValid
-            ? new CacheValidation(true, validation.ExtractionManifest!.Statistics, validation.TotalBytes)
+            ? new CacheValidation(
+                true,
+                validation.ExtractionManifest!.Statistics,
+                validation.ExtractionManifest.Files,
+                validation.TotalBytes)
             : CacheValidation.Invalid;
     }
 
     private static bool IdentityEquals(GameInstallationCandidate original, GameInstallationCandidate fresh) =>
         WorkspaceManifestValidator.CandidateIdentityEquals(original, fresh, includeSourcePaths: false);
+
+    private static ValidatedExecutionPlan CreateExecutionPlan(
+        GameInstallationCandidate candidate,
+        string workspaceKey,
+        string workspacePath,
+        IReadOnlyList<WorkspaceExtractedFileManifest> files)
+    {
+        var payloads = files
+            .Select(static file => new ValidatedWorkspacePayload(file.Kind, file.RelativePath, file.Size, file.Sha256))
+            .ToArray();
+        var installation = candidate.Installation;
+        return new ValidatedExecutionPlan(
+            installation.PackageName,
+            installation.VersionName,
+            installation.LongVersionCode,
+            installation.SelectedAbi,
+            workspaceKey,
+            workspacePath,
+            WorkspaceExecutionValidator.CreateIdentityDigest(
+                candidate,
+                workspaceKey,
+                WorkspacePreparationOptions.DefaultManifestSchema,
+                WorkspacePreparationOptions.DefaultExtractorSchema,
+                WorkspaceExecutionTrustDefaults.Gate0RewriteRecipe,
+                WorkspaceExecutionTrustDefaults.Gate0RewriteStatus,
+                payloads),
+            DateTimeOffset.UtcNow,
+            payloads);
+    }
 
     private static async ValueTask ActivateAsync(string root, string keyText, CancellationToken cancellationToken)
     {
@@ -552,8 +655,9 @@ public sealed class GameWorkspacePreparer
         string? key,
         IEnumerable<DiagnosticRecord> diagnostics,
         WorkspaceExtractionStatistics? statistics = null,
-        WorkspacePreparationMetrics? metrics = null) =>
-        new(status, workspacePath, key, diagnostics, statistics, metrics);
+        WorkspacePreparationMetrics? metrics = null,
+        ValidatedExecutionPlan? executionPlan = null) =>
+        new(status, workspacePath, key, diagnostics, statistics, metrics, executionPlan);
 
     private static void TryDeleteDirectory(string path)
     {
@@ -579,19 +683,31 @@ public sealed class GameWorkspacePreparer
         }
     }
 
-    private sealed record CacheValidation(bool IsValid, WorkspaceExtractionStatistics? Statistics, long TotalBytes)
+    private sealed record CacheValidation(
+        bool IsValid,
+        WorkspaceExtractionStatistics? Statistics,
+        IReadOnlyList<WorkspaceExtractedFileManifest>? Files,
+        long TotalBytes)
     {
-        public static CacheValidation Invalid { get; } = new(false, null, 0);
+        public static CacheValidation Invalid { get; } = new(false, null, null, 0);
     }
 
     private sealed class OpenedSource : IDisposable
     {
-        public OpenedSource(ApkSourceIdentity identity, ApkSourceInventory inventory, FileStream stream, ZipArchive archive)
+        private readonly bool ownsResources;
+
+        public OpenedSource(
+            ApkSourceIdentity identity,
+            ApkSourceInventory inventory,
+            FileStream stream,
+            ZipArchive archive,
+            bool ownsResources)
         {
             Identity = identity;
             Inventory = inventory;
             Stream = stream;
             Archive = archive;
+            this.ownsResources = ownsResources;
         }
 
         public ApkSourceIdentity Identity { get; }
@@ -601,8 +717,11 @@ public sealed class GameWorkspacePreparer
 
         public void Dispose()
         {
-            Archive.Dispose();
-            Stream.Dispose();
+            if (ownsResources)
+            {
+                Archive.Dispose();
+                Stream.Dispose();
+            }
         }
     }
 

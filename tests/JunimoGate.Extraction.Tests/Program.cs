@@ -440,6 +440,72 @@ return TestHarness.Run(
         var scan = new ApkSourceAnalyzer().AnalyzeAsync(source, "base", cancellation.Token).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(GameDiscoveryErrorCodes.Cancelled, scan.Diagnostic!.Code);
     }),
+    ("Product Deep Prepare reuses one verified APK session without payload rehash", (Action)(() =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var fixture = CreateValidWorkspaceCandidate(
+                directory,
+                "product-session",
+                "1.0",
+                [0x11, 0x22, 0x33]);
+            var installation = fixture.Installation;
+            var snapshot = new PackageInstallationSnapshot(
+                installation.PackageName,
+                installation.VersionName,
+                installation.LongVersionCode,
+                installation.SigningIdentity,
+                installation.ApkSources.Select(source => new PackageApkSourceSnapshot(
+                    source.SourcePath,
+                    source.Label == "base",
+                    source.SplitName,
+                    source.Size,
+                    File.GetLastWriteTimeUtc(source.SourcePath).Ticks / TimeSpan.TicksPerMillisecond)));
+            var session = GameInstallationPreparationSession
+                .OpenAsync(snapshot, installation.PackageName)
+                .AsTask().GetAwaiter().GetResult();
+            try
+            {
+                var revalidator = new SequenceCandidateRevalidator(fixture);
+                var root = Path.Combine(directory, "runtime");
+                var result = new GameWorkspacePreparer(revalidator)
+                    .PrepareAsync(
+                        new WorkspacePreparationRequest(
+                            root,
+                            session.Candidate,
+                            new WorkspacePreparationOptions
+                            {
+                                ValidateWrittenPayloadHashes = false,
+                                RevalidateInstallation = false,
+                                ActivateWorkspace = false,
+                            }),
+                        session)
+                    .AsTask().GetAwaiter().GetResult();
+
+                TestHarness.Equal(WorkspacePreparationStatus.Built, result.Status);
+                TestHarness.True(result.ExecutionPlan is not null);
+                TestHarness.Equal(0, revalidator.CallCount);
+                TestHarness.False(File.Exists(Path.Combine(root, "workspace-state.json")));
+                TestHarness.Equal(session.ApkSourceCount, result.Metrics!.ApkSourceOpenCount);
+                TestHarness.Equal(session.ApkSourceCount, result.Metrics.ApkFullHashCount);
+                TestHarness.Equal(session.ApkBytesHashed, result.Metrics.ApkBytesHashed);
+                TestHarness.Equal(0, result.Metrics.WorkspacePayloadHashPassCount);
+                var native = new NativeEntryInventoryProbe()
+                    .ProbeAsync(result.ExecutionPlan!, session)
+                    .AsTask().GetAwaiter().GetResult();
+                TestHarness.True(native.IsSuccess);
+            }
+            finally
+            {
+                session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    })),
     ("M4 builds a synthetic multi-APK workspace and cache hit preserves state", () =>
     {
         var directory = CreateTestDirectory();

@@ -62,4 +62,44 @@ public static class AndroidPlatformBoundary
         var preparer = new GameWorkspacePreparer(revalidator);
         return await preparer.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Product Deep Prepare path which reuses the APK handles already hashed by discovery and defers
+    /// installation race validation to the final PackageManager marker check.
+    /// </summary>
+    public static async ValueTask<WorkspacePreparationResult> PrepareGameWorkspaceAsync(
+        Context context,
+        GameInstallationPreparationSession preparationSession,
+        IProgress<WorkspaceProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(preparationSession);
+        var candidate = preparationSession.Candidate;
+        var packageName = candidate.Installation.PackageName;
+        if (!packageName.Equals(PlayPackageName, StringComparison.Ordinal))
+            throw new ArgumentException("The prepared package is not supported by the product boundary.", nameof(preparationSession));
+
+        var safeContext = context.ApplicationContext ?? context;
+        await AndroidPrivateStorage.EnsureMigratedAsync(safeContext, cancellationToken).ConfigureAwait(false);
+        var options = new WorkspacePreparationOptions
+        {
+            ExtractorSchema = WorkspacePreparationOptions.DefaultExtractorSchema,
+            ManifestSchema = WorkspacePreparationOptions.DefaultManifestSchema,
+            RewriterRecipe = "unrewritten:v1",
+            SmapiBuildId = "none",
+            Progress = progress,
+            ValidateWrittenPayloadHashes = false,
+            RevalidateInstallation = false,
+            ActivateWorkspace = false,
+        };
+        var request = new WorkspacePreparationRequest(
+            AndroidPrivateStorage.GetRuntimeRoot(safeContext),
+            candidate,
+            options);
+        var revalidator = new AndroidPackageWorkspaceCandidateRevalidator(safeContext, packageName);
+        return await new GameWorkspacePreparer(revalidator)
+            .PrepareAsync(request, preparationSession, cancellationToken)
+            .ConfigureAwait(false);
+    }
 }

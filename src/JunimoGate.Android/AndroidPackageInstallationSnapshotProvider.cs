@@ -56,7 +56,8 @@ public sealed class AndroidPackageInstallationSnapshotProvider : IPackageInstall
             packageInfo.VersionName,
             longVersionCode,
             signingIdentity,
-            sources);
+            sources,
+            packageInfo.LastUpdateTime);
         return ValueTask.FromResult<PackageInstallationSnapshot?>(snapshot);
     }
 
@@ -71,7 +72,7 @@ public sealed class AndroidPackageInstallationSnapshotProvider : IPackageInstall
 
         var sources = new List<PackageApkSourceSnapshot>
         {
-            new(applicationInfo.SourceDir, IsBase: true, SplitName: null),
+            CreateSourceSnapshot(applicationInfo.SourceDir, isBase: true, splitName: null),
         };
         var splitNames = packageInfo.SplitNames;
         var splitSourceDirs = applicationInfo.SplitSourceDirs;
@@ -95,13 +96,29 @@ public sealed class AndroidPackageInstallationSnapshotProvider : IPackageInstall
                 throw new InvalidOperationException("Split APK metadata contains a missing name or source path.");
             }
 
-            sources.Add(new PackageApkSourceSnapshot(
+            sources.Add(CreateSourceSnapshot(
                 splitSourceDirs[index],
-                IsBase: false,
+                isBase: false,
                 splitNames[index]));
         }
 
         return sources;
+    }
+
+    private static PackageApkSourceSnapshot CreateSourceSnapshot(string sourcePath, bool isBase, string? splitName)
+    {
+        var file = new FileInfo(sourcePath);
+        if (!file.Exists)
+        {
+            throw new InvalidOperationException("An installed APK source is missing.");
+        }
+
+        return new PackageApkSourceSnapshot(
+            file.FullName,
+            isBase,
+            splitName,
+            file.Length,
+            new DateTimeOffset(file.LastWriteTimeUtc).ToUnixTimeMilliseconds());
     }
 
     private static SigningIdentity? ReadSigningIdentity(PackageInfo packageInfo)

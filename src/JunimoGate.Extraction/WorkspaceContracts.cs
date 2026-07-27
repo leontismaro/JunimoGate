@@ -85,6 +85,15 @@ public sealed record WorkspacePreparationOptions
     public string ManifestSchema { get; init; } = DefaultManifestSchema;
     public WorkspaceExtractionLimits Limits { get; init; } = new();
     public IProgress<WorkspaceProgressEvent>? Progress { get; init; }
+
+    /// <summary>Whether a newly written workspace must immediately re-hash every payload.</summary>
+    public bool ValidateWrittenPayloadHashes { get; init; } = true;
+
+    /// <summary>Whether package discovery must be repeated before workspace activation.</summary>
+    public bool RevalidateInstallation { get; init; } = true;
+
+    /// <summary>Whether this preparer updates the historical source-workspace state pointer.</summary>
+    public bool ActivateWorkspace { get; init; } = true;
 }
 
 public sealed record WorkspacePreparationRequest
@@ -173,7 +182,14 @@ public sealed record WorkspaceRewriteManifest(
 public sealed record WorkspacePreparationMetrics(
     long DurationMilliseconds,
     long PeakTemporaryBytes,
-    long FinalWorkspaceBytes);
+    long FinalWorkspaceBytes)
+{
+    public int ApkSourceOpenCount { get; init; }
+    public int ApkFullHashCount { get; init; }
+    public long ApkBytesHashed { get; init; }
+    public int WorkspacePayloadHashPassCount { get; init; }
+    public long WorkspacePayloadBytesHashed { get; init; }
+}
 
 public sealed record WorkspaceState(
     string Format,
@@ -189,7 +205,8 @@ public sealed record WorkspacePreparationResult
         string? workspaceKey,
         IEnumerable<DiagnosticRecord> diagnostics,
         WorkspaceExtractionStatistics? statistics = null,
-        WorkspacePreparationMetrics? metrics = null)
+        WorkspacePreparationMetrics? metrics = null,
+        ValidatedExecutionPlan? executionPlan = null)
     {
         ArgumentNullException.ThrowIfNull(diagnostics);
         Status = status;
@@ -198,6 +215,7 @@ public sealed record WorkspacePreparationResult
         Diagnostics = new ReadOnlyCollection<DiagnosticRecord>(diagnostics.ToArray());
         Statistics = statistics;
         Metrics = metrics;
+        ExecutionPlan = executionPlan;
     }
 
     public WorkspacePreparationStatus Status { get; }
@@ -206,6 +224,7 @@ public sealed record WorkspacePreparationResult
     public ReadOnlyCollection<DiagnosticRecord> Diagnostics { get; }
     public WorkspaceExtractionStatistics? Statistics { get; }
     public WorkspacePreparationMetrics? Metrics { get; }
+    public ValidatedExecutionPlan? ExecutionPlan { get; }
 }
 
 internal sealed class WorkspacePreparationException : IOException

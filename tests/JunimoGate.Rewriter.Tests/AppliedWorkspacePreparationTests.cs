@@ -55,13 +55,15 @@ internal static class AppliedWorkspacePreparationTests
         TestHarness.Equal(GameHostAppliedWorkspacePreparationStatus.Built, built.Status);
         TestHarness.True(built.IsSuccess);
         TestHarness.True(built.Plan is not null);
+        TestHarness.Equal(1, built.Metrics.RewriteCount);
         AssertAppliedFiles(built.Plan!);
 
         var cached = preparer.PrepareAsync(request).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(GameHostAppliedWorkspacePreparationStatus.CacheHit, cached.Status);
         TestHarness.True(cached.IsSuccess);
         TestHarness.Equal(built.Plan!.AppliedWorkspaceKey, cached.Plan!.AppliedWorkspaceKey);
-        TestHarness.Equal(2, rewriteCount);
+        TestHarness.Equal(0, cached.Metrics.RewriteCount);
+        TestHarness.Equal(1, rewriteCount);
         TestHarness.Equal(1, Directory.EnumerateDirectories(Path.Combine(fixture.AppliedRoot, "committed")).Count());
         TestHarness.Equal(0, Directory.EnumerateDirectories(Path.Combine(fixture.AppliedRoot, "staging")).Count());
 
@@ -125,6 +127,7 @@ internal static class AppliedWorkspacePreparationTests
         var result = preparer.PrepareAsync(request).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(GameHostAppliedWorkspacePreparationStatus.Rejected, result.Status);
         TestHarness.False(rewriteCalled);
+        TestHarness.Equal(0, result.Metrics.RewriteCount);
         TestHarness.True(result.Diagnostics.Any(diagnostic =>
             diagnostic.Code == GameHostAppliedWorkspaceDiagnosticCodes.SourceRejected));
         TestHarness.False(File.Exists(Path.Combine(

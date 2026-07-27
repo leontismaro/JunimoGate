@@ -27,7 +27,9 @@ public static class GameDiscoveryErrorCodes
 public sealed record PackageApkSourceSnapshot(
     string SourcePath,
     bool IsBase,
-    string? SplitName);
+    string? SplitName,
+    long Size = -1,
+    long LastModifiedTimeUtcMilliseconds = -1);
 
 /// <summary>Platform-neutral package metadata captured at one point in time.</summary>
 public sealed record PackageInstallationSnapshot
@@ -37,7 +39,8 @@ public sealed record PackageInstallationSnapshot
         string? versionName,
         long? longVersionCode,
         SigningIdentity? signingIdentity,
-        IEnumerable<PackageApkSourceSnapshot> apkSources)
+        IEnumerable<PackageApkSourceSnapshot> apkSources,
+        long? lastUpdateTimeUtcMilliseconds = null)
     {
         ArgumentNullException.ThrowIfNull(apkSources);
         var sources = apkSources.ToArray();
@@ -51,6 +54,7 @@ public sealed record PackageInstallationSnapshot
         LongVersionCode = longVersionCode;
         SigningIdentity = signingIdentity;
         ApkSources = Array.AsReadOnly(sources);
+        LastUpdateTimeUtcMilliseconds = lastUpdateTimeUtcMilliseconds;
     }
 
     /// <summary>Gets the package name reported by the platform.</summary>
@@ -67,6 +71,9 @@ public sealed record PackageInstallationSnapshot
 
     /// <summary>Gets the installed base and split APK source metadata.</summary>
     public ReadOnlyCollection<PackageApkSourceSnapshot> ApkSources { get; }
+
+    /// <summary>Gets PackageManager's last package update marker, expressed as Unix milliseconds.</summary>
+    public long? LastUpdateTimeUtcMilliseconds { get; }
 }
 
 /// <summary>Provider seam for repeatable package snapshots before and after APK scanning.</summary>

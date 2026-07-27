@@ -138,6 +138,49 @@ return TestHarness.Run(
         TestHarness.Throws<ArgumentException>(() => new GameInstallationCandidate(installation, [baseInventory]));
         TestHarness.Throws<ArgumentException>(() => new ApkSourceInventory("base", [""], [], []));
     }),
+    ("Package update marker is stable and changes with package source metadata", () =>
+    {
+        var root = Path.Combine(Path.GetTempPath(), "junimogate-core-tests");
+        var signing = new SigningIdentity([digest1]);
+        var first = new PackageInstallationSnapshot(
+            "com.chucklefish.stardewvalley",
+            "1.6.15.3",
+            245,
+            signing,
+            [
+                new PackageApkSourceSnapshot(Path.Combine(root, "base.apk"), true, null, 100, 1_000),
+                new PackageApkSourceSnapshot(Path.Combine(root, "split.apk"), false, "config.arm64_v8a", 200, 2_000),
+            ],
+            lastUpdateTimeUtcMilliseconds: 3_000);
+        var reordered = new PackageInstallationSnapshot(
+            first.PackageName,
+            first.VersionName,
+            first.LongVersionCode,
+            signing,
+            first.ApkSources.Reverse(),
+            first.LastUpdateTimeUtcMilliseconds);
+        var updated = new PackageInstallationSnapshot(
+            first.PackageName,
+            first.VersionName,
+            first.LongVersionCode,
+            signing,
+            [
+                first.ApkSources[0],
+                first.ApkSources[1] with { LastModifiedTimeUtcMilliseconds = 2_001 },
+            ],
+            first.LastUpdateTimeUtcMilliseconds);
+
+        var marker = PackageUpdateMarker.Create(first);
+        TestHarness.Equal(64, marker.Length);
+        TestHarness.Equal(marker, PackageUpdateMarker.Create(reordered));
+        TestHarness.False(marker.Equals(PackageUpdateMarker.Create(updated), StringComparison.Ordinal));
+        TestHarness.Throws<InvalidDataException>(() => PackageUpdateMarker.Create(new PackageInstallationSnapshot(
+            first.PackageName,
+            first.VersionName,
+            first.LongVersionCode,
+            signing,
+            [new PackageApkSourceSnapshot(Path.Combine(root, "base.apk"), true, null)])));
+    }),
     ("APK source and installation reject ambiguous identities", () =>
     {
         var root = Path.Combine(Path.GetTempPath(), "junimogate-core-tests");

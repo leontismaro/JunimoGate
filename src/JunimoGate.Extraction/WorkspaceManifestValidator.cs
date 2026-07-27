@@ -231,7 +231,8 @@ internal static class WorkspaceManifestValidator
         string keyText,
         GameInstallationCandidate candidate,
         WorkspaceManifestValidationExpectations expectations,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool validatePayloadHashes = true)
     {
         try
         {
@@ -335,18 +336,21 @@ internal static class WorkspaceManifestValidator
                     return WorkspaceManifestValidationResult.Invalid(WorkspaceManifestValidationFailure.PayloadHashMismatch);
                 }
 
-                await using var stream = new FileStream(
-                    fullPath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read,
-                    128 * 1024,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
-                var hash = Convert.ToHexStringLower(
-                    await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
-                if (!hash.Equals(file.Sha256, StringComparison.Ordinal))
+                if (validatePayloadHashes)
                 {
-                    return WorkspaceManifestValidationResult.Invalid(WorkspaceManifestValidationFailure.PayloadHashMismatch);
+                    await using var stream = new FileStream(
+                        fullPath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        128 * 1024,
+                        FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    var hash = Convert.ToHexStringLower(
+                        await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+                    if (!hash.Equals(file.Sha256, StringComparison.Ordinal))
+                    {
+                        return WorkspaceManifestValidationResult.Invalid(WorkspaceManifestValidationFailure.PayloadHashMismatch);
+                    }
                 }
             }
 

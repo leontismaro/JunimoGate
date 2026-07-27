@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using JunimoGate.Core;
 using JunimoGate.Extraction;
@@ -40,7 +42,10 @@ public sealed class GameHostAppliedWorkspacePreparationRequest
         string appliedRootPath,
         GameInstallationCandidate originalCandidate,
         ValidatedExecutionPlan sourceExecutionPlan,
-        GameHostRecipeDecision decision)
+        GameHostRecipeDecision decision,
+        bool verifySourcePayloadHashes = true,
+        bool revalidateInstallation = true,
+        bool validateCommittedAfterBuild = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(appliedRootPath);
         ArgumentNullException.ThrowIfNull(originalCandidate);
@@ -51,6 +56,9 @@ public sealed class GameHostAppliedWorkspacePreparationRequest
         OriginalCandidate = originalCandidate;
         SourceExecutionPlan = sourceExecutionPlan;
         Decision = decision;
+        VerifySourcePayloadHashes = verifySourcePayloadHashes;
+        RevalidateInstallation = revalidateInstallation;
+        ValidateCommittedAfterBuild = validateCommittedAfterBuild;
 
         if (!originalCandidate.Installation.PackageName.Equals(sourceExecutionPlan.PackageName, StringComparison.Ordinal) ||
             !decision.CanRewrite ||
@@ -68,6 +76,9 @@ public sealed class GameHostAppliedWorkspacePreparationRequest
     public GameInstallationCandidate OriginalCandidate { get; }
     public ValidatedExecutionPlan SourceExecutionPlan { get; }
     public GameHostRecipeDecision Decision { get; }
+    public bool VerifySourcePayloadHashes { get; }
+    public bool RevalidateInstallation { get; }
+    public bool ValidateCommittedAfterBuild { get; }
 
     private static bool PathsOverlap(string left, string right) =>
         IsContained(left, right) || IsContained(right, left);
@@ -125,10 +136,15 @@ public sealed class ValidatedGameHostAppliedWorkspacePlan
     public DateTimeOffset ValidatedAtUtc { get; }
 }
 
+public sealed record GameHostAppliedWorkspacePreparationMetrics(
+    long DurationMilliseconds,
+    int RewriteCount);
+
 public sealed record GameHostAppliedWorkspacePreparationResult(
     GameHostAppliedWorkspacePreparationStatus Status,
     ValidatedGameHostAppliedWorkspacePlan? Plan,
-    ImmutableArray<DiagnosticRecord> Diagnostics)
+    ImmutableArray<DiagnosticRecord> Diagnostics,
+    GameHostAppliedWorkspacePreparationMetrics Metrics)
 {
     public bool IsSuccess =>
         Status is GameHostAppliedWorkspacePreparationStatus.Built or GameHostAppliedWorkspacePreparationStatus.CacheHit;
@@ -150,6 +166,8 @@ public sealed class GameHostAppliedWorkspacePreparer
     private const string CommittedDirectoryName = "committed";
     private const string StagingDirectoryName = "staging";
     private const string QuarantineDirectoryName = "quarantine";
+    private const string CacheIndexDirectoryName = "cache-index";
+    private const string CacheIndexSchema = "junimogate-applied-cache-index/v1";
     private const string LockFileName = ".workspace.lock";
     private const string PendingPrefix = "pending-";
     private const string OverlayRelativePath = "overlay/assemblies/StardewValley.dll";
@@ -182,6 +200,7 @@ public sealed class GameHostAppliedWorkspacePreparer
     {
         ArgumentNullException.ThrowIfNull(request);
         var diagnostics = new List<DiagnosticRecord>();
+        var metrics = new PreparationMetricsTracker();
         string? stagingPath = null;
         var stagingCommitted = false;
 
@@ -194,9 +213,11 @@ public sealed class GameHostAppliedWorkspacePreparer
             var committedRoot = Path.Combine(request.AppliedRootPath, CommittedDirectoryName);
             var stagingRoot = Path.Combine(request.AppliedRootPath, StagingDirectoryName);
             var quarantineRoot = Path.Combine(request.AppliedRootPath, QuarantineDirectoryName);
+            var cacheIndexRoot = Path.Combine(request.AppliedRootPath, CacheIndexDirectoryName);
             Directory.CreateDirectory(committedRoot);
             Directory.CreateDirectory(stagingRoot);
             Directory.CreateDirectory(quarantineRoot);
+            Directory.CreateDirectory(cacheIndexRoot);
 
             var recovery = await RecoverAsync(
                 request.AppliedRootPath,
@@ -210,6 +231,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                     GameHostAppliedWorkspacePreparationStatus.Rejected,
                     null,
                     diagnostics,
+                    metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.RecoveryRejected,
                     DiagnosticSeverity.Error,
                     "The applied workspace state could not be recovered safely.");
@@ -219,6 +241,7 @@ public sealed class GameHostAppliedWorkspacePreparer
             var sourceSnapshot = await RevalidateSourceAsync(
                 request.SourceExecutionPlan,
                 request.OriginalCandidate,
+                request.VerifySourcePayloadHashes,
                 cancellationToken).ConfigureAwait(false);
             if (sourceSnapshot is null)
             {
@@ -226,9 +249,41 @@ public sealed class GameHostAppliedWorkspacePreparer
                     GameHostAppliedWorkspacePreparationStatus.Rejected,
                     null,
                     diagnostics,
+                    metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.SourceRejected,
                     DiagnosticSeverity.Error,
                     "The immutable source workspace or its manifests changed before rewrite.");
+            }
+
+            var tool = new AppliedRewriterToolIdentity(
+                ToolBuildId,
+                GameHostAppliedWorkspaceContract.PinnedMonoCecilVersion);
+            var sourceBinding = new AppliedSourceWorkspaceBinding(
+                request.SourceExecutionPlan.WorkspaceKey,
+                sourceSnapshot.SourceManifestSha256,
+                sourceSnapshot.ExtractionManifestSha256,
+                sourceSnapshot.RewriteManifestV1Sha256,
+                sourceSnapshot.OriginalPayloadSet);
+            var lookupKey = CreateCacheLookupKey(sourceBinding, request.Decision, tool);
+            var cachedPlan = await TryLoadCachedPlanAsync(
+                cacheIndexRoot,
+                committedRoot,
+                lookupKey,
+                request,
+                sourceSnapshot,
+                cancellationToken).ConfigureAwait(false);
+            if (cachedPlan is not null)
+            {
+                await ActivateAsync(request.AppliedRootPath, cachedPlan.AppliedWorkspaceKey, cancellationToken)
+                    .ConfigureAwait(false);
+                return Result(
+                    GameHostAppliedWorkspacePreparationStatus.CacheHit,
+                    cachedPlan,
+                    diagnostics,
+                    metrics,
+                    GameHostAppliedWorkspaceDiagnosticCodes.CacheHit,
+                    DiagnosticSeverity.Information,
+                    "The applied workspace cache was validated without repeating rewrite.");
             }
 
             stagingPath = Path.Combine(stagingRoot, PendingPrefix + Guid.NewGuid().ToString("N"));
@@ -238,6 +293,7 @@ public sealed class GameHostAppliedWorkspacePreparer
             var inputPath = Path.Combine(
                 request.SourceExecutionPlan.WorkspacePath,
                 GameHostBridgeRecipe.InputRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            metrics.RewriteCount++;
             var rewrite = await rewriteOperation(
                 request.Decision,
                 request.SourceExecutionPlan,
@@ -254,6 +310,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                     GameHostAppliedWorkspacePreparationStatus.Rejected,
                     null,
                     diagnostics,
+                    metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.RewriteRejected,
                     DiagnosticSeverity.Error,
                     "The exact bridge writer did not produce an approved overlay.");
@@ -277,15 +334,6 @@ public sealed class GameHostAppliedWorkspacePreparer
                 AppliedModuleVersionIdPolicy.Preserve,
                 outputInfo.Length,
                 rewrite.Rewrite.OutputDigest.Value.ToString());
-            var tool = new AppliedRewriterToolIdentity(
-                ToolBuildId,
-                GameHostAppliedWorkspaceContract.PinnedMonoCecilVersion);
-            var sourceBinding = new AppliedSourceWorkspaceBinding(
-                request.SourceExecutionPlan.WorkspaceKey,
-                sourceSnapshot.SourceManifestSha256,
-                sourceSnapshot.ExtractionManifestSha256,
-                sourceSnapshot.RewriteManifestV1Sha256,
-                sourceSnapshot.OriginalPayloadSet);
             var appliedKey = GameHostAppliedWorkspaceKey.Create(
                 sourceBinding,
                 request.Decision.SupportKey,
@@ -348,6 +396,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                     GameHostAppliedWorkspacePreparationStatus.Rejected,
                     null,
                     diagnostics,
+                    metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.ManifestRejected,
                     DiagnosticSeverity.Error,
                     "The staged applied workspace failed exact shape or authorization validation.",
@@ -371,6 +420,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                         GameHostAppliedWorkspacePreparationStatus.Rejected,
                         null,
                         diagnostics,
+                        metrics,
                         GameHostAppliedWorkspaceDiagnosticCodes.ManifestRejected,
                         DiagnosticSeverity.Error,
                         "An existing applied workspace with the same key failed exact validation.");
@@ -387,26 +437,30 @@ public sealed class GameHostAppliedWorkspacePreparer
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var freshCandidate = await revalidator.RevalidateAsync(
-                request.SourceExecutionPlan.PackageName,
-                cancellationToken).ConfigureAwait(false);
-            if (freshCandidate is null ||
-                !WorkspaceManifestValidator.CandidateIdentityEquals(
-                    request.OriginalCandidate,
-                    freshCandidate,
-                    includeSourcePaths: true) ||
-                !WorkspaceExecutionValidator.MatchesGate0Identity(request.SourceExecutionPlan, freshCandidate))
+            if (request.RevalidateInstallation)
             {
-                return Result(
-                    GameHostAppliedWorkspacePreparationStatus.Rejected,
-                    null,
-                    diagnostics,
-                    GameHostAppliedWorkspaceDiagnosticCodes.LiveIdentityChanged,
-                    DiagnosticSeverity.Error,
-                    "The live installed source changed before applied workspace activation.");
+                var freshCandidate = await revalidator.RevalidateAsync(
+                    request.SourceExecutionPlan.PackageName,
+                    cancellationToken).ConfigureAwait(false);
+                if (freshCandidate is null ||
+                    !WorkspaceManifestValidator.CandidateIdentityEquals(
+                        request.OriginalCandidate,
+                        freshCandidate,
+                        includeSourcePaths: true) ||
+                    !WorkspaceExecutionValidator.MatchesGate0Identity(request.SourceExecutionPlan, freshCandidate))
+                {
+                    return Result(
+                        GameHostAppliedWorkspacePreparationStatus.Rejected,
+                        null,
+                        diagnostics,
+                        metrics,
+                        GameHostAppliedWorkspaceDiagnosticCodes.LiveIdentityChanged,
+                        DiagnosticSeverity.Error,
+                        "The live installed source changed before applied workspace activation.");
+                }
             }
 
-            if (!await ValidateCommittedAsync(
+            if ((cacheHit || request.ValidateCommittedAfterBuild) && !await ValidateCommittedAsync(
                     committedPath,
                     rewriteManifest,
                     appliedManifest,
@@ -419,11 +473,16 @@ public sealed class GameHostAppliedWorkspacePreparer
                     GameHostAppliedWorkspacePreparationStatus.Rejected,
                     null,
                     diagnostics,
+                    metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.ManifestRejected,
                     DiagnosticSeverity.Error,
                     "The committed applied workspace failed validation before activation.");
             }
 
+            await WriteJsonAtomicAsync(
+                Path.Combine(cacheIndexRoot, lookupKey + ".json"),
+                new AppliedCacheIndex(CacheIndexSchema, lookupKey, appliedKey),
+                cancellationToken).ConfigureAwait(false);
             await ActivateAsync(request.AppliedRootPath, appliedKey, cancellationToken).ConfigureAwait(false);
             var overlayPath = Path.Combine(
                 committedPath,
@@ -444,6 +503,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                     : GameHostAppliedWorkspacePreparationStatus.Built,
                 plan,
                 diagnostics,
+                metrics,
                 cacheHit ? GameHostAppliedWorkspaceDiagnosticCodes.CacheHit : GameHostAppliedWorkspaceDiagnosticCodes.Built,
                 DiagnosticSeverity.Information,
                 cacheHit
@@ -456,6 +516,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                 GameHostAppliedWorkspacePreparationStatus.Cancelled,
                 null,
                 diagnostics,
+                metrics,
                 GameHostAppliedWorkspaceDiagnosticCodes.Cancelled,
                 DiagnosticSeverity.Warning,
                 "Applied workspace preparation was cancelled.");
@@ -466,6 +527,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                 GameHostAppliedWorkspacePreparationStatus.Failed,
                 null,
                 diagnostics,
+                metrics,
                 GameHostAppliedWorkspaceDiagnosticCodes.CommitFailed,
                 DiagnosticSeverity.Error,
                 "Applied workspace preparation failed without activating partial output.",
@@ -488,9 +550,119 @@ public sealed class GameHostAppliedWorkspacePreparer
         new GameHostBridgeAssemblyRewriter(decision, plan)
             .RewriteWithEvidenceAsync(request, cancellationToken);
 
+    private static string CreateCacheLookupKey(
+        AppliedSourceWorkspaceBinding source,
+        GameHostRecipeDecision decision,
+        AppliedRewriterToolIdentity tool)
+    {
+        var canonical = string.Join('\n',
+            CacheIndexSchema,
+            source.WorkspaceKey,
+            source.SourceManifestSha256,
+            source.ExtractionManifestSha256,
+            source.RewriteManifestV1Sha256,
+            source.OriginalPayloadSet.Digest,
+            decision.SupportKey,
+            decision.Recipe?.ToString() ?? string.Empty,
+            tool.BuildId,
+            tool.MonoCecilVersion);
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static async ValueTask<ValidatedGameHostAppliedWorkspacePlan?> TryLoadCachedPlanAsync(
+        string cacheIndexRoot,
+        string committedRoot,
+        string lookupKey,
+        GameHostAppliedWorkspacePreparationRequest request,
+        SourceSnapshot sourceSnapshot,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var indexPath = Path.Combine(cacheIndexRoot, lookupKey + ".json");
+            if (!File.Exists(indexPath))
+                return null;
+            var index = await WorkspaceJson.ReadBoundedAsync<AppliedCacheIndex>(
+                indexPath,
+                64 * 1024,
+                cancellationToken).ConfigureAwait(false);
+            if (index is null || index.Schema != CacheIndexSchema || index.LookupKey != lookupKey ||
+                !GameHostAppliedWorkspaceValidator.IsCanonicalSha256(index.AppliedWorkspaceKey))
+            {
+                return null;
+            }
+
+            var committedPath = Path.Combine(committedRoot, index.AppliedWorkspaceKey);
+            if (!Directory.Exists(committedPath))
+                return null;
+            var rewritePath = Path.Combine(committedPath, GameHostAppliedWorkspaceContract.RewriteManifestFileName);
+            var appliedPath = Path.Combine(committedPath, GameHostAppliedWorkspaceContract.AppliedManifestFileName);
+            var rewrite = await WorkspaceJson.ReadBoundedAsync<GameHostRewriteManifestV2>(
+                rewritePath,
+                1024 * 1024,
+                cancellationToken).ConfigureAwait(false);
+            var applied = await WorkspaceJson.ReadBoundedAsync<GameHostAppliedWorkspaceManifest>(
+                appliedPath,
+                1024 * 1024,
+                cancellationToken).ConfigureAwait(false);
+            if (rewrite is null || applied is null ||
+                rewrite.AppliedWorkspaceKey != index.AppliedWorkspaceKey ||
+                applied.AppliedWorkspaceKey != index.AppliedWorkspaceKey ||
+                rewrite.Source?.WorkspaceKey != request.SourceExecutionPlan.WorkspaceKey ||
+                rewrite.SupportKey != request.Decision.SupportKey ||
+                rewrite.Recipe != request.Decision.Recipe)
+            {
+                return null;
+            }
+
+            var authorization = GameHostAppliedWorkspaceValidator.ValidateAuthorization(rewrite, request.Decision);
+            if (!authorization.IsValid)
+                return null;
+            var rewriteHash = await HashFileAsync(rewritePath, cancellationToken).ConfigureAwait(false);
+            var appliedHash = await HashFileAsync(appliedPath, cancellationToken).ConfigureAwait(false);
+            if (!await ValidateCommittedAsync(
+                    committedPath,
+                    rewrite,
+                    applied,
+                    rewriteHash,
+                    appliedHash,
+                    sourceSnapshot.OriginalPayloads,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var overlay = applied.OverlayFiles.SingleOrDefault();
+            if (overlay is null || !overlay.RelativePath.Equals(OverlayRelativePath, StringComparison.Ordinal))
+                return null;
+            var overlayPath = Path.Combine(
+                committedPath,
+                overlay.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            return new ValidatedGameHostAppliedWorkspacePlan(
+                request.SourceExecutionPlan,
+                index.AppliedWorkspaceKey,
+                committedPath,
+                overlayPath,
+                overlay.Size,
+                overlay.Sha256,
+                rewriteHash,
+                appliedHash,
+                DateTimeOffset.UtcNow);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or CryptographicException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     private static async ValueTask<SourceSnapshot?> RevalidateSourceAsync(
         ValidatedExecutionPlan plan,
         GameInstallationCandidate candidate,
+        bool verifyPayloadHashes,
         CancellationToken cancellationToken)
     {
         var manifestValidation = await WorkspaceManifestValidator.ValidateAsync(
@@ -503,7 +675,8 @@ public sealed class GameHostAppliedWorkspacePreparer
                 WorkspaceExecutionTrustDefaults.Gate0RewriteRecipe,
                 WorkspaceExecutionTrustDefaults.Gate0RewriteStatus,
                 "none"),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            verifyPayloadHashes).ConfigureAwait(false);
         if (!manifestValidation.IsValid)
         {
             return null;
@@ -516,8 +689,7 @@ public sealed class GameHostAppliedWorkspacePreparer
             var path = ResolveContainedFile(plan.WorkspacePath, payload.RelativePath);
             if (path is null ||
                 !File.Exists(path) ||
-                new FileInfo(path).Length != payload.Size ||
-                !string.Equals(await HashFileAsync(path, cancellationToken).ConfigureAwait(false), payload.Sha256, StringComparison.Ordinal))
+                new FileInfo(path).Length != payload.Size)
             {
                 return null;
             }
@@ -761,6 +933,24 @@ public sealed class GameHostAppliedWorkspacePreparer
         stream.Flush(flushToDisk: true);
     }
 
+    private static async ValueTask WriteJsonAtomicAsync<T>(
+        string path,
+        T value,
+        CancellationToken cancellationToken)
+    {
+        var temporary = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await WriteJsonNewAsync(temporary, value, cancellationToken).ConfigureAwait(false);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+                File.Delete(temporary);
+        }
+    }
+
     private static async ValueTask<string> HashFileAsync(string path, CancellationToken cancellationToken)
     {
         await using var stream = new FileStream(
@@ -830,6 +1020,7 @@ public sealed class GameHostAppliedWorkspacePreparer
         GameHostAppliedWorkspacePreparationStatus status,
         ValidatedGameHostAppliedWorkspacePlan? plan,
         List<DiagnosticRecord> diagnostics,
+        PreparationMetricsTracker metrics,
         string code,
         DiagnosticSeverity severity,
         string message,
@@ -842,7 +1033,19 @@ public sealed class GameHostAppliedWorkspacePreparer
             code,
             message,
             detail));
-        return new GameHostAppliedWorkspacePreparationResult(status, plan, diagnostics.ToImmutableArray());
+        return new GameHostAppliedWorkspacePreparationResult(
+            status,
+            plan,
+            diagnostics.ToImmutableArray(),
+            new GameHostAppliedWorkspacePreparationMetrics(
+                Math.Max(1, metrics.Stopwatch.ElapsedMilliseconds),
+                metrics.RewriteCount));
+    }
+
+    private sealed class PreparationMetricsTracker
+    {
+        public Stopwatch Stopwatch { get; } = Stopwatch.StartNew();
+        public int RewriteCount { get; set; }
     }
 
     private sealed record SourceSnapshot(
@@ -851,6 +1054,11 @@ public sealed class GameHostAppliedWorkspacePreparer
         string SourceManifestSha256,
         string ExtractionManifestSha256,
         string RewriteManifestV1Sha256);
+
+    private sealed record AppliedCacheIndex(
+        string Schema,
+        string LookupKey,
+        string AppliedWorkspaceKey);
 
     private sealed class WorkspaceLease : IAsyncDisposable
     {

@@ -338,6 +338,7 @@ public sealed class GameInstallationDiscoveryCoordinator
         if (!string.Equals(first.PackageName, second.PackageName, StringComparison.Ordinal) ||
             !string.Equals(first.VersionName, second.VersionName, StringComparison.Ordinal) ||
             first.LongVersionCode != second.LongVersionCode ||
+            first.LastUpdateTimeUtcMilliseconds != second.LastUpdateTimeUtcMilliseconds ||
             !SigningIdentitiesMatch(first.SigningIdentity, second.SigningIdentity))
         {
             return false;
@@ -362,7 +363,7 @@ public sealed class GameInstallationDiscoveryCoordinator
     private static IEnumerable<string> CanonicalSnapshotSources(
         IEnumerable<PackageApkSourceSnapshot> sources) =>
         sources
-            .Select(static source => $"{source.IsBase}\0{source.SplitName}\0{source.SourcePath}")
+            .Select(static source => $"{source.IsBase}\0{source.SplitName}\0{source.SourcePath}\0{source.Size}\0{source.LastModifiedTimeUtcMilliseconds}")
             .Order(StringComparer.Ordinal);
 
     private static PackageDiscoveryReport FailureReport(string packageName, DiagnosticRecord diagnostic) =>

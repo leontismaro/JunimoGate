@@ -99,11 +99,34 @@ public sealed class NativeEntryInventoryProbe
 {
     private const ushort ElfMachineAArch64 = 183;
 
-    public async ValueTask<NativeEntryInventoryResult> ProbeAsync(
+    public ValueTask<NativeEntryInventoryResult> ProbeAsync(
         ValidatedExecutionPlan executionPlan,
         GameInstallationCandidate liveCandidate,
         NativeEntryInventoryLimits? limits = null,
+        CancellationToken cancellationToken = default) =>
+        ProbeCoreAsync(executionPlan, liveCandidate, preparationSession: null, limits, cancellationToken);
+
+    public ValueTask<NativeEntryInventoryResult> ProbeAsync(
+        ValidatedExecutionPlan executionPlan,
+        GameInstallationPreparationSession preparationSession,
+        NativeEntryInventoryLimits? limits = null,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(preparationSession);
+        return ProbeCoreAsync(
+            executionPlan,
+            preparationSession.Candidate,
+            preparationSession,
+            limits,
+            cancellationToken);
+    }
+
+    private async ValueTask<NativeEntryInventoryResult> ProbeCoreAsync(
+        ValidatedExecutionPlan executionPlan,
+        GameInstallationCandidate liveCandidate,
+        GameInstallationPreparationSession? preparationSession,
+        NativeEntryInventoryLimits? limits,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(executionPlan);
         ArgumentNullException.ThrowIfNull(liveCandidate);
@@ -147,11 +170,16 @@ public sealed class NativeEntryInventoryProbe
             long totalBytes = 0;
             var archiveEntryCount = 0;
 
-            foreach (var source in installation.ApkSources)
+            for (var sourceIndex = 0; sourceIndex < installation.ApkSources.Count; sourceIndex++)
             {
+                var source = installation.ApkSources[sourceIndex];
                 cancellationToken.ThrowIfCancellationRequested();
-                await using var stream = OpenSource(source.SourcePath);
-                if (stream.Length != source.Size)
+                var preparedSource = preparationSession?.Sources[sourceIndex];
+                await using var sourceArchive = await OpenSourceArchiveAsync(
+                    source,
+                    preparedSource,
+                    cancellationToken).ConfigureAwait(false);
+                if (sourceArchive is null)
                 {
                     return Failure(
                         installation.SelectedAbi,
@@ -159,20 +187,7 @@ public sealed class NativeEntryInventoryProbe
                         NativeEntryInventoryErrorCodes.SourceIdentityMismatch,
                         "An APK source size changed before native metadata inspection.");
                 }
-
-                var sourceHash = Convert.ToHexStringLower(
-                    await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
-                if (!sourceHash.Equals(source.Digest.Value, StringComparison.Ordinal))
-                {
-                    return Failure(
-                        installation.SelectedAbi,
-                        diagnostics,
-                        NativeEntryInventoryErrorCodes.SourceIdentityMismatch,
-                        "An APK source digest changed before native metadata inspection.");
-                }
-
-                stream.Position = 0;
-                using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+                var archive = sourceArchive.Archive;
                 foreach (var entry in archive.Entries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -317,6 +332,49 @@ public sealed class NativeEntryInventoryProbe
             FileShare.Read,
             128 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+    private static async ValueTask<SourceArchive?> OpenSourceArchiveAsync(
+        ApkSourceIdentity expected,
+        PreparedApkSource? prepared,
+        CancellationToken cancellationToken)
+    {
+        if (prepared is not null)
+        {
+            return expected.Label.Equals(prepared.Identity.Label, StringComparison.Ordinal) &&
+                expected.SplitName == prepared.Identity.SplitName &&
+                expected.Size == prepared.Identity.Size &&
+                expected.Digest == prepared.Identity.Digest
+                    ? SourceArchive.Borrow(prepared.Archive)
+                    : null;
+        }
+
+        var stream = OpenSource(expected.SourcePath);
+        try
+        {
+            if (stream.Length != expected.Size)
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+                return null;
+            }
+
+            var sourceHash = Convert.ToHexStringLower(
+                await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
+            if (!sourceHash.Equals(expected.Digest.Value, StringComparison.Ordinal))
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+                return null;
+            }
+
+            stream.Position = 0;
+            var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            return SourceArchive.Own(stream, archive);
+        }
+        catch
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
 
     private static bool TryGetSelectedAbiEntry(string path, string selectedAbi, out string canonicalPath)
     {
@@ -485,4 +543,29 @@ public sealed class NativeEntryInventoryProbe
         new(DateTimeOffset.UtcNow, StartupStage.Inventory, severity, code, message);
 
     private sealed record InspectedEntry(long BytesRead, byte[] Header, string Sha256);
+
+    private sealed class SourceArchive : IAsyncDisposable
+    {
+        private readonly FileStream? ownedStream;
+        private readonly ZipArchive? ownedArchive;
+
+        private SourceArchive(ZipArchive archive, FileStream? ownedStream, ZipArchive? ownedArchive)
+        {
+            Archive = archive;
+            this.ownedStream = ownedStream;
+            this.ownedArchive = ownedArchive;
+        }
+
+        public ZipArchive Archive { get; }
+
+        public static SourceArchive Borrow(ZipArchive archive) => new(archive, null, null);
+        public static SourceArchive Own(FileStream stream, ZipArchive archive) => new(archive, stream, archive);
+
+        public async ValueTask DisposeAsync()
+        {
+            ownedArchive?.Dispose();
+            if (ownedStream is not null)
+                await ownedStream.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 }

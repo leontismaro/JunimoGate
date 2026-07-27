@@ -390,7 +390,7 @@ public sealed class WorkspaceExecutionValidator
     private static DiagnosticRecord Diagnostic(string code, DiagnosticSeverity severity, string message) =>
         new(DateTimeOffset.UtcNow, StartupStage.RuntimeValidation, severity, code, message);
 
-    internal static bool MatchesGate0Identity(
+    public static bool MatchesGate0Identity(
         ValidatedExecutionPlan plan,
         GameInstallationCandidate candidate) =>
         plan.PackageName.Equals(candidate.Installation.PackageName, StringComparison.Ordinal) &&
