@@ -14,7 +14,7 @@
     <PackageVersion Include="Pathoschild.Http.FluentClient" Version="4.4.2" />
     <PackageVersion Include="Pintail" Version="2.8.1" />
     <PackageVersion Include="Platonymous.TMXTile" Version="1.5.9" />
-    <PackageVersion Include="SkiaSharp" Version="2.88.9" />
+    <PackageVersion Include="SkiaSharp" Version="4.150.1" />
     <PackageVersion Include="StbImageWriteSharp" Version="1.16.7" />
     <PackageVersion Include="System.Reflection.Emit" Version="4.7.0" />
     <PackageVersion Include="TextCopy" Version="6.2.1" />
