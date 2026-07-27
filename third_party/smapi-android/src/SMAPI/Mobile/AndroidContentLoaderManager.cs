@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using StardewModdingAPI.Framework;
 using StardewModdingAPI.Mobile.Audio;
@@ -10,23 +10,30 @@ namespace StardewModdingAPI.Mobile;
 
 internal static class AndroidContentLoaderManager
 {
+    private static readonly FieldInfo FinishedFirstInitSerializersField = RequireGameField("FinishedFirstInitSerializers");
+    private static readonly FieldInfo FinishedFirstLoadContentField = RequireGameField("FinishedFirstLoadContent");
+    private static readonly FieldInfo FinishedFirstInitSoundsField = RequireGameField("FinishedFirstInitSounds");
+    private static readonly FieldInfo FinishedIncrementalLoadField = RequireGameField("FinishedIncrementalLoad");
+    private static readonly MethodInfo AfterLoadContentMethod = AccessTools.Method(typeof(Game1), "AfterLoadContent")
+        ?? throw new MissingMethodException(typeof(Game1).FullName, "AfterLoadContent");
+
     public static bool IsLoaded => LoadState == LoadStateEnum.Loaded;
 
     public static bool FinishedFirstInitSerializers
     {
-        get => (bool)AccessTools.Field(typeof(Game1), "FinishedFirstInitSerializers").GetValue(null);
-        set => AccessTools.Field(typeof(Game1), "FinishedFirstInitSerializers").SetValue(null, value);
+        get => ReadBoolean(FinishedFirstInitSerializersField);
+        set => FinishedFirstInitSerializersField.SetValue(null, value);
     }
     public static bool FinishedFirstLoadContent
     {
-        get => (bool)AccessTools.Field(typeof(Game1), "FinishedFirstLoadContent").GetValue(null);
-        set => AccessTools.Field(typeof(Game1), "FinishedFirstLoadContent").SetValue(null, value);
+        get => ReadBoolean(FinishedFirstLoadContentField);
+        set => FinishedFirstLoadContentField.SetValue(null, value);
     }
 
     public static bool FinishedFirstInitSounds
     {
-        get => (bool)AccessTools.Field(typeof(Game1), "FinishedFirstInitSounds").GetValue(null);
-        set => AccessTools.Field(typeof(Game1), "FinishedFirstInitSounds").SetValue(null, value);
+        get => ReadBoolean(FinishedFirstInitSoundsField);
+        set => FinishedFirstInitSoundsField.SetValue(null, value);
     }
     public static bool FinishedCustomLoadContent = false;
     static int CallingTick = 0;
@@ -37,7 +44,8 @@ internal static class AndroidContentLoaderManager
         if (CallingTick == 1)
             OnSetupFirstTick();
 
-        var currentLoaderEnumerator = SGame.LoadContentEnumerator;
+        var currentLoaderEnumerator = SGame.LoadContentEnumerator
+            ?? throw new InvalidOperationException("The game Content loader is unavailable.");
         bool isLoadContentFinish = currentLoaderEnumerator.MoveNext() is false;
         if (isLoadContentFinish)
         {
@@ -51,11 +59,11 @@ internal static class AndroidContentLoaderManager
         if (FinishedFirstLoadContent && FinishedFirstInitSounds
             && FinishedFirstInitSerializers && FinishedCustomLoadContent)
         {
-            AccessTools.Field(typeof(Game1), "FinishedIncrementalLoad").SetValue(null, true);
+            FinishedIncrementalLoadField.SetValue(null, true);
             LoadState = LoadStateEnum.Loaded;
             SGame.LoadContentEnumerator = null;
             OnPrefix_AfterLoadContent();
-            AccessTools.Method(typeof(Game1), "AfterLoadContent").Invoke(Game1.game1, null);
+            AfterLoadContentMethod.Invoke(Game1.game1, null);
             OnPostfix_AfterLoadContent();
         }
     }
@@ -77,8 +85,17 @@ internal static class AndroidContentLoaderManager
 
     static void OnPostfix_AfterLoadContent()
     {
-        (SGame.game1 as SGame).OnAndroidContentLoaded();
+        if (SGame.game1 is not SGame game)
+            throw new InvalidOperationException("The hosted SMAPI game is unavailable.");
+        game.OnAndroidContentLoaded();
     }
+
+    private static FieldInfo RequireGameField(string name) => AccessTools.Field(typeof(Game1), name)
+        ?? throw new MissingFieldException(typeof(Game1).FullName, name);
+
+    private static bool ReadBoolean(FieldInfo field) => field.GetValue(null) is bool value
+        ? value
+        : throw new InvalidOperationException($"The game field '{field.Name}' is unavailable.");
 
 
     public enum LoadStateEnum

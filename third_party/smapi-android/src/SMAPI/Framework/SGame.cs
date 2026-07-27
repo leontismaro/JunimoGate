@@ -111,7 +111,7 @@ internal class SGame : Game1
     public static Func<IServiceProvider, string, LocalizedContentManager>? CreateContentManagerImpl;
 
 #if SMAPI_FOR_ANDROID
-    internal static SGame Instance { get; private set; }
+    internal static SGame Instance { get; private set; } = null!;
 #endif
 
 
@@ -181,14 +181,20 @@ internal class SGame : Game1
 
 
 #if SMAPI_FOR_ANDROID
-    public static IEnumerator<int> LoadContentEnumerator
+    private static readonly FieldInfo LoadContentEnumeratorField = AccessTools.Field(typeof(Game1), "LoadContentEnumerator")
+        ?? throw new MissingFieldException(typeof(Game1).FullName, "LoadContentEnumerator");
+    private static readonly MethodInfo GetLoadContentEnumeratorMethod = AccessTools.Method(typeof(Game1), "GetLoadContentEnumerator")
+        ?? throw new MissingMethodException(typeof(Game1).FullName, "GetLoadContentEnumerator");
+
+    public static IEnumerator<int>? LoadContentEnumerator
     {
-        get => (IEnumerator<int>)AccessTools.Field(typeof(Game1), "LoadContentEnumerator").GetValue(null);
-        set => AccessTools.Field(typeof(Game1), "LoadContentEnumerator").SetValue(null, value);
+        get => LoadContentEnumeratorField.GetValue(null) as IEnumerator<int>;
+        set => LoadContentEnumeratorField.SetValue(null, value);
     }
     public static IEnumerator<int> GetLoadContentEnumerator()
     {
-        return (IEnumerator<int>)AccessTools.Method(typeof(Game1), "GetLoadContentEnumerator").Invoke(game1, null);
+        return GetLoadContentEnumeratorMethod.Invoke(game1, null) as IEnumerator<int>
+            ?? throw new InvalidOperationException("The game did not return a Content loader.");
     }
 
 #endif
@@ -203,9 +209,10 @@ internal class SGame : Game1
         //this.bigCraftableData = DataLoader.BigCraftables(content); in Game1.cs
         Console.WriteLine("Done base.LoadContent()");
         Console.WriteLine("try call InitializeBeforeFirstAssetLoaded for load all mod");
-        var InitializeBeforeFirstAssetLoaded = typeof(SCore).GetMethod("InitializeBeforeFirstAssetLoaded",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        InitializeBeforeFirstAssetLoaded.Invoke(SCore.Instance, null);
+        var initializeBeforeFirstAssetLoaded = typeof(SCore).GetMethod("InitializeBeforeFirstAssetLoaded",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(typeof(SCore).FullName, "InitializeBeforeFirstAssetLoaded");
+        initializeBeforeFirstAssetLoaded.Invoke(SCore.Instance, null);
 #else
         this.OnContentLoaded();
 #endif

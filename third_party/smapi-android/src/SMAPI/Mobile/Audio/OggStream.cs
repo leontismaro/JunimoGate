@@ -1,8 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Microsoft.Xna.Framework.Audio;
 using NVorbis;
 
@@ -12,7 +8,7 @@ public class OggStream : IDisposable
 {
     private readonly string oggFileName;
 
-    protected DynamicSoundEffectInstance _instance;
+    protected DynamicSoundEffectInstance? _instance;
 
     private const int DefaultBufferSize = 44100;
 
@@ -28,13 +24,19 @@ public class OggStream : IDisposable
 
     private float volume;
 
-    internal VorbisReader Reader { get; private set; }
+    internal VorbisReader? Reader { get; private set; }
 
     internal bool Ready { get; private set; }
 
     internal bool Preparing { get; private set; }
 
-    public Action FinishedAction { get; private set; }
+    public Action? FinishedAction { get; }
+
+    private DynamicSoundEffectInstance Instance => this._instance
+        ?? throw new InvalidOperationException("The Ogg stream is not prepared.");
+
+    private VorbisReader ActiveReader => this.Reader
+        ?? throw new InvalidOperationException("The Ogg stream is not open.");
 
     public float Volume
     {
@@ -44,7 +46,8 @@ public class OggStream : IDisposable
         }
         set
         {
-            this._instance.Volume = value;
+            this.volume = value;
+            this.Instance.Volume = value;
         }
     }
 
@@ -52,15 +55,15 @@ public class OggStream : IDisposable
     {
         get
         {
-            return this._instance.LoopCount;
+            return this.Instance.LoopCount;
         }
         set
         {
-            this._instance.LoopCount = value;
+            this.Instance.LoopCount = value;
         }
     }
 
-    public OggStream(string filename, Action finishedAction = null, int buffer_size = 44100)
+    public OggStream(string filename, Action? finishedAction = null, int buffer_size = 44100)
     {
         this.oggFileName = filename;
         this.FinishedAction = finishedAction;
@@ -93,23 +96,23 @@ public class OggStream : IDisposable
 
     public void Pause()
     {
-        this._instance.Pause();
+        this.Instance.Pause();
     }
 
     public void Resume()
     {
-        this._instance.Resume();
+        this.Instance.Resume();
     }
 
     public void Stop()
     {
         this.SeekToPosition(new TimeSpan(0L));
-        this._instance.Stop();
+        this.Instance.Stop();
     }
 
     public void SeekToPosition(TimeSpan pos)
     {
-        this.Reader.DecodedTime = pos;
+        this.ActiveReader.TimePosition = pos;
     }
 
     public TimeSpan GetPosition()
@@ -118,12 +121,12 @@ public class OggStream : IDisposable
         {
             return TimeSpan.Zero;
         }
-        return this.Reader.DecodedTime;
+        return this.Reader.TimePosition;
     }
 
     public TimeSpan GetLength()
     {
-        return this.Reader.TotalTime;
+        return this.ActiveReader.TotalTime;
     }
 
     public void Dispose()
@@ -137,9 +140,11 @@ public class OggStream : IDisposable
 
     internal void Open(bool precache = false)
     {
-        this.Reader = new VorbisReader(this.oggFileName);
-        this._instance = new OggStreamSoundEffectInstance(this.Reader.SampleRate, (this.Reader.Channels == 1) ? AudioChannels.Mono : AudioChannels.Stereo);
-        this._instance.BufferNeeded += delegate
+        var reader = new VorbisReader(this.oggFileName);
+        this.Reader = reader;
+        var instance = new OggStreamSoundEffectInstance(reader.SampleRate, reader.Channels == 1 ? AudioChannels.Mono : AudioChannels.Stereo);
+        this._instance = instance;
+        instance.BufferNeeded += delegate
         {
             this.SubmitBuffer();
         };
@@ -153,26 +158,28 @@ public class OggStream : IDisposable
 
     public virtual void SubmitBuffer()
     {
-        if (this.Reader.DecodedPosition >= this.Reader.TotalSamples)
+        var reader = this.ActiveReader;
+        var instance = this.Instance;
+        if (reader.SamplePosition >= reader.TotalSamples)
         {
             if (this.LoopCount == 0)
             {
-                if (this._instance.PendingBufferCount == 0)
+                if (instance.PendingBufferCount == 0)
                 {
                     if (this.FinishedAction != null)
                     {
                         this.FinishedAction();
                     }
-                    this._instance.FinishedQueueing();
+                    instance.FinishedQueueing();
                 }
                 return;
             }
-            this.Reader.DecodedPosition = 0L;
+            reader.SamplePosition = 0L;
         }
-        int read_samples = this.Reader.ReadSamples(this.readSampleBuffer, 0, this.bufferSize);
+        int read_samples = reader.ReadSamples(this.readSampleBuffer, 0, this.bufferSize);
         CastBuffer(this.readSampleBuffer, this.castBuffer, read_samples);
         Buffer.BlockCopy(this.castBuffer, 0, this.xnaBuffer, 0, read_samples * 2);
-        this._instance.SubmitBuffer(this.xnaBuffer, 0, read_samples * 2);
+        instance.SubmitBuffer(this.xnaBuffer, 0, read_samples * 2);
     }
 
     public static void CastBuffer(float[] inBuffer, short[] outBuffer, int length)
@@ -194,7 +201,7 @@ public class OggStream : IDisposable
 
     public DynamicSoundEffectInstance GetSoundEffectInstance()
     {
-        return this._instance;
+        return this.Instance;
     }
 
     internal void Close()

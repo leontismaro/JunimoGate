@@ -1,14 +1,10 @@
 using System;
-using System.Collections;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
+using System.Reflection;
 using System.Text;
 using Android.App;
-using Android.OS;
 using HarmonyLib;
-using Java.Util;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI.Framework;
 using StardewValley;
@@ -51,17 +47,19 @@ internal static class AndroidGameLoopManager
 
         if (queueOnGameUpdatingToAdd.Count > 0)
         {
-            while (queueOnGameUpdatingToAdd.TryDequeue(out OnGameUpdatingDelegate item))
+            while (queueOnGameUpdatingToAdd.TryDequeue(out OnGameUpdatingDelegate? item))
             {
-                listOnGameUpdating.Add(item);
+                if (item is not null)
+                    listOnGameUpdating.Add(item);
             }
         }
 
         if (queueOnGameUpdatingToRemove.Count > 0)
         {
-            while (queueOnGameUpdatingToRemove.TryDequeue(out OnGameUpdatingDelegate item))
+            while (queueOnGameUpdatingToRemove.TryDequeue(out OnGameUpdatingDelegate? item))
             {
-                listOnGameUpdating.Remove(item);
+                if (item is not null)
+                    listOnGameUpdating.Remove(item);
             }
         }
 
@@ -80,14 +78,17 @@ internal static class AndroidGameLoopManager
     [HarmonyPatch(typeof(Game), "DoUpdate")]
     static void Postfix_DoUpdate(GameTime gameTime)
     {
-        var game = SGameRunner.instance as Game;
-        var _accumulatedElapsedTime_Field = AccessTools.Field(game.GetType(), "_accumulatedElapsedTime");
-        var accumulatedElapsedTime = (TimeSpan)_accumulatedElapsedTime_Field.GetValue(game);
+        var game = SGameRunner.instance as Game
+            ?? throw new InvalidOperationException("The hosted game runner is unavailable.");
+        FieldInfo accumulatedElapsedTimeField = AccessTools.Field(game.GetType(), "_accumulatedElapsedTime")
+            ?? throw new MissingFieldException(game.GetType().FullName, "_accumulatedElapsedTime");
+        if (accumulatedElapsedTimeField.GetValue(game) is not TimeSpan accumulatedElapsedTime)
+            throw new InvalidOperationException("The MonoGame accumulated elapsed time is unavailable.");
 
         if (accumulatedElapsedTime.TotalSeconds > 0.15f)
         {
             accumulatedElapsedTime = TimeSpan.FromSeconds(0f);
-            _accumulatedElapsedTime_Field.SetValue(game, accumulatedElapsedTime);
+            accumulatedElapsedTimeField.SetValue(game, accumulatedElapsedTime);
             //release freeze loop Game.DoUpdate()
         }
 
@@ -108,8 +109,10 @@ internal static class AndroidGameLoopManager
 
         TimerLogMemory.Restart();
 
-        var mainActivity = SMAPIActivityTool.MainActivity;
-        ActivityManager activityManager = mainActivity.GetSystemService(Service.ActivityService) as ActivityManager;
+        var mainActivity = SMAPIActivityTool.MainActivity
+            ?? throw new InvalidOperationException("The Android game Activity is unavailable.");
+        ActivityManager activityManager = mainActivity.GetSystemService(Service.ActivityService) as ActivityManager
+            ?? throw new InvalidOperationException("Android ActivityManager is unavailable.");
         var memoryInfo = new ActivityManager.MemoryInfo();
         activityManager.GetMemoryInfo(memoryInfo);
 

@@ -36,11 +36,12 @@ internal static class AndroidPatcher
     }
     static void ApplyHarmonyPatchAll()
     {
+        var activeHarmony = harmony ?? throw new InvalidOperationException("Android Harmony setup has not completed.");
         var monitor = SCore.Instance.SMAPIMonitor;
         monitor.Log("On ApplyHarmonyPatchAll()..");
         try
         {
-            harmony.PatchAll();
+            activeHarmony.PatchAll();
             monitor.Log("Done harmony.PatchAll()");
         }
         catch (Exception ex)
@@ -66,19 +67,20 @@ internal static class AndroidPatcher
     }
     public static void OnBeforeSCoreRun()
     {
+        var activeHarmony = harmony ?? throw new InvalidOperationException("Android Harmony setup has not completed.");
         var saveBackupZip = new SaveBackupZip();
         saveBackupZip.Start();
 
         SetupModFix();
         ApplyHarmonyPatchAll();
         SCore.Instance.SMAPIMonitor.Log("Applying Android vector converters...");
-        VectorTypeConverterFix.ApplyPatch(harmony);
+        VectorTypeConverterFix.ApplyPatch(activeHarmony);
         // MobileFarmChooser's optional farm-selector compatibility detours target methods that
         // Android Mono may not JIT-compile before a menu instance exists. They are not needed for
         // the SMAPI title-screen/runtime baseline; defer this optional patch family until the
         // menu is created by a future lifecycle-aware adapter.
         SCore.Instance.SMAPIMonitor.Log("Applying Android letter viewer adapters...");
-        LetterViewerMenuRewriter.ApplyPatch(harmony);
+        LetterViewerMenuRewriter.ApplyPatch(activeHarmony);
         SCore.Instance.SMAPIMonitor.Log("Android compatibility adapters ready.");
     }
 

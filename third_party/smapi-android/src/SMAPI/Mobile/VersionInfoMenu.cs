@@ -43,8 +43,8 @@ internal static class VersionInfoMenu
     }
 
 
-    static SpriteFont font;
-    static List<string> texts;
+    static SpriteFont? font;
+    static List<string>? texts;
     static float textLineHeight;
     private static void RenderVerionInfo(SpriteBatch spriteBatch)
     {
@@ -53,7 +53,7 @@ internal static class VersionInfoMenu
         if (titleMenu == null || TitleMenu.subMenu != null)
             return;
 
-        if (titleMenu?.isTransitioningButtons is true)
+        if (titleMenu.isTransitioningButtons)
             return;
 
         if (titleMenu.logoFadeTimer > 0)

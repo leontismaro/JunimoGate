@@ -14,13 +14,13 @@ public static class AndroidLogger
             Android.Provider.Settings.Global.AdbEnabled, 0
         ) == 1;
 
-    public static void Log(object msg)
+    public static void Log(object? msg)
     {
         if (msg == null)
             msg = "";
 
         if (isAdbEnabled)
-            AndroidUtils.Log.Debug(Tag, msg.ToString());
+            AndroidUtils.Log.Debug(Tag, msg.ToString() ?? "");
     }
 
     [HarmonyPrefix]

@@ -1,8 +1,9 @@
 using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
-using System.Reflection;
+using System.Reflection.PortableExecutable;
 #if SMAPI_FOR_WINDOWS
 using System.Management;
 #endif
@@ -89,7 +90,14 @@ internal static class LowLevelEnvironmentUtility
     /// <param name="path">The absolute path to the assembly file.</param>
     public static bool Is64BitAssembly(string path)
     {
-        return AssemblyName.GetAssemblyName(path).ProcessorArchitecture != ProcessorArchitecture.X86;
+        using var stream = File.OpenRead(path);
+        using var reader = new PEReader(stream);
+        PEHeaders headers = reader.PEHeaders;
+        if (headers.CoffHeader.Machine != Machine.I386)
+            return true;
+
+        return headers.CorHeader is not null &&
+            !headers.CorHeader.Flags.HasFlag(CorFlags.Requires32Bit);
     }
 
 
@@ -105,8 +113,7 @@ internal static class LowLevelEnvironmentUtility
     {
 #if SMAPI_FOR_ANDROID
         return true;
-#endif
-
+#else
         using Process process = new()
         {
             StartInfo =
@@ -130,6 +137,7 @@ internal static class LowLevelEnvironmentUtility
         {
             return false;
         }
+#endif
     }
 
     /// <summary>Detect whether the code is running on macOS.</summary>

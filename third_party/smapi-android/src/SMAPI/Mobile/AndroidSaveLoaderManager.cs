@@ -1,9 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Android.App;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI.Enums;
 using StardewModdingAPI.Framework;
@@ -14,10 +9,11 @@ namespace StardewModdingAPI.Mobile;
 internal static class AndroidSaveLoaderManager
 {
     public static bool IsSaveParsed => Context.LoadStage is LoadStage.SaveParsed;
-    static Monitor monitor;
+    static Monitor monitor = null!;
     internal static void StartLoader()
     {
-        monitor = SCore.Instance.SMAPIMonitor as Monitor;
+        monitor = SCore.Instance.SMAPIMonitor as Monitor
+            ?? throw new InvalidOperationException("The Android save loader requires the SMAPI monitor.");
         monitor.Log("Game loader with AndroidSaveLoader currentLoader.MoveNext()", Monitor.ContextLogLevel);
         AndroidGameLoopManager.RegisterOnGameUpdating(OnGameUpdating_AndroidSaveLoader);
     }
