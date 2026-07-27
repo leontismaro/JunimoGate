@@ -12,9 +12,9 @@ namespace JunimoGate.GameHost;
 
 public static class GameLaunchSchema
 {
-    public const string Snapshot = "junimogate-prepared-game-snapshot/v3";
+    public const string Snapshot = "junimogate-prepared-game-snapshot/v4";
     public const string Descriptor = "junimogate-game-launch-descriptor/v2";
-    public const string BuildId = "smapi-4.3.2.5-junimogate.3";
+    public const string BuildId = "smapi-4.3.2.5-junimogate.4";
 }
 
 public sealed record PreparedManagedAssembly(string SimpleName, string RelativePath, long Size);
@@ -32,6 +32,7 @@ public sealed record PreparedGameSnapshot(
     string SourceWorkspacePath,
     string AppliedWorkspacePath,
     string OverlayAssemblyPath,
+    long OverlayAssemblySize,
     string ModsDirectory,
     string InternalDirectory,
     string ConfigDirectory,
@@ -48,7 +49,8 @@ public sealed record PreparedGameSnapshot(
             string.IsNullOrWhiteSpace(PackageName) || VersionCode <= 0 ||
             !Sha256Digest.TryParse(PackageMarker, out _) ||
             string.IsNullOrWhiteSpace(SourceWorkspacePath) || string.IsNullOrWhiteSpace(AppliedWorkspacePath) ||
-            string.IsNullOrWhiteSpace(OverlayAssemblyPath) || ManagedAssemblies is null || ManagedAssemblies.Count == 0 ||
+            string.IsNullOrWhiteSpace(OverlayAssemblyPath) || OverlayAssemblySize <= 0 ||
+            ManagedAssemblies is null || ManagedAssemblies.Count == 0 ||
             ContentFiles is null || ContentFiles.Count == 0)
         {
             throw new InvalidDataException("The prepared game snapshot is malformed.");
@@ -58,6 +60,7 @@ public sealed record PreparedGameSnapshot(
         var runtimeRoot = Path.GetFullPath(AndroidPrivateStorage.GetRuntimeRoot(safeContext));
         var userDataRoot = Path.GetFullPath(AndroidPrivateStorage.GetUserDataRoot(safeContext));
         var gameSaveRoot = Path.GetFullPath(AndroidPrivateStorage.GetGameSaveRoot(safeContext));
+        var expectedInternalDirectory = Path.GetFullPath(BundledSmapiAssets.GetInternalDirectory(runtimeRoot));
         foreach (var path in new[]
                  {
                      SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath, InternalDirectory,
@@ -72,6 +75,9 @@ public sealed record PreparedGameSnapshot(
             if (!Path.IsPathFullyQualified(path) || !IsContained(path, userDataRoot))
                 throw new InvalidDataException("A prepared SMAPI user-data path is not host-owned.");
         }
+
+        if (!Path.GetFullPath(InternalDirectory).Equals(expectedInternalDirectory, StringComparison.Ordinal))
+            throw new InvalidDataException("A prepared SMAPI bundle path does not match this JunimoGate build.");
 
         if (!Path.IsPathFullyQualified(SaveDirectory) ||
             !Path.GetFullPath(SaveDirectory).Equals(gameSaveRoot, StringComparison.Ordinal))
@@ -368,8 +374,9 @@ public static class GameDeepPrepareCoordinator
             source.WorkspacePath,
             capability.AppliedExecutionPlan.AppliedWorkspacePath,
             capability.AppliedExecutionPlan.OverlayAssemblyPath,
+            capability.AppliedExecutionPlan.OverlayAssemblySize,
             Path.Combine(userDataRoot, "profiles", "default", "Mods", "enabled"),
-            Path.Combine(runtimeRoot, "smapi", "smapi-internal"),
+            BundledSmapiAssets.GetInternalDirectory(runtimeRoot),
             Path.Combine(userDataRoot, "config"),
             Path.Combine(userDataRoot, "logs"),
             AndroidPrivateStorage.GetGameSaveRoot(context),
@@ -379,7 +386,7 @@ public static class GameDeepPrepareCoordinator
             DateTimeOffset.UtcNow);
         foreach (var directory in new[]
                  {
-                     snapshot.ModsDirectory, snapshot.InternalDirectory, snapshot.ConfigDirectory,
+                     snapshot.ModsDirectory, snapshot.ConfigDirectory,
                      snapshot.LogDirectory, snapshot.SaveDirectory, snapshot.BackupDirectory,
                  })
         {
@@ -528,8 +535,7 @@ public static class GameLaunchRegistry
         var activeSnapshotId = await TryReadActiveSnapshotIdAsync(context, cancellationToken).ConfigureAwait(false);
         if (!preparedGame.SnapshotId.Equals(activeSnapshotId, StringComparison.Ordinal))
             return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
-        if (preparedGame.Reused &&
-            !await IsCurrentPackageAsync(context, preparedGame.Snapshot, cancellationToken).ConfigureAwait(false))
+        if (!await IsCurrentPackageAsync(context, preparedGame.Snapshot, cancellationToken).ConfigureAwait(false))
         {
             return new GameLaunchIssueResult(GameLaunchIssueStatus.PackageChanged, null);
         }

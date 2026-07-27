@@ -52,8 +52,11 @@ internal sealed class PreparedRuntimeFiles
         var overlay = Path.GetFullPath(snapshot.OverlayAssemblyPath);
         if (!overlay.StartsWith(appliedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new InvalidDataException("The prepared game overlay escaped its applied workspace.");
-        if (!File.Exists(overlay))
+        var overlayInfo = new FileInfo(overlay);
+        if (!overlayInfo.Exists)
             throw new FileNotFoundException("The prepared game overlay is missing.", overlay);
+        if (overlayInfo.Length != snapshot.OverlayAssemblySize)
+            throw new InvalidDataException("The prepared game overlay size changed.");
 
         var managed = new Dictionary<string, string>(sourceAssemblies, StringComparer.OrdinalIgnoreCase);
         if (!managed.ContainsKey("StardewValley"))

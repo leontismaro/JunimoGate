@@ -50,21 +50,21 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         {
             var key = Intent?.GetStringExtra(LaunchKeyExtra) ?? throw new InvalidDataException("The launch capability is missing.");
             var snapshot = await GameLaunchRegistry.ConsumeAsync(this, key, CancellationToken.None);
+            await BundledSmapiAssets.ProvisionAndValidateAsync(this, snapshot.InternalDirectory, CancellationToken.None);
             var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot);
-            GameSessionRegistry.MarkActive(this);
-            await ProvisionInternalFilesAsync(snapshot.InternalDirectory);
             loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
             _ = loader.LoadGameAssembly();
+            GameSessionRegistry.MarkActive(this);
             Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameLaunchSchema.BuildId}:smapi=4.3.2.5");
             CreateAndRunSession(snapshot, loader);
         }
         catch (Exception ex)
         {
             Log.Error("JunimoGate.SMAPI", $"startup-failed:{ex.GetType().Name}");
-            ShowFailure("SMAPI startup failed safely. Return to JunimoGate and run Deep Prepare again.");
+            FailStartup();
         }
     }
 
@@ -108,44 +108,38 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         session?.Dispose();
         session = null;
         GameSessionRegistry.ClearCurrentProcess(this);
-        SmapiContentBridge.Detach();
-        GameHostBridge.Detach(this);
-        loader?.Dispose();
-        loader = null;
+        ReleaseRuntimeHooks();
         base.OnDestroy();
         if (terminateGameProcess)
             global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
     }
 
-    private async Task ProvisionInternalFilesAsync(string target)
+    private void FailStartup()
     {
-        foreach (var name in new[] { "config.json", "metadata.json", "blacklist.json" })
-            await CopyAssetAsync($"smapi-internal/{name}", Path.Combine(target, name));
-        var i18n = Path.Combine(target, "i18n"); Directory.CreateDirectory(i18n);
-        foreach (var name in Assets?.List("smapi-internal/i18n") ?? [])
-            await CopyAssetAsync($"smapi-internal/i18n/{name}", Path.Combine(i18n, name));
-
-        var managed = Path.Combine(Path.GetDirectoryName(target)!, "managed");
-        Directory.CreateDirectory(managed);
-        foreach (var name in new[]
+        GameSessionRegistry.ClearCurrentProcess(this);
+        session?.Dispose();
+        session = null;
+        ReleaseRuntimeHooks();
+        RunOnUiThread(() =>
         {
-            "StardewModdingAPI.dll",
-            "StardewModdingAPI.Toolkit.dll",
-            "StardewModdingAPI.Toolkit.CoreInterfaces.dll",
-        })
-            await CopyAssetAsync($"smapi-managed/{name}", Path.Combine(managed, name));
+            if (destroyed || IsFinishing)
+                return;
+            Toast.MakeText(
+                this,
+                "SMAPI startup failed. Return to JunimoGate and prepare the game again.",
+                ToastLength.Long)?.Show();
+            Finish();
+        });
     }
 
-    private async Task CopyAssetAsync(string asset, string target)
+    private void ReleaseRuntimeHooks()
     {
-        if (File.Exists(target)) return;
-        await using var input = Assets!.Open(asset);
-        await using var output = new FileStream(target + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None);
-        await input.CopyToAsync(output);
-        output.Flush(true);
-        File.Move(target + ".tmp", target, overwrite: false);
+        SmapiContentBridge.Detach();
+        GameHostBridge.Detach(this);
+        loader?.Dispose();
+        loader = null;
     }
-    private void ShowFailure(string message) => RunOnUiThread(() => { if (!destroyed && status is not null) status.Text = message; });
+
     private void HandleSystemBack()
     {
         if (destroyed || IsFinishing)
