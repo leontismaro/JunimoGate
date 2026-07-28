@@ -100,7 +100,7 @@ public sealed class SmapiSession : IDisposable
             AndroidHostServices.Configure(options);
             Mobile.AndroidPatcher.Setup();
             StardewValley.Mobile.MobileDisplay.SetupDisplaySettings();
-            var core = new Framework.SCore(options.ModsDirectory, writeToConsole: false, developerMode: true);
+            var core = new Framework.SCore(options.ModsDirectory, writeToConsole: false, developerMode: false);
             Mobile.AndroidPatcher.OnBeforeSCoreRun();
             core.RunInteractively();
             game = Framework.SGameRunner.Instance;

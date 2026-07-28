@@ -25,7 +25,6 @@ internal static class AndroidPatcher
             Log.enabled = true;
             harmony = new Harmony(nameof(AndroidPatcher));
 
-            VersionInfoMenu.Init();
         }
         catch (Exception ex)
         {

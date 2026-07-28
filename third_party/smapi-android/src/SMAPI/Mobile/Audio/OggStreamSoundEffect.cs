@@ -165,7 +165,9 @@ public class OggStreamSoundEffect : SoundEffect
             }
         });
 
-        streamThread.Priority = ThreadPriority.Highest;
+        streamThread.IsBackground = true;
+        streamThread.Name = "SMAPI OGG stream";
+        streamThread.Priority = ThreadPriority.Normal;
         streamThread.Start();
 
         return sound;

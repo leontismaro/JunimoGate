@@ -22,5 +22,9 @@ Baseline: Android SMAPI 4.3.2.5 at
    - provide app-private managed SMAPI assemblies for Cecil resolution without packaging commercial game DLLs;
    - surface asynchronous Mod-loading failures through SMAPI logs and the host failure callback;
    - raise the full-frame `Rendered` event after Android render-target composition and before MonoGame presents the backbuffer.
+5. `android-idle-runtime/v1`
+   - disable the mobile console listener by default and block instead of polling when enabled;
+   - skip state watcher and render-event work while no Mod subscribes to the corresponding events;
+   - remove the fork branding overlay and keep optional OGG workers at normal background priority.
 
 This file records patch intent. Git history remains the authoritative source diff.

@@ -14,7 +14,7 @@ public static class GameLaunchSchema
 {
     public const string Snapshot = "junimogate-prepared-game-snapshot/v4";
     public const string Descriptor = "junimogate-game-launch-descriptor/v2";
-    public const string BuildId = "smapi-4.3.2.5-junimogate.5";
+    public const string BuildId = "smapi-4.3.2.5-junimogate.7";
 }
 
 public sealed record PreparedManagedAssembly(string SimpleName, string RelativePath, long Size);

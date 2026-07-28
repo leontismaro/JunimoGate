@@ -48,7 +48,7 @@ in future SMAPI versions.
      * Whether to enable features intended for mod developers. Currently this only makes TRACE-level
      * messages appear in the console.
      */
-    "DeveloperMode": true,
+    "DeveloperMode": false,
 
     /**
      * Whether SMAPI should listen for console input. Disabling this will prevent you from using

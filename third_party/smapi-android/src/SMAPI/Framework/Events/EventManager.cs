@@ -197,6 +197,48 @@ internal class EventManager
 
 
     /*********
+    ** Accessors
+    *********/
+    /// <summary>Whether any event needs the per-tick game-state watcher graph.</summary>
+    public bool HasStateTrackingListeners =>
+        this.WindowResized.HasListeners
+        || this.MenuChanged.HasListeners
+        || this.ButtonsChanged.HasListeners
+        || this.ButtonPressed.HasListeners
+        || this.ButtonReleased.HasListeners
+        || this.CursorMoved.HasListeners
+        || this.MouseWheelScrolled.HasListeners
+        || this.InventoryChanged.HasListeners
+        || this.LevelChanged.HasListeners
+        || this.Warped.HasListeners
+        || this.TimeChanged.HasListeners
+        || this.LocationListChanged.HasListeners
+        || this.BuildingListChanged.HasListeners
+        || this.DebrisListChanged.HasListeners
+        || this.LargeTerrainFeatureListChanged.HasListeners
+        || this.NpcListChanged.HasListeners
+        || this.ObjectListChanged.HasListeners
+        || this.ChestInventoryChanged.HasListeners
+        || this.TerrainFeatureListChanged.HasListeners
+        || this.FurnitureListChanged.HasListeners;
+
+    /// <summary>Whether any event needs callbacks before the game's render steps.</summary>
+    public bool HasRenderingStepListeners =>
+        this.Rendering.HasListeners
+        || this.RenderingStep.HasListeners
+        || this.RenderingWorld.HasListeners
+        || this.RenderingActiveMenu.HasListeners
+        || this.RenderingHud.HasListeners;
+
+    /// <summary>Whether any event needs callbacks after the game's render steps.</summary>
+    public bool HasRenderedStepListeners =>
+        this.RenderedStep.HasListeners
+        || this.RenderedWorld.HasListeners
+        || this.RenderedActiveMenu.HasListeners
+        || this.RenderedHud.HasListeners;
+
+
+    /*********
     ** Public methods
     *********/
     /// <summary>Construct an instance.</summary>

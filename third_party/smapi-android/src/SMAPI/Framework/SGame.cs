@@ -112,6 +112,18 @@ internal class SGame : Game1
 
 #if SMAPI_FOR_ANDROID
     internal static SGame Instance { get; private set; } = null!;
+
+    /// <summary>Enable or disable state watchers based on whether any mod consumes their events.</summary>
+    internal void SetStateTrackingEnabled(bool enabled)
+    {
+        if (enabled)
+            this.Watchers ??= new WatcherCore(this.Input, this._locations);
+        else if (this.Watchers != null)
+        {
+            this.Watchers.Dispose();
+            this.Watchers = null!;
+        }
+    }
 #endif
 
 
@@ -298,9 +310,7 @@ internal class SGame : Game1
         if (this.IsFirstTick)
         {
             this.Input.TrueUpdate();
-#if SMAPI_FOR_ANDROID
-            this.Watchers = new WatcherCore(this.Input, this._locations);
-#else
+#if !SMAPI_FOR_ANDROID
             this.Watchers = new WatcherCore(this.Input, (ObservableCollection<GameLocation>)this._locations);
 #endif
         }

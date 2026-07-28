@@ -120,4 +120,13 @@ internal class WatcherCore
         this.CurrentPlayerTracker?.Reset();
         this.LocationsWatcher.Reset();
     }
+
+    /// <summary>Stop observing game state and release event subscriptions.</summary>
+    public void Dispose()
+    {
+        foreach (IWatcher watcher in this.Watchers)
+            watcher.Dispose();
+        this.CurrentPlayerTracker?.Dispose();
+        this.CurrentPlayerTracker = null;
+    }
 }

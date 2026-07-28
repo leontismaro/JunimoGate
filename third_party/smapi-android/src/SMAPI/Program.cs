@@ -253,7 +253,7 @@ internal class Program
 
         // load SMAPI
 #if SMAPI_FOR_ANDROID
-        developerMode = true;
+        developerMode ??= false;
         writeToConsole = false;
         modsPath = AndroidHostServices.Options?.ModsDirectory ?? Path.Combine(EarlyConstants.ExternalFilesDir, "Mods");
         SCore core = new(modsPath, writeToConsole, developerMode);

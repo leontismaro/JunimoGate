@@ -986,9 +986,18 @@ internal class SCore : IDisposable
             ** Update watchers
             **   (Watchers need to be updated, checked, and reset in one go so we can detect any changes mods make in event handlers.)
             *********/
-            instance.Watchers.Update();
-            instance.WatcherSnapshot.Update(instance.Watchers);
-            instance.Watchers.Reset();
+            bool trackState = verbose || Monitor.ForceLogContext || events.HasStateTrackingListeners;
+#if SMAPI_FOR_ANDROID
+            instance.SetStateTrackingEnabled(trackState);
+#else
+            trackState = true;
+#endif
+            if (trackState)
+            {
+                instance.Watchers.Update();
+                instance.WatcherSnapshot.Update(instance.Watchers);
+                instance.Watchers.Reset();
+            }
             WatcherSnapshot state = instance.WatcherSnapshot;
 
             /*********
@@ -1019,7 +1028,7 @@ internal class SCore : IDisposable
                 /*********
                 ** Locale changed events
                 *********/
-                if (state.Locale.IsChanged)
+                if (trackState && state.Locale.IsChanged)
                     this.Monitor.Log($"Context: locale set to {state.Locale.New} ({this.ContentCore.GetLocaleCode(state.Locale.New)}).", Monitor.ContextLogLevel);
 
                 /*********
@@ -1061,7 +1070,7 @@ internal class SCore : IDisposable
                 // event because we need to notify mods after the game handles the resize, so the
                 // game's metadata (like Game1.viewport) are updated. That's a bit complicated
                 // since the game adds & removes its own handler on the fly.
-                if (state.WindowSize.IsChanged)
+                if (trackState && state.WindowSize.IsChanged)
                 {
                     if (verbose)
                         this.Monitor.Log($"Events: window size changed to {state.WindowSize.New}.", Monitor.ContextLogLevel);
@@ -1073,7 +1082,7 @@ internal class SCore : IDisposable
                 /*********
                 ** Input events (if window has focus)
                 *********/
-                if (this.Game.IsActive)
+                if (trackState && this.Game.IsActive)
                 {
                     // raise events
                     bool isChatInput = Game1.IsChatting || (Context.IsMultiplayer && Context.IsWorldReady && Game1.activeClickableMenu == null && Game1.currentMinigame == null && inputState.IsAnyDown(Game1.options.chatButton));
@@ -1136,7 +1145,7 @@ internal class SCore : IDisposable
                 /*********
                 ** Menu events
                 *********/
-                if (state.ActiveMenu.IsChanged)
+                if (trackState && state.ActiveMenu.IsChanged)
                 {
                     IClickableMenu? was = state.ActiveMenu.Old;
                     IClickableMenu? now = state.ActiveMenu.New;
@@ -1152,7 +1161,7 @@ internal class SCore : IDisposable
                 /*********
                 ** World & player events
                 *********/
-                if (Context.IsWorldReady)
+                if (trackState && Context.IsWorldReady)
                 {
                     bool raiseWorldEvents = !state.SaveId.IsChanged; // don't report changes from unloaded => loaded
 
@@ -1426,6 +1435,8 @@ internal class SCore : IDisposable
     private void OnRenderingStep(RenderSteps step, SpriteBatch spriteBatch, RenderTarget2D? renderTarget)
     {
         EventManager events = this.EventManager;
+        if (!events.HasRenderingStepListeners)
+            return;
 
         // raise 'Rendering' before first event
         if (this.LastRenderEventTick.Value != SCore.TicksElapsed)
@@ -1466,7 +1477,13 @@ internal class SCore : IDisposable
     private void OnRenderedStep(RenderSteps step, SpriteBatch spriteBatch, RenderTarget2D? renderTarget)
     {
 #if SMAPI_FOR_ANDROID
+        if (OnRenderedStepEvent == null && !this.EventManager.HasRenderedStepListeners)
+            return;
+
         OnRenderedStepEvent?.Invoke(step, spriteBatch, renderTarget);
+#else
+        if (!this.EventManager.HasRenderedStepListeners)
+            return;
 #endif
 
         var events = this.EventManager;
@@ -1502,6 +1519,9 @@ internal class SCore : IDisposable
     /// <summary>Raise the full-frame rendered event after the Android game has composited its render targets, but before MonoGame presents the backbuffer.</summary>
     private void OnAndroidRendered(GameTime _)
     {
+        if (!this.EventManager.Rendered.HasListeners)
+            return;
+
         Context.IsInDrawLoop = true;
         try
         {
