@@ -1,6 +1,6 @@
 # JunimoGate
 
-JunimoGate is an original scaffold for a .NET 9 Android launcher architecture that discovers a legally installed Stardew Valley package, prepares a private workspace, and will eventually host an Android SMAPI fork. This repository contains no copied GPL implementation and no commercial game DLLs or assets. Its AssemblyStore format support is an attributed adaptation of the official MIT-licensed `dotnet/android` reader semantics.
+JunimoGate is a .NET 9 Android launcher that discovers a legally installed Stardew Valley package, prepares a private workspace, and hosts its Android SMAPI runtime in an isolated game process. SMAPI is pinned through the `smapi/` submodule; this repository contains no copied GPL implementation and no commercial game DLLs or assets. Its AssemblyStore format support is an attributed adaptation of the official MIT-licensed `dotnet/android` reader semantics.
 
 The research baseline is maintained outside this independent repository in [`../ARCHITECTURE_PLAN.md`](../ARCHITECTURE_PLAN.md) and [`../TECHNICAL_FINDINGS.md`](../TECHNICAL_FINDINGS.md). These are documentation links, not runtime dependencies or symlinks.
 
@@ -52,6 +52,11 @@ The PoC used exact recipe `play-1.6.15.3-gamehost-bridge@1`, complete-method has
 
 
 ```bash
+git clone --recurse-submodules https://github.com/leontismaro/JunimoGate.git
+
+# For an existing checkout:
+git submodule update --init --recursive
+
 ./build/bootstrap-android.sh
 
 # Rebuilds the exact public-source MonoGame Android provider into the ignored local NuGet feed.
@@ -82,7 +87,7 @@ JUNIMOGATE_PROXY_URL=http://127.0.0.1:10808 ./build/build-monogame-android.sh
 ## Boundaries
 
 - `App -> Android, Mods, GameHost`
-- `GameHost -> Core, Android, Extraction, Rewriter`
+- `GameHost -> Core, Android, Extraction, Rewriter, smapi`
 - `Mods -> Core`
 - `Extraction -> Core`
 - `Rewriter -> Core, Extraction`
