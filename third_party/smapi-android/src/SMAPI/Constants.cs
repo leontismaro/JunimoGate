@@ -74,7 +74,7 @@ internal static class EarlyConstants
 #if SMAPI_FOR_ANDROID
     internal static GamePlatform Platform { get; } = GamePlatform.Android;
 #else
-    //internal static GamePlatform Platform { get; } = (GamePlatform)Enum.Parse(typeof(GamePlatform), LowLevelEnvironmentUtility.DetectPlatform());
+    internal static GamePlatform Platform { get; } = (GamePlatform)Enum.Parse(typeof(GamePlatform), LowLevelEnvironmentUtility.DetectPlatform());
 #endif
 
     /// <summary>The game framework running the game.</summary>
@@ -87,11 +87,10 @@ internal static class EarlyConstants
     internal static int? LogScreenId { get; set; }
 
     /// <summary>SMAPI's current raw semantic version.</summary>
-    internal const string RawApiVersion = "4.3.2";
+    internal static string RawApiVersion = "4.5.2";
 
     /// <summary>Current version for android</summary>
-    internal const string AndroidFixBugVersionCode = "5";
-    internal const string RawApiVersionForAndroid = RawApiVersion + "." + AndroidFixBugVersionCode;
+    internal static string RawApiVersionForAndroid => RawApiVersion;
 }
 
 /// <summary>Contains SMAPI's constants and assumptions.</summary>
@@ -156,7 +155,7 @@ public static class Constants
 #if DEBUG
         true;
 #else
-            false;
+        false;
 #endif
 
     /// <summary>The URL of the SMAPI home page.</summary>
@@ -172,7 +171,7 @@ public static class Constants
     internal static string ApiUserConfigPath => Path.Combine(EarlyConstants.ConfigPath, "config.user.json");
 
     /// <summary>The file path for the per-mods-folder <see cref="ApiConfigPath"/> override file, which is applied over it.</summary>
-    internal static string ApiModGroupConfigPath => Path.Combine(ModsPath, "SMAPI-config.json");
+    internal static string ApiModGroupConfigPath => Path.Combine(Constants.ModsPath, "SMAPI-config.json");
 
     /// <summary>The file path for the SMAPI metadata file.</summary>
     internal static string ApiMetadataPath => Path.Combine(Constants.InternalFilesPath, "metadata.json");

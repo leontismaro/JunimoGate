@@ -245,30 +245,53 @@ internal class AssetDataForImage : AssetData<Texture2D>, IAssetDataForImage
 
             for (int i = startIndex; i <= endIndex; i++)
             {
-                int targetIndex = i - sourceOffset;
-
+                // get source pixel
                 Color above = sourceData[i];
-                Color below = mergedData[targetIndex];
-
-                // shortcut transparency
                 if (above.A < AssetDataForImage.MinOpacity)
                     continue;
-                if (below.A < AssetDataForImage.MinOpacity || above.A == byte.MaxValue)
-                    mergedData[targetIndex] = above;
 
-                // merge pixels
+                // get target pixel
+                int targetIndex = i - sourceOffset;
+                Color below = mergedData[targetIndex];
+
+                // apply
+                if (patchMode == PatchMode.Overlay)
+                {
+                    // merge pixels
+                    if (below.A < AssetDataForImage.MinOpacity || above.A == byte.MaxValue)
+                        mergedData[targetIndex] = above;
+                    else
+                    {
+                        // This performs a conventional alpha blend for the pixels, which are already
+                        // premultiplied by the content pipeline. The formula is derived from
+                        // https://blogs.msdn.microsoft.com/shawnhar/2009/11/06/premultiplied-alpha/.
+                        float alphaBelow = 1 - (above.A / 255f);
+                        mergedData[targetIndex] = new Color(
+                            r: (int)(above.R + (below.R * alphaBelow)),
+                            g: (int)(above.G + (below.G * alphaBelow)),
+                            b: (int)(above.B + (below.B * alphaBelow)),
+                            alpha: Math.Max(above.A, below.A)
+                        );
+                    }
+                }
                 else
                 {
-                    // This performs a conventional alpha blend for the pixels, which are already
-                    // premultiplied by the content pipeline. The formula is derived from
-                    // https://blogs.msdn.microsoft.com/shawnhar/2009/11/06/premultiplied-alpha/.
-                    float alphaBelow = 1 - (above.A / 255f);
-                    mergedData[targetIndex] = new Color(
-                        r: (int)(above.R + (below.R * alphaBelow)),
-                        g: (int)(above.G + (below.G * alphaBelow)),
-                        b: (int)(above.B + (below.B * alphaBelow)),
-                        alpha: Math.Max(above.A, below.A)
-                    );
+                    // subtract mask alpha
+                    int newAlpha = below.A - above.A;
+                    if (newAlpha <= 0)
+                        mergedData[targetIndex] = Color.Transparent;
+                    else
+                    {
+                        // Since the pixels are already premultiplied by the pipeline based on the
+                        // alpha, rescale the RGB channels too to match the new alpha.
+                        float scale = (float)newAlpha / below.A;
+                        mergedData[targetIndex] = new Color(
+                            r: (int)Math.Clamp(Math.Round(below.R * scale), 0, 255),
+                            g: (int)Math.Clamp(Math.Round(below.G * scale), 0, 255),
+                            b: (int)Math.Clamp(Math.Round(below.B * scale), 0, 255),
+                            alpha: newAlpha
+                        );
+                    }
                 }
             }
 

@@ -43,7 +43,7 @@ internal class ModResolver
                 if (!File.Exists(entryDllPath))
                     entryDllPath = null;
 
-                blacklistEntry = modBlacklist.Get(manifest.UniqueID, entryDllPath);
+                blacklistEntry = modBlacklist.CheckMod(manifest.UniqueID, entryDllPath);
             }
 
             // parse internal data record (if any)

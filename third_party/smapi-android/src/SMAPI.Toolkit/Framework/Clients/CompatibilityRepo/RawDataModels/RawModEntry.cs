@@ -45,7 +45,7 @@ public class RawModEntry
     public string? Source { get; set; }
 
     /// <summary>Custom text indicating compatibility issues with the mod (e.g. not compatible with Linux/Mac).</summary>
-    public string[]? Warnings { get; set; }
+    public string?[]? Warnings { get; set; }
 
     /// <summary>Special notes intended for developers who maintain unofficial updates or submit pull requests.</summary>
     public string? DeveloperNotes { get; set; }

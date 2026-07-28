@@ -5,10 +5,10 @@
     <OutputType>Library</OutputType>
     <AssemblyName>StardewModdingAPI</AssemblyName>
     <RootNamespace>StardewModdingAPI</RootNamespace>
-    <Version>4.3.2</Version>
-    <AssemblyVersion>4.3.2.0</AssemblyVersion>
-    <FileVersion>4.3.2.5</FileVersion>
-    <InformationalVersion>4.3.2.5-junimogate.6a34bbeb</InformationalVersion>
+    <Version>4.5.2</Version>
+    <AssemblyVersion>4.5.2.0</AssemblyVersion>
+    <FileVersion>4.5.2.0</FileVersion>
+    <InformationalVersion>4.5.2-junimogate.9+821167e5</InformationalVersion>
     <PlatformTarget>ARM64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TieredCompilation>false</TieredCompilation>

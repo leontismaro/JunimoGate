@@ -20,9 +20,8 @@ internal class KeyboardStateBuilder : IInputStateBuilder<KeyboardStateBuilder, K
     /*********
     ** Public methods
     *********/
-    /// <summary>Construct an instance.</summary>
-    /// <param name="state">The initial state.</param>
-    public KeyboardStateBuilder(KeyboardState state)
+    /// <inheritdoc />
+    public void Reset(KeyboardState state)
     {
         this.State = state;
 

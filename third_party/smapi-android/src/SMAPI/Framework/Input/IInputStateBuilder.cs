@@ -12,6 +12,10 @@ internal interface IInputStateBuilder<out THandler, TState>
     /*********
     ** Methods
     *********/
+    /// <summary>Reset the state.</summary>
+    /// <param name="state">The initial state before any overrides are applied.</param>
+    void Reset(TState state);
+
     /// <summary>Override the states for a set of buttons.</summary>
     /// <param name="overrides">The button state overrides.</param>
     THandler OverrideButtons(IDictionary<SButton, SButtonState> overrides);

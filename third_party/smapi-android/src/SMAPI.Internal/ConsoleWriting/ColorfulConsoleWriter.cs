@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using StardewModdingAPI.Mobile;
 using StardewModdingAPI.Toolkit.Utilities;
 
 namespace StardewModdingAPI.Internal.ConsoleWriting;
@@ -12,12 +11,15 @@ internal class ColorfulConsoleWriter : IConsoleWriter
     /*********
     ** Fields
     *********/
+    /// <summary>The target platform.</summary>
+    private readonly Platform Platform;
+
     /// <summary>The console text color for each log level.</summary>
-    private readonly IDictionary<ConsoleLogLevel, ConsoleColor>? Colors;
+    private IDictionary<ConsoleLogLevel, ConsoleColor>? Colors;
 
     /// <summary>Whether the current console supports color formatting.</summary>
     [MemberNotNullWhen(true, nameof(ColorfulConsoleWriter.Colors))]
-    private bool SupportsColor { get; }
+    private bool SupportsColor { get; set; }
 
 
     /*********
@@ -26,15 +28,25 @@ internal class ColorfulConsoleWriter : IConsoleWriter
     /// <summary>Construct an instance.</summary>
     /// <param name="platform">The target platform.</param>
     public ColorfulConsoleWriter(Platform platform)
-        : this(platform, ColorfulConsoleWriter.GetDefaultColorSchemeConfig(MonitorColorScheme.AutoDetect)) { }
+        : this(platform, MonitorColorScheme.AutoDetect, ColorfulConsoleWriter.GetDefaultColorSchemeConfig(MonitorColorScheme.AutoDetect)) { }
 
     /// <summary>Construct an instance.</summary>
     /// <param name="platform">The target platform.</param>
+    /// <param name="colorSchemeId">The color scheme ID in <paramref name="colorConfig"/> to use, or <see cref="MonitorColorScheme.AutoDetect"/> to select one automatically.</param>
     /// <param name="colorConfig">The colors to use for text written to the SMAPI console.</param>
-    public ColorfulConsoleWriter(Platform platform, ColorSchemeConfig colorConfig)
+    public ColorfulConsoleWriter(Platform platform, MonitorColorScheme colorSchemeId, Dictionary<MonitorColorScheme, Dictionary<ConsoleLogLevel, ConsoleColor>> colorConfig)
     {
+        this.Platform = platform;
 
-        if (colorConfig.UseScheme == MonitorColorScheme.None)
+        this.SetColors(colorSchemeId, colorConfig);
+    }
+
+    /// <summary>Set the color scheme to apply.</summary>
+    /// <param name="colorSchemeId">The color scheme ID in <paramref name="colorSchemes"/> to use, or <see cref="MonitorColorScheme.AutoDetect"/> to select one automatically.</param>
+    /// <param name="colorSchemes">The colors to use for text written to the SMAPI console.</param>
+    public void SetColors(MonitorColorScheme colorSchemeId, Dictionary<MonitorColorScheme, Dictionary<ConsoleLogLevel, ConsoleColor>> colorSchemes)
+    {
+        if (colorSchemeId == MonitorColorScheme.None)
         {
             this.SupportsColor = false;
             this.Colors = null;
@@ -42,7 +54,9 @@ internal class ColorfulConsoleWriter : IConsoleWriter
         else
         {
             this.SupportsColor = this.TestColorSupport();
-            this.Colors = this.GetConsoleColorScheme(platform, colorConfig);
+            this.Colors = this.SupportsColor
+                ? ColorfulConsoleWriter.GetConsoleColorScheme(this.Platform, colorSchemeId, colorSchemes)
+                : null;
         }
     }
 
@@ -75,34 +89,31 @@ internal class ColorfulConsoleWriter : IConsoleWriter
     /// <summary>Get the default color scheme config for cases where it's not configurable (e.g. the installer).</summary>
     /// <param name="useScheme">The default color scheme ID to use, or <see cref="MonitorColorScheme.AutoDetect"/> to select one automatically.</param>
     /// <remarks>The colors here should be kept in sync with the SMAPI config file.</remarks>
-    public static ColorSchemeConfig GetDefaultColorSchemeConfig(MonitorColorScheme useScheme)
+    public static Dictionary<MonitorColorScheme, Dictionary<ConsoleLogLevel, ConsoleColor>> GetDefaultColorSchemeConfig(MonitorColorScheme useScheme)
     {
-        return new ColorSchemeConfig(
-            useScheme: useScheme,
-            schemes: new Dictionary<MonitorColorScheme, IDictionary<ConsoleLogLevel, ConsoleColor>>
+        return new Dictionary<MonitorColorScheme, Dictionary<ConsoleLogLevel, ConsoleColor>>
+        {
+            [MonitorColorScheme.DarkBackground] = new()
             {
-                [MonitorColorScheme.DarkBackground] = new Dictionary<ConsoleLogLevel, ConsoleColor>
-                {
-                    [ConsoleLogLevel.Trace] = ConsoleColor.DarkGray,
-                    [ConsoleLogLevel.Debug] = ConsoleColor.DarkGray,
-                    [ConsoleLogLevel.Info] = ConsoleColor.White,
-                    [ConsoleLogLevel.Warn] = ConsoleColor.Yellow,
-                    [ConsoleLogLevel.Error] = ConsoleColor.Red,
-                    [ConsoleLogLevel.Alert] = ConsoleColor.Magenta,
-                    [ConsoleLogLevel.Success] = ConsoleColor.DarkGreen
-                },
-                [MonitorColorScheme.LightBackground] = new Dictionary<ConsoleLogLevel, ConsoleColor>
-                {
-                    [ConsoleLogLevel.Trace] = ConsoleColor.DarkGray,
-                    [ConsoleLogLevel.Debug] = ConsoleColor.DarkGray,
-                    [ConsoleLogLevel.Info] = ConsoleColor.Black,
-                    [ConsoleLogLevel.Warn] = ConsoleColor.DarkYellow,
-                    [ConsoleLogLevel.Error] = ConsoleColor.Red,
-                    [ConsoleLogLevel.Alert] = ConsoleColor.DarkMagenta,
-                    [ConsoleLogLevel.Success] = ConsoleColor.DarkGreen
-                }
+                [ConsoleLogLevel.Trace] = ConsoleColor.DarkGray,
+                [ConsoleLogLevel.Debug] = ConsoleColor.DarkGray,
+                [ConsoleLogLevel.Info] = ConsoleColor.White,
+                [ConsoleLogLevel.Warn] = ConsoleColor.Yellow,
+                [ConsoleLogLevel.Error] = ConsoleColor.Red,
+                [ConsoleLogLevel.Alert] = ConsoleColor.Magenta,
+                [ConsoleLogLevel.Success] = ConsoleColor.DarkGreen
+            },
+            [MonitorColorScheme.LightBackground] = new()
+            {
+                [ConsoleLogLevel.Trace] = ConsoleColor.DarkGray,
+                [ConsoleLogLevel.Debug] = ConsoleColor.DarkGray,
+                [ConsoleLogLevel.Info] = ConsoleColor.Black,
+                [ConsoleLogLevel.Warn] = ConsoleColor.DarkYellow,
+                [ConsoleLogLevel.Error] = ConsoleColor.Red,
+                [ConsoleLogLevel.Alert] = ConsoleColor.DarkMagenta,
+                [ConsoleLogLevel.Success] = ConsoleColor.DarkGreen
             }
-        );
+        };
     }
 
 
@@ -125,22 +136,22 @@ internal class ColorfulConsoleWriter : IConsoleWriter
 
     /// <summary>Get the color scheme to use for the current console.</summary>
     /// <param name="platform">The target platform.</param>
+    /// <param name="colorSchemeId">The color scheme ID in <paramref name="colorConfig"/> to use, or <see cref="MonitorColorScheme.AutoDetect"/> to select one automatically.</param>
     /// <param name="colorConfig">The colors to use for text written to the SMAPI console.</param>
-    private IDictionary<ConsoleLogLevel, ConsoleColor> GetConsoleColorScheme(Platform platform, ColorSchemeConfig colorConfig)
+    private static IDictionary<ConsoleLogLevel, ConsoleColor> GetConsoleColorScheme(Platform platform, MonitorColorScheme colorSchemeId, Dictionary<MonitorColorScheme, Dictionary<ConsoleLogLevel, ConsoleColor>> colorConfig)
     {
         // get color scheme ID
-        MonitorColorScheme schemeId = colorConfig.UseScheme;
-        if (schemeId == MonitorColorScheme.AutoDetect)
+        if (colorSchemeId == MonitorColorScheme.AutoDetect)
         {
-            schemeId = platform == Platform.Mac
+            colorSchemeId = platform == Platform.Mac
                 ? MonitorColorScheme.LightBackground // macOS doesn't provide console background color info, but it's usually white.
                 : ColorfulConsoleWriter.IsDark(Console.BackgroundColor) ? MonitorColorScheme.DarkBackground : MonitorColorScheme.LightBackground;
         }
 
         // get colors for scheme
-        return colorConfig.Schemes.TryGetValue(schemeId, out IDictionary<ConsoleLogLevel, ConsoleColor>? scheme)
+        return colorConfig.TryGetValue(colorSchemeId, out Dictionary<ConsoleLogLevel, ConsoleColor>? scheme)
             ? scheme
-            : throw new NotSupportedException($"Unknown color scheme '{schemeId}'.");
+            : throw new NotSupportedException($"Unknown color scheme '{colorSchemeId}'.");
     }
 
     /// <summary>Get whether a console color should be considered dark, which is subjectively defined as 'white looks better than black on this text'.</summary>

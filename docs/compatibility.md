@@ -31,7 +31,7 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 
 ## SMAPI and Mod compatibility
 
-当前主线以 Android fork 4.3.2.5 的明确提交 `6a34bbeb6e891536cdd948594094482ba0d8d264` 作为首个可运行移植基线，并在首个真实 Mod 闭环后迁移到更新的上游 SMAPI。JunimoGate 将它作为 solution 内部源码项目构建，保留独立的 `StardewModdingAPI` 程序集身份，但产品路径不依赖 `Program.Main`、SMAPILoader 或反射启动。
+当前主线以 Android fork 4.3.2.5 commit `6a34bbeb6e891536cdd948594094482ba0d8d264` 作为首个可运行移植基线，必要 Android patch series 已迁移到上游 SMAPI 4.5.2 commit `821167e5c511bf3a2d98f604e5e838561c469219`。JunimoGate 将它作为 solution 内部源码项目构建，保留独立的 `StardewModdingAPI` 程序集身份，但产品路径不依赖 `Program.Main`、SMAPILoader 或反射启动。
 
 V1 必须保持上游 SMAPI：
 

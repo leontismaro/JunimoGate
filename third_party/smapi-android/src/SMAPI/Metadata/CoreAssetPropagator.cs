@@ -12,6 +12,7 @@ using StardewModdingAPI.Framework.Utilities;
 using StardewModdingAPI.Internal;
 using StardewValley;
 using StardewValley.Buildings;
+using StardewValley.GameData.Characters;
 using StardewValley.Locations;
 using StardewValley.Pathfinding;
 using StardewValley.TerrainFeatures;
@@ -75,58 +76,45 @@ internal class CoreAssetPropagator
     /// <param name="ignoreWorld">Whether the in-game world is fully unloaded (e.g. on the title screen), so there's no need to propagate changes into the world.</param>
     /// <param name="propagatedAssets">A lookup of asset names to whether they've been propagated.</param>
     /// <param name="changedWarpRoutes">Whether the NPC pathfinding warp route cache was reloaded.</param>
-    public void Propagate(IList<IContentManager> contentManagers, IDictionary<IAssetName, Type> assets, bool ignoreWorld, out IDictionary<IAssetName, bool> propagatedAssets, out bool changedWarpRoutes)
+    public void Propagate(IList<IContentManager> contentManagers, IDictionary<IAssetName, Type> assets, bool ignoreWorld, out Dictionary<IAssetName, bool> propagatedAssets, out bool changedWarpRoutes)
     {
-        // get base name lookup
-        propagatedAssets = assets
-            .Select(asset => asset.Key.GetBaseAssetName())
-            .Distinct()
-            .ToDictionary(name => name, _ => false);
+        propagatedAssets = new Dictionary<IAssetName, bool>(assets.Count);
 
-        // edit textures in-place
+        // propagate each asset
+        changedWarpRoutes = false;
         {
-            IAssetName[] textureAssets = assets
-                .Where(p => typeof(Texture2D).IsAssignableFrom(p.Value))
-                .Select(p => p.Key)
-                .ToArray();
+            Type imageType = typeof(Texture2D);
+            Type mapType = typeof(Map);
+            Dictionary<FarmHouse, string?>? spouseRoomMapPathCache = null; // constructed later if needed
 
-            if (textureAssets.Any())
+            foreach ((IAssetName assetName, Type assetType) in assets)
             {
-                var defaultLanguage = this.MainContentManager.GetCurrentLanguage();
+                bool changed = false;
 
-                foreach (IAssetName assetName in textureAssets)
+                try
                 {
-                    var language = assetName.LanguageCode ?? defaultLanguage;
-                    if (language == LocalizedContentManager.LanguageCode.mod && LocalizedContentManager.CurrentModLanguage is null)
-                        language = defaultLanguage;
+                    // image
+                    if (imageType.IsAssignableFrom(assetType))
+                        changed = this.PropagateTexture(assetName, contentManagers, ignoreWorld);
 
-                    bool changed = this.PropagateTexture(assetName, language, contentManagers, ignoreWorld);
-                    if (changed)
-                        propagatedAssets[assetName] = true;
+                    // map
+                    else if (assetType == mapType)
+                    {
+                        changed = this.PropagateMap(assetName, ref spouseRoomMapPathCache, ignoreWorld, out bool curChangedMapRoutes);
+                        changedWarpRoutes |= curChangedMapRoutes;
+                    }
+
+                    // any other type
+                    else
+                        changed = this.PropagateOther(assetName, ignoreWorld);
+                }
+                catch (Exception ex)
+                {
+                    this.Monitor.Log($"An error occurred while propagating changes to asset '{assetName.Name}'. Error details:\n{ex.GetLogSummary()}", LogLevel.Error);
                 }
 
-                foreach (IAssetName assetName in textureAssets)
-                    assets.Remove(assetName);
+                propagatedAssets[assetName] = changed;
             }
-        }
-
-        // reload other assets
-        changedWarpRoutes = false;
-        foreach (var entry in assets)
-        {
-            bool changed = false;
-            bool curChangedMapRoutes = false;
-            try
-            {
-                changed = this.PropagateOther(entry.Key, entry.Value, ignoreWorld, out curChangedMapRoutes);
-            }
-            catch (Exception ex)
-            {
-                this.Monitor.Log($"An error occurred while propagating asset changes. Error details:\n{ex.GetLogSummary()}", LogLevel.Error);
-            }
-
-            propagatedAssets[entry.Key] = changed;
-            changedWarpRoutes = changedWarpRoutes || curChangedMapRoutes;
         }
 
         // reload NPC pathfinding cache if any map routes changed
@@ -138,65 +126,127 @@ internal class CoreAssetPropagator
     /*********
     ** Private methods
     *********/
+    /// <summary>Propagate changes to a map asset.</summary>
+    /// <param name="assetName">The asset name that changed.</param>
+    /// <param name="spouseRoomMapPathCache">A cache of spouse room map path lookups by farmhouse or cabin instance. This will be created the first time it's needed.</param>
+    /// <param name="ignoreWorld">Whether the in-game world is fully unloaded (e.g. on the title screen), so there's no need to propagate changes into the world.</param>
+    /// <param name="changedWarpRoutes">Whether the locations reachable by warps from this location changed as part of this propagation.</param>
+    /// <returns>Returns whether any assets were updated.</returns>
+    private bool PropagateMap(IAssetName assetName, ref Dictionary<FarmHouse, string?>? spouseRoomMapPathCache, bool ignoreWorld, out bool changedWarpRoutes)
+    {
+        bool changed = false;
+        changedWarpRoutes = false;
+
+        if (!ignoreWorld)
+        {
+            foreach (LocationInfo info in this.GetLocationsWithInfo())
+            {
+                GameLocation location = info.Location;
+
+                bool shouldUpdateMap =
+                    // edited this map
+                    this.IsSameBaseName(assetName, location.mapPath.Value)
+
+                    // edited spouse room for this farmhouse
+                    || (
+                        location is FarmHouse farmhouse
+                        && this.IsSameBaseName(
+                            assetName,
+                            this.GetDisplayedSpouseRoomPath(farmhouse, ref spouseRoomMapPathCache)
+                        )
+                    );
+
+                if (shouldUpdateMap)
+                {
+                    static ISet<string> GetWarpSet(GameLocation location)
+                    {
+                        HashSet<string> targetNames = [];
+
+                        foreach (Warp warp in location.warps)
+                            targetNames.Add(warp.TargetName);
+
+                        if (location.doors?.Count() > 0)
+                        {
+                            foreach (string targetName in location.doors.Values)
+                                targetNames.Add(targetName);
+                        }
+
+                        return targetNames;
+                    }
+
+                    var oldWarps = GetWarpSet(location);
+                    this.UpdateMap(info);
+                    var newWarps = GetWarpSet(location);
+
+                    changedWarpRoutes = changedWarpRoutes || oldWarps.Count != newWarps.Count || oldWarps.Any(p => !newWarps.Contains(p));
+                    changed = true;
+                }
+            }
+        }
+
+        return changed;
+    }
+
     /// <summary>Propagate changes to a cached texture asset.</summary>
-    /// <param name="assetName">The asset name to reload.</param>
-    /// <param name="language">The language for which to get assets.</param>
+    /// <param name="assetName">The asset name that changed.</param>
     /// <param name="contentManagers">The content managers whose assets to update.</param>
     /// <param name="ignoreWorld">Whether the in-game world is fully unloaded (e.g. on the title screen), so there's no need to propagate changes into the world.</param>
-    /// <returns>Returns whether an asset was loaded.</returns>
-    [SuppressMessage("ReSharper", "StringLiteralTypo", Justification = "These deliberately match the asset names.")]
-    private bool PropagateTexture(IAssetName assetName, LocalizedContentManager.LanguageCode language, IList<IContentManager> contentManagers, bool ignoreWorld)
+    /// <returns>Returns whether any assets were updated.</returns>
+    private bool PropagateTexture(IAssetName assetName, IList<IContentManager> contentManagers, bool ignoreWorld)
     {
         bool changed = false;
 
-        // get asset names to replace
-        // We propagate non-textures by comparing base asset names, to update any localized version like
-        // `asset.fr-FR` too. We need to check every content manager for in-place texture edits though, so we
-        // should avoid iterating their assets if possible. So here we just check for the current localized name
-        // and base name, which should cover normal cases.
-        IAssetName[] assetNames = assetName.LocaleCode != null
-            ? [assetName, assetName.GetBaseAssetName()]
-            : [assetName];
+        // get default language
+        // This method replaces the textures that would be loaded if you called `contentManager.Load<Texture2D>(assetName)`,
+        // which internally maps to `contentManager.LoadLocalized<Texture2D>(assetName, currentLanguage)` regardless of
+        // the asset name's language. If the asset name includes a locale, `LoadLocalized` handles that internally.
+        LocalizedContentManager.LanguageCode currentLanguage = LocalizedContentManager.CurrentLanguageCode;
 
-        // update textures in-place
+        // update textures in-place (0 = localized asset name, 1 = base asset name)
+        for (int i = 0; i < 2; i++)
         {
-            // get new textures to copy
-            Lazy<Texture2D>[] newTextures = new Lazy<Texture2D>[assetNames.Length];
-            newTextures[0] = new Lazy<Texture2D>(() => this.DisposableContentManager.LoadLocalized<Texture2D>(assetName, language, useCache: false));
-            if (assetNames.Length > 1)
-                newTextures[1] = new Lazy<Texture2D>(() => this.DisposableContentManager.LoadLocalized<Texture2D>(assetNames[1], language, useCache: false));
+            bool forLocalizedAsset = i == 0;
+
+            // if the asset name is non-localized, only propagate it once
+            if (forLocalizedAsset && assetName.LocaleCode is null)
+                continue;
+
+            // get asset name to replace
+            // We propagate non-textures by comparing base asset names, to update any localized version like
+            // `asset.fr-FR` too. We need to check every content manager for in-place texture edits though, so we
+            // should avoid iterating their assets if possible. So here we just check for the current localized name
+            // and base name, which should cover normal cases.
+            IAssetName name = forLocalizedAsset
+                ? assetName
+                : assetName.GetBaseAssetName();
+
+            // get new texture to copy
+            Lazy<Texture2D?> newTexture = new(() =>
+            {
+                if (this.DisposableContentManager.DoesAssetExist<Texture2D>(name))
+                    return this.DisposableContentManager.LoadLocalized<Texture2D>(name, currentLanguage, useCache: false);
+
+                this.Monitor.Log($"Skipped reload for '{name.Name}' because the underlying asset no longer exists.", LogLevel.Warn);
+                return null;
+            });
 
             // apply to content managers
             foreach (IContentManager contentManager in contentManagers)
             {
-                for (int i = 0; i < assetNames.Length; i++)
+                if (contentManager.IsLoaded(name))
                 {
-                    IAssetName name = assetNames[i];
+                    if (newTexture.Value is null)
+                        break;
 
-                    if (contentManager.IsLoaded(name))
-                    {
-                        if (this.DisposableContentManager.DoesAssetExist<Texture2D>(name))
-                        {
-                            changed = true;
-
-                            Texture2D texture = contentManager.LoadLocalized<Texture2D>(name, language, useCache: true);
-                            texture.CopyFromTexture(newTextures[i].Value);
-                        }
-                        else
-                        {
-                            this.Monitor.Log($"Skipped reload for '{name.Name}' because the underlying asset no longer exists.", LogLevel.Warn);
-                            break;
-                        }
-                    }
+                    Texture2D texture = contentManager.LoadLocalized<Texture2D>(name, currentLanguage, useCache: true);
+                    texture.CopyFromTexture(newTexture.Value);
+                    changed = true;
                 }
             }
 
-            // drop temporary textures
-            foreach (Lazy<Texture2D> newTexture in newTextures)
-            {
-                if (newTexture.IsValueCreated)
-                    newTexture.Value.Dispose();
-            }
+            // drop temporary texture
+            if (newTexture.IsValueCreated)
+                newTexture.Value?.Dispose();
         }
 
         // update game state if needed
@@ -211,8 +261,7 @@ internal class CoreAssetPropagator
                 case "characters/farmer/farmer_base_bald":
                 case "characters/farmer/farmer_girl_base":
                 case "characters/farmer/farmer_girl_base_bald":
-                    if (!ignoreWorld)
-                        this.UpdatePlayerSprites(assetName);
+                    this.UpdatePlayerSprites(assetName);
                     break;
 
                 /****
@@ -236,69 +285,20 @@ internal class CoreAssetPropagator
         return changed;
     }
 
-    /// <summary>Reload one of the game's core assets (if applicable).</summary>
-    /// <param name="assetName">The asset name to reload.</param>
-    /// <param name="type">The asset type to reload.</param>
+    /// <summary>Propagate changes to an asset which isn't a map (handled by <see cref="PropagateMap"/>) or texture (handled by <see cref="PropagateTexture"/>).</summary>
+    /// <param name="assetName">The asset name that changed.</param>
     /// <param name="ignoreWorld">Whether the in-game world is fully unloaded (e.g. on the title screen), so there's no need to propagate changes into the world.</param>
-    /// <param name="changedWarpRoutes">Whether the locations reachable by warps from this location changed as part of this propagation.</param>
-    /// <returns>Returns whether an asset was loaded.</returns>
+    /// <returns>Returns whether any assets were updated.</returns>
     [SuppressMessage("ReSharper", "StringLiteralTypo", Justification = "These deliberately match the asset names.")]
-    private bool PropagateOther(IAssetName assetName, Type type, bool ignoreWorld, out bool changedWarpRoutes)
+    private bool PropagateOther(IAssetName assetName, bool ignoreWorld)
     {
-        bool changed = false;
         var content = this.MainContentManager;
-        string key = assetName.BaseName;
-        changedWarpRoutes = false;
+        string baseName = assetName.BaseName;
 
-        /****
-        ** Propagate map changes
-        ****/
-        if (type == typeof(Map))
-        {
-            if (!ignoreWorld)
-            {
-                foreach (LocationInfo info in this.GetLocationsWithInfo())
-                {
-                    GameLocation location = info.Location;
-
-                    if (this.IsSameBaseName(assetName, location.mapPath.Value))
-                    {
-                        static ISet<string> GetWarpSet(GameLocation location)
-                        {
-                            HashSet<string> targetNames = [];
-
-                            foreach (Warp warp in location.warps)
-                                targetNames.Add(warp.TargetName);
-
-                            if (location.doors?.Count() > 0)
-                            {
-                                foreach (string targetName in location.doors.Values)
-                                    targetNames.Add(targetName);
-                            }
-
-                            return targetNames;
-                        }
-
-                        var oldWarps = GetWarpSet(location);
-                        this.UpdateMap(info);
-                        var newWarps = GetWarpSet(location);
-
-                        changedWarpRoutes = changedWarpRoutes || oldWarps.Count != newWarps.Count || oldWarps.Any(p => !newWarps.Contains(p));
-                        changed = true;
-                    }
-                }
-            }
-
-            return changed;
-        }
-
-        /****
-        ** Propagate by key
-        ****/
-        switch (assetName.BaseName.ToLower().Replace("\\", "/")) // normalized key so we can compare statically
+        switch (baseName.ToLower().Replace("\\", "/")) // normalized key so we can compare statically
         {
             /****
-            ** Content\Data
+            ** Content/Data
             ****/
             case "data/achievements": // Game1.LoadContent
                 Game1.achievements = DataLoader.Achievements(content);
@@ -387,7 +387,7 @@ internal class CoreAssetPropagator
                 return true;
 
             case "data/hairdata": // Farmer.GetHairStyleMetadataFile
-                return changed | this.UpdateHairData();
+                return this.UpdateHairData();
 
             case "data/hats": // HatDataDefinition
                 ItemRegistry.ResetCache();
@@ -457,25 +457,25 @@ internal class CoreAssetPropagator
                 return true;
 
             /****
-            ** Content\Fonts
+            ** Content/Fonts
             ****/
             case "fonts/spritefont1": // Game1.LoadContent
-                Game1.dialogueFont = content.Load<SpriteFont>(key);
+                Game1.dialogueFont = content.Load<SpriteFont>(baseName);
                 return true;
 
             case "fonts/smallfont": // Game1.LoadContent
-                Game1.smallFont = content.Load<SpriteFont>(key);
+                Game1.smallFont = content.Load<SpriteFont>(baseName);
                 return true;
 
             case "fonts/tinyfont": // Game1.LoadContent
-                Game1.tinyFont = content.Load<SpriteFont>(key);
+                Game1.tinyFont = content.Load<SpriteFont>(baseName);
                 return true;
 
             /****
-            ** Content\Strings
+            ** Content/Strings
             ****/
             case "strings/stringsfromcsfiles":
-                return changed | this.UpdateStringsFromCsFiles(content);
+                return this.UpdateStringsFromCsFiles(content);
 
             /****
             ** Dynamic keys
@@ -484,10 +484,10 @@ internal class CoreAssetPropagator
                 if (!ignoreWorld)
                 {
                     if (assetName.IsDirectlyUnderPath("Characters/Dialogue"))
-                        return changed | this.UpdateNpcDialogue(assetName);
+                        return this.UpdateNpcDialogue(assetName);
 
                     if (assetName.IsDirectlyUnderPath("Characters/schedules"))
-                        return changed | this.UpdateNpcSchedules(assetName);
+                        return this.UpdateNpcSchedules(assetName);
                 }
 
                 return false;
@@ -530,19 +530,19 @@ internal class CoreAssetPropagator
     /// <param name="assetName">The asset name to update.</param>
     private void UpdatePlayerSprites(IAssetName assetName)
     {
-        Farmer[] players =
-            (
-                from player in Game1.getOnlineFarmers()
-                where this.IsSameBaseName(assetName, player.getTexture())
-                select player
-            )
-            .ToArray();
+        // reset recolors
+        FarmerRenderer.recolorOffsets?.Clear();
 
-        foreach (Farmer player in players)
+        // reset local player
+        // This is handled separately since Game1.getOnlineFarmers() doesn't include the local player before the save is loaded
+        if (this.IsSameBaseName(assetName, Game1.player?.getTexture()))
+            Game1.player.FarmerRenderer.MarkSpriteDirty();
+
+        // reset other player
+        foreach (Farmer player in Game1.getOnlineFarmers())
         {
-            FarmerRenderer.recolorOffsets?.Clear();
-
-            player.FarmerRenderer.MarkSpriteDirty();
+            if (!object.ReferenceEquals(player, Game1.player) && this.IsSameBaseName(assetName, player.getTexture()))
+                player.FarmerRenderer.MarkSpriteDirty();
         }
     }
 
@@ -702,7 +702,21 @@ internal class CoreAssetPropagator
         // reapply map changes
         // This must happen after updating warps (since some map modifications like the community shortcuts add warps)
         // and after resetting interior doors' state (so they apply their modifications too).
+        if (location is FarmHouse)
+            this.Reflection.GetField<bool>(location, "displayingSpouseRoom").SetValue(false);
         location.MakeMapModifications(force: true);
+
+        // update fridge position
+        switch (location)
+        {
+            case FarmHouse farmhouse:
+                farmhouse.fridgePosition = farmhouse.GetFridgePositionFromMap() ?? Point.Zero;
+                break;
+
+            case IslandFarmHouse farmhouse:
+                farmhouse.fridgePosition = farmhouse.GetFridgePositionFromMap() ?? Point.Zero;
+                break;
+        }
 
         // reset player position
         // The game may move the player as part of the map changes, even if they're not in that
@@ -809,10 +823,37 @@ internal class CoreAssetPropagator
             });
     }
 
+    /// <summary>Get the asset name for a farmhouse's spouse room, if it's currently displaying one.</summary>
+    /// <param name="farmhouse">The farmhouse whose spouse room to get.</param>
+    /// <param name="cache">A cache of spouse room map path lookups by farmhouse or cabin instance. This is created if it's null.</param>
+    private string? GetDisplayedSpouseRoomPath(FarmHouse farmhouse, ref Dictionary<FarmHouse, string?>? cache)
+    {
+        // from cache
+        if (cache is null)
+            cache = [];
+        else if (cache.TryGetValue(farmhouse, out string? spouseRoomMapPath))
+            return spouseRoomMapPath;
+
+        // no spouse room shown
+        Farmer? owner = farmhouse.owner;
+        if (owner?.spouse is null || !this.Reflection.GetField<bool>(farmhouse, "displayingSpouseRoom").GetValue())
+        {
+            cache[farmhouse] = null;
+            return null;
+        }
+
+        // else get map path
+        string mapPath = NPC.TryGetData(owner.spouse, out CharacterData? spouseData) && spouseData?.SpouseRoom?.MapAsset is { } mapName
+            ? $"Maps/{mapName}"
+            : "Maps/spouseRooms";
+        cache[farmhouse] = mapPath;
+        return mapPath;
+    }
+
     /// <summary>Get whether two asset names are equivalent if you ignore the locale code.</summary>
     /// <param name="left">The first value to compare.</param>
     /// <param name="right">The second value to compare.</param>
-    private bool IsSameBaseName(IAssetName? left, string? right)
+    private bool IsSameBaseName([NotNullWhen(true)] IAssetName? left, [NotNullWhen(true)] string? right)
     {
         if (left is null || right is null)
             return false;
@@ -824,7 +865,7 @@ internal class CoreAssetPropagator
     /// <summary>Get whether two asset names are equivalent if you ignore the locale code.</summary>
     /// <param name="left">The first value to compare.</param>
     /// <param name="right">The second value to compare.</param>
-    private bool IsSameBaseName(IAssetName? left, IAssetName? right)
+    private bool IsSameBaseName([NotNullWhen(true)] IAssetName? left, [NotNullWhen(true)] IAssetName? right)
     {
         if (left is null || right is null)
             return false;

@@ -32,13 +32,13 @@ public class ModCompatibilityInfo
     ** Accessors
     *********/
     /// <summary>Construct an instance.</summary>
-    /// <param name="status">The compatibility status.</param>
-    /// <param name="summary">The human-readable summary of the compatibility status or workaround, in Markdown format.</param>
-    /// <param name="htmlSummary">An HTML version of <paramref name="summary"/>, if different.</param>
-    /// <param name="brokeIn">The game or SMAPI version which broke this mod, if applicable.</param>
-    /// <param name="unofficialVersion">The version of the latest unofficial update, if applicable.</param>
-    /// <param name="unofficialUrl">The URL to the latest unofficial update, if applicable.</param>
-    /// <param name="abandonedReason">If the compatibility status is <see cref="ModCompatibilityStatus.Abandoned"/>, the reason it was abandoned.</param>
+    /// <param name="status"><inheritdoc cref="Status" path="/summary"/></param>
+    /// <param name="summary"><inheritdoc cref="Summary" path="/summary"/></param>
+    /// <param name="htmlSummary"><inheritdoc cref="HtmlSummary" path="/summary"/></param>
+    /// <param name="brokeIn"><inheritdoc cref="BrokeIn" path="/summary"/></param>
+    /// <param name="unofficialVersion"><inheritdoc cref="UnofficialVersion" path="/summary"/></param>
+    /// <param name="unofficialUrl"><inheritdoc cref="UnofficialUrl" path="/summary"/></param>
+    /// <param name="abandonedReason"><inheritdoc cref="AbandonedReason" path="/summary"/></param>
     public ModCompatibilityInfo(ModCompatibilityStatus status, string? summary, string? htmlSummary, string? brokeIn, ISemanticVersion? unofficialVersion, string? unofficialUrl, ModCompatibilityReasonAbandoned abandonedReason)
     {
         this.Status = status;

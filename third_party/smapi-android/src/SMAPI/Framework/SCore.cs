@@ -37,6 +37,7 @@ using StardewModdingAPI.Framework.Rendering;
 using StardewModdingAPI.Framework.Serialization;
 using StardewModdingAPI.Framework.StateTracking.Snapshots;
 using StardewModdingAPI.Framework.Utilities;
+using StardewModdingAPI.Integrations.GenericModConfigMenu;
 using StardewModdingAPI.Internal;
 using StardewModdingAPI.Toolkit;
 using StardewModdingAPI.Toolkit.Framework.Clients.WebApi;
@@ -93,11 +94,11 @@ internal class SCore : IDisposable
     /// <summary>Encapsulates access to SMAPI core translations.</summary>
     private readonly Translator Translator = new();
 
-    /// <summary>The SMAPI configuration settings.</summary>
-    private readonly SConfig Settings;
-
     /// <summary>The mod toolkit used for generic mod interactions.</summary>
     private readonly ModToolkit Toolkit = new();
+
+    /// <summary>The SMAPI configuration settings.</summary>
+    private SConfig Settings;
 
     /****
     ** Higher-level components
@@ -124,13 +125,14 @@ internal class SCore : IDisposable
     /// <summary>Manages SMAPI events for mods.</summary>
     private readonly EventManager EventManager;
 
-
-
     /****
     ** State
     ****/
     /// <summary>The path to search for mods.</summary>
     private string ModsPath => Constants.ModsPath;
+
+    /// <summary>The override to apply for <see cref="SConfig.DeveloperMode"/>, or <c>null</c> to use the value from the settings file.</summary>
+    private readonly bool? OverrideDeveloperMode;
 
     /// <summary>Whether the game is currently running.</summary>
     private bool IsGameRunning;
@@ -191,8 +193,8 @@ internal class SCore : IDisposable
     /// <summary>Construct an instance.</summary>
     /// <param name="modsPath">The path to search for mods.</param>
     /// <param name="writeToConsole">Whether to output log messages to the console.</param>
-    /// <param name="developerMode">Whether to enable development features, or <c>null</c> to use the value from the settings file.</param>
-    public SCore(string modsPath, bool writeToConsole, bool? developerMode)
+    /// <param name="overrideDeveloperMode">The override to apply for <see cref="SConfig.DeveloperMode"/>, or <c>null</c> to use the value from the settings file.</param>
+    public SCore(string modsPath, bool writeToConsole, bool? overrideDeveloperMode)
     {
         SCore.Instance = this;
 
@@ -206,20 +208,11 @@ internal class SCore : IDisposable
         string logPath = this.GetLogPath();
 
         // init settings
-        {
-            var deserializerSettings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
-
-            this.Settings = JsonConvert.DeserializeObject<SConfig>(File.ReadAllText(Constants.ApiConfigPath)) ?? throw new InvalidOperationException("The 'smapi-internal/config.json' file is missing or invalid. You can reinstall SMAPI to fix this.");
-            if (File.Exists(Constants.ApiUserConfigPath))
-                JsonConvert.PopulateObject(File.ReadAllText(Constants.ApiUserConfigPath), this.Settings, deserializerSettings);
-            if (File.Exists(Constants.ApiModGroupConfigPath))
-                JsonConvert.PopulateObject(File.ReadAllText(Constants.ApiModGroupConfigPath), this.Settings, deserializerSettings);
-            if (developerMode.HasValue)
-                this.Settings.OverrideDeveloperMode(developerMode.Value);
-        }
+        this.OverrideDeveloperMode = overrideDeveloperMode;
+        this.ReloadSettings();
 
         // init basics
-        this.LogManager = new LogManager(logPath: logPath, colorConfig: this.Settings.ConsoleColors, writeToConsole: writeToConsole, verboseLogging: this.Settings.VerboseLogging, isDeveloperMode: this.Settings.DeveloperMode, getScreenIdForLog: this.GetScreenIdForLog);
+        this.LogManager = new LogManager(logPath: logPath, colorSchemeId: this.Settings.ConsoleColorScheme, colorConfig: this.Settings.ConsoleColorSchemes, writeToConsole: writeToConsole, verboseLogging: this.Settings.VerboseLogging, isDeveloperMode: this.Settings.DeveloperMode, getScreenIdForLog: this.GetScreenIdForLog);
         this.CommandManager = new CommandManager(this.Monitor);
         this.EventManager = new EventManager(this.ModRegistry);
         SCore.DeprecationManager = new DeprecationManager(this.Monitor, this.ModRegistry);
@@ -505,7 +498,27 @@ internal class SCore : IDisposable
         AndroidModLoaderManager.CurrentStatus = AndroidModLoaderManager.LoadStatus.Starting;
         AndroidModLoaderManager.StartLoggerToScreen();
         Task.Run(() =>
+        {
 #endif
+        // check for malicious loose files
+        this.Monitor.Log("Scanning for malicious files...");
+        {
+            bool foundMaliciousFiles = false;
+
+            foreach ((string filePath, LooseFileBlacklistEntryModel match) in modBlacklist.CheckLooseFiles(this.ModsPath))
+            {
+                foundMaliciousFiles = true;
+
+                this.Monitor.LogFatal("Malicious mod file detected.");
+                this.Monitor.Log($"File path: '{filePath}'", LogLevel.Error);
+                this.Monitor.Newline();
+                this.Monitor.Log(match.Message ?? "This file has been flagged as malicious. You should immediately delete the mod containing the file, and perform a full anti-malware scan of your computer to be safe.", LogLevel.Error);
+            }
+
+            if (foundMaliciousFiles)
+                this.LogManager.PressAnyKeyToExit();
+        }
+
         // load mods
         {
             this.Monitor.Log("Loading mod metadata...", LogLevel.Debug);
@@ -569,10 +582,15 @@ internal class SCore : IDisposable
 
             AndroidModLoaderManager.CurrentStatus = AndroidModLoaderManager.LoadStatus.LoadedAndNeedToConfirm;
 #endif
+
+            // register config menu with Generic Mod Config Menu
+            if (this.Settings.EnableConfigMenu)
+                new GenericModConfigMenuIntegration(this.Monitor, this.Translator, () => this.Settings, this.ReloadSettings).Register(this.ModRegistry);
         }
 
 #if SMAPI_FOR_ANDROID
         // close task LoadMods
+        }
         ).ContinueWith(
             task =>
             {
@@ -923,7 +941,7 @@ internal class SCore : IDisposable
             // conflict (e.g. collection changed during enumeration errors) and data may change
             // unexpectedly from one mod instruction to the next.
             //
-            // Therefore we can just run Game1.Update here without raising any SMAPI events. There's
+            // Therefore, we can just run Game1.Update here without raising any SMAPI events. There's
             // a small chance that the task will finish after we defer but before the game checks,
             // which means technically events should be raised, but the effects of missing one
             // update tick are negligible and not worth the complications of bypassing Game1.Update.
@@ -1613,6 +1631,40 @@ internal class SCore : IDisposable
     {
         if (this.EventManager.AssetsInvalidated.HasListeners)
             this.EventManager.AssetsInvalidated.Raise(new AssetsInvalidatedEventArgs(assetNames, assetNames.Select(p => p.GetBaseAssetName())));
+    }
+
+    /// <summary>Reload the SMAPI settings.</summary>
+    /// <exception cref="InvalidOperationException">The intern</exception>
+    [MemberNotNull(nameof(SCore.Settings))]
+    private void ReloadSettings()
+    {
+        JsonSerializerSettings deserializerSettings = new() { NullValueHandling = NullValueHandling.Ignore };
+
+        // load default settings
+        SConfig? settings = JsonConvert.DeserializeObject<SConfig>(File.ReadAllText(Constants.ApiConfigPath));
+        if (settings is null)
+        {
+            if (this.Settings is null)
+                throw new InvalidOperationException("The 'smapi-internal/config.json' file is missing or invalid. You can reinstall SMAPI to fix this.");
+
+            this.Monitor.Log("Could not load updated settings from the 'smapi-internal/config.json' file. Keeping the settings as-is.", LogLevel.Warn);
+            return;
+        }
+
+        // load user settings
+        if (File.Exists(Constants.ApiUserConfigPath))
+            JsonConvert.PopulateObject(File.ReadAllText(Constants.ApiUserConfigPath), settings, deserializerSettings);
+        if (File.Exists(Constants.ApiModGroupConfigPath))
+            JsonConvert.PopulateObject(File.ReadAllText(Constants.ApiModGroupConfigPath), settings, deserializerSettings);
+        if (this.OverrideDeveloperMode.HasValue)
+            settings.OverrideDeveloperMode(this.OverrideDeveloperMode.Value);
+
+        // apply
+        this.Settings = settings;
+
+        // update log manager if already initialized
+        // ReSharper disable once ConditionalAccessQualifierIsNonNullableAccordingToAPIContract
+        this.LogManager?.ApplySettings(settings.ConsoleColorScheme, settings.ConsoleColorSchemes, settings.VerboseLogging, this.OverrideDeveloperMode ?? settings.DeveloperMode);
     }
 
     /// <summary>Get the load/edit operations to apply to an asset by querying registered <see cref="IContentEvents.AssetRequested"/> event handlers.</summary>

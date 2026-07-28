@@ -3,15 +3,17 @@ namespace StardewModdingAPI.Toolkit.Framework.ModBlacklistData;
 /// <summary>A mod entry in the <see cref="ModBlacklistModel"/>.</summary>
 public class ModBlacklistEntryModel
 {
+    /*********
+    ** Accessors
+    *********/
     /// <summary>The manifest IDs to block (if any).</summary>
     public string? Id { get; }
 
-    /// <summary>The MD5 hashes of the entry DLL to block (if any).</summary>
-    /// <remarks>Due to the chance of MD5 collisions, this should only be used in addition to the <see cref="Id"/>.</remarks>
+    /// <summary>The MD5 hash of the entry DLL to block (if any).</summary>
     public string? EntryDllHash { get; }
 
     /// <summary>A player-friendly explanation of why the mod is blocked and what they should do next.</summary>
-    public string Message { get; }
+    public string? Message { get; }
 
 
     /*********

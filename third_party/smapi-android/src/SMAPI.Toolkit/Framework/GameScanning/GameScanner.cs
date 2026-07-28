@@ -62,7 +62,17 @@ public class GameScanner
         // yield valid folders
         foreach (string path in paths)
         {
-            DirectoryInfo folder = new(path);
+            DirectoryInfo folder;
+
+            try
+            {
+                folder = new DirectoryInfo(path);
+            }
+            catch (ArgumentException)
+            {
+                continue; // invalid path format
+            }
+
             if (folder.Exists)
                 yield return (folder, this.GetGameFolderType(folder));
         }
@@ -159,7 +169,7 @@ public class GameScanner
 
                     // via Steam library path
                     string? steamPath = this.GetCurrentUserRegistryValue(@"Software\Valve\Steam", "SteamPath");
-                    if (steamPath != null)
+                    if (!string.IsNullOrWhiteSpace(steamPath))
                     {
                         // conventional path
                         yield return Path.Combine(steamPath.Replace('/', '\\'), @"steamapps\common\Stardew Valley");

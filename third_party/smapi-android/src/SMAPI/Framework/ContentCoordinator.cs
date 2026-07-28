@@ -452,7 +452,7 @@ internal class ContentCoordinator : IDisposable
                 contentManagers: this.ContentManagers,
                 assets: invalidatedAssets.ToDictionary(p => p.Key, p => p.Value),
                 ignoreWorld: Context.IsWorldFullyUnloaded,
-                out IDictionary<IAssetName, bool> propagated,
+                out Dictionary<IAssetName, bool> propagated,
                 out bool updatedWarpRoutes
             );
 

@@ -45,8 +45,11 @@ public class ModCompatibilityEntry
     /// <summary>The mod's compatibility with the latest stable version of the game.</summary>
     public ModCompatibilityInfo Compatibility { get; }
 
-    /// <summary>The human-readable warnings for players about this mod.</summary>
+    /// <summary>The human-readable warnings for players about this mod, in Markdown format.</summary>
     public string[] Warnings { get; }
+
+    /// <summary>The HTML version of <see cref="Warnings"/>, if different.</summary>
+    public string[]? HtmlWarnings { get; }
 
     /// <summary>Special notes intended for developers who maintain unofficial updates or submit pull requests.</summary>
     public string? DevNote { get; }
@@ -62,23 +65,24 @@ public class ModCompatibilityEntry
     ** Public methods
     *********/
     /// <summary>Construct an instance.</summary>
-    /// <param name="id">The mod's unique ID. If the mod has alternate/old IDs, they're listed in latest to oldest order.</param>
-    /// <param name="name">The mod's display name. If the mod has multiple names, the first one is the most canonical name.</param>
-    /// <param name="author">The mod's author name. If the author has multiple names, the first one is the most canonical name.</param>
-    /// <param name="nexusId">The mod ID on Nexus.</param>
-    /// <param name="chucklefishId">The mod ID in the Chucklefish mod repo.</param>
-    /// <param name="curseForgeId">The mod ID in the CurseForge mod repo.</param>
-    /// <param name="modDropId">The mod ID in the ModDrop mod repo.</param>
-    /// <param name="githubRepo">The GitHub repository in the form 'owner/repo'.</param>
-    /// <param name="customSourceUrl">The URL to a non-GitHub source repo.</param>
-    /// <param name="customUrl">The custom mod page URL (if applicable).</param>
-    /// <param name="contentPackFor">The name of the mod which loads this content pack, if applicable.</param>
-    /// <param name="compatibility">The mod's compatibility with the latest stable version of the game.</param>
-    /// <param name="warnings">The human-readable warnings for players about this mod.</param>
-    /// <param name="devNote">Special notes intended for developers who maintain unofficial updates or submit pull requests.</param>
-    /// <param name="overrides">The data overrides to apply to the mod's manifest or remote mod page data, if any.</param>
-    /// <param name="anchor">The link anchor for the mod entry in the compatibility list.</param>
-    public ModCompatibilityEntry(string[] id, string[] name, string[] author, int? nexusId, int? chucklefishId, int? curseForgeId, int? modDropId, string? githubRepo, string? customSourceUrl, string? customUrl, string? contentPackFor, ModCompatibilityInfo compatibility, string[] warnings, string? devNote, ModDataOverrideEntry? overrides, string? anchor)
+    /// <param name="id"><inheritdoc cref="ID" path="/summary"/></param>
+    /// <param name="name"><inheritdoc cref="Name" path="/summary"/></param>
+    /// <param name="author"><inheritdoc cref="Author" path="/summary"/></param>
+    /// <param name="nexusId"><inheritdoc cref="NexusID" path="/summary"/></param>
+    /// <param name="chucklefishId"><inheritdoc cref="ChucklefishID" path="/summary"/></param>
+    /// <param name="curseForgeId"><inheritdoc cref="CurseForgeID" path="/summary"/></param>
+    /// <param name="modDropId"><inheritdoc cref="ModDropID" path="/summary"/></param>
+    /// <param name="githubRepo"><inheritdoc cref="GitHubRepo" path="/summary"/></param>
+    /// <param name="customSourceUrl"><inheritdoc cref="CustomSourceUrl" path="/summary"/></param>
+    /// <param name="customUrl"><inheritdoc cref="CustomUrl" path="/summary"/></param>
+    /// <param name="contentPackFor"><inheritdoc cref="ContentPackFor" path="/summary"/></param>
+    /// <param name="compatibility"><inheritdoc cref="Compatibility" path="/summary"/></param>
+    /// <param name="warnings"><inheritdoc cref="Warnings" path="/summary"/></param>
+    /// <param name="htmlWarnings"><inheritdoc cref="HtmlWarnings" path="/summary"/></param>
+    /// <param name="devNote"><inheritdoc cref="DevNote" path="/summary"/></param>
+    /// <param name="overrides"><inheritdoc cref="Overrides" path="/summary"/></param>
+    /// <param name="anchor"><inheritdoc cref="Anchor" path="/summary"/></param>
+    public ModCompatibilityEntry(string[] id, string[] name, string[] author, int? nexusId, int? chucklefishId, int? curseForgeId, int? modDropId, string? githubRepo, string? customSourceUrl, string? customUrl, string? contentPackFor, ModCompatibilityInfo compatibility, string[] warnings, string[]? htmlWarnings, string? devNote, ModDataOverrideEntry? overrides, string? anchor)
     {
         this.ID = id;
         this.Name = name;
@@ -93,6 +97,7 @@ public class ModCompatibilityEntry
         this.ContentPackFor = contentPackFor;
         this.Compatibility = compatibility;
         this.Warnings = warnings;
+        this.HtmlWarnings = htmlWarnings;
         this.DevNote = devNote;
         this.Overrides = overrides;
         this.Anchor = anchor;

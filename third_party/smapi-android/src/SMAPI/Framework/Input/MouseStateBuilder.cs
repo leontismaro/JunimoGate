@@ -13,39 +13,38 @@ internal class MouseStateBuilder : IInputStateBuilder<MouseStateBuilder, MouseSt
     private MouseState? State;
 
     /// <summary>The current button states.</summary>
-    private readonly IDictionary<SButton, ButtonState> ButtonStates;
+    private readonly Dictionary<SButton, ButtonState> ButtonStates = [];
 
     /// <summary>The mouse wheel scroll value.</summary>
-    private readonly int ScrollWheelValue;
+    private int ScrollWheelValue;
 
 
     /*********
     ** Accessors
     *********/
     /// <summary>The X cursor position.</summary>
-    public int X { get; }
+    public int X { get; private set; }
 
     /// <summary>The Y cursor position.</summary>
-    public int Y { get; }
+    public int Y { get; private set; }
 
 
     /*********
     ** Public methods
     *********/
-    /// <summary>Construct an instance.</summary>
-    /// <param name="state">The initial state.</param>
-    public MouseStateBuilder(MouseState state)
+    /// <inheritdoc />
+    public void Reset(MouseState state)
     {
         this.State = state;
 
-        this.ButtonStates = new Dictionary<SButton, ButtonState>
-        {
-            [SButton.MouseLeft] = state.LeftButton,
-            [SButton.MouseMiddle] = state.MiddleButton,
-            [SButton.MouseRight] = state.RightButton,
-            [SButton.MouseX1] = state.XButton1,
-            [SButton.MouseX2] = state.XButton2
-        };
+        var states = this.ButtonStates;
+        states.Clear();
+        states[SButton.MouseLeft] = state.LeftButton;
+        states[SButton.MouseMiddle] = state.MiddleButton;
+        states[SButton.MouseRight] = state.RightButton;
+        states[SButton.MouseX1] = state.XButton1;
+        states[SButton.MouseX2] = state.XButton2;
+
         this.X = state.X;
         this.Y = state.Y;
         this.ScrollWheelValue = state.ScrollWheelValue;

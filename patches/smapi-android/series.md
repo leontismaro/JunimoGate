@@ -1,7 +1,10 @@
 # JunimoGate Android SMAPI patch series
 
-Baseline: Android SMAPI 4.3.2.5 at
-`6a34bbeb6e891536cdd948594094482ba0d8d264`.
+Baseline: upstream SMAPI 4.5.2 at
+`821167e5c511bf3a2d98f604e5e838561c469219`.
+
+Android compatibility lineage: SMAPI-Android-1.6 at
+`6a34bbeb6e891536cdd948594094482ba0d8d264` (`4.3.2.5`).
 
 1. `build-boundary/v1`
    - build as a JunimoGate-owned library project;
@@ -26,5 +29,10 @@ Baseline: Android SMAPI 4.3.2.5 at
    - disable the mobile console listener by default and block instead of polling when enabled;
    - skip state watcher and render-event work while no Mod subscribes to the corresponding events;
    - remove the fork branding overlay and keep optional OGG workers at normal background priority.
+6. `upstream-4.5.2/v1`
+   - adopt upstream input, content, Mod metadata, config-menu, and malicious loose-file checks;
+   - retain the Android host, main-thread, content, Mod-loading, logging, and idle-runtime patches;
+   - avoid console color auto-detection when the platform has no color-capable console;
+   - express newer property backing fields using syntax supported by the pinned .NET 9 toolchain.
 
 This file records patch intent. Git history remains the authoritative source diff.

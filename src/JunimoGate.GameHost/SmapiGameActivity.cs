@@ -58,7 +58,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             GameHostBridge.Attach(this, snapshot);
             _ = loader.LoadGameAssembly();
             GameSessionRegistry.MarkActive(this);
-            Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameLaunchSchema.BuildId}:smapi=4.3.2.5");
+            Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameLaunchSchema.BuildId}:smapi=4.5.2");
             CreateAndRunSession(snapshot, loader);
         }
         catch (Exception ex)
@@ -85,7 +85,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             MainThread = new ActivityDispatcher(this),
             AssemblyLoader = assemblyLoader,
             AttachGameView = view => RunOnUiThread(() => SetContentView(view)),
-            ReportFailure = failure => Log.Error("JunimoGate.SMAPI", $"{failure.Code}:{failure.Exception?.GetType().Name ?? "none"}"),
+            ReportFailure = failure => Log.Error("JunimoGate.SMAPI", $"{failure.Code}:{failure.Exception?.ToString() ?? failure.Message}"),
         });
         session = runtime.CreateSession();
         session.Run();

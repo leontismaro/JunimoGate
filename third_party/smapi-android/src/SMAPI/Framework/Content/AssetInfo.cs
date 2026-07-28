@@ -12,7 +12,7 @@ internal class AssetInfo : IAssetInfo
     /// <summary>Normalizes an asset key to match the cache key.</summary>
     protected readonly Func<string, string> GetNormalizedPath;
 
-    /// <summary>The backing field for <see cref="NameWithoutLocale"/>.</summary>
+    /// <summary>The cached base asset name.</summary>
     private IAssetName? NameWithoutLocaleImpl;
 
 

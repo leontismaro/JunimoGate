@@ -47,6 +47,12 @@ internal class InputHelper : BaseHelper, IInputHelper
     }
 
     /// <inheritdoc />
+    public void Press(SButton button)
+    {
+        this.CurrentInputState().OverrideButton(button, setDown: true);
+    }
+
+    /// <inheritdoc />
     public void Suppress(SButton button)
     {
         this.CurrentInputState().OverrideButton(button, setDown: false);

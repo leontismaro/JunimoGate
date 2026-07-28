@@ -3,7 +3,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <AssemblyName>StardewModdingAPI.Toolkit</AssemblyName>
     <RootNamespace>StardewModdingAPI.Toolkit</RootNamespace>
-    <Version>4.3.2</Version>
+    <Version>4.5.2</Version>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsTrimmable>false</IsTrimmable>
     <ImplicitUsings>disable</ImplicitUsings>
