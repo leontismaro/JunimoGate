@@ -18,7 +18,11 @@ internal class SConfig
         [nameof(CheckForUpdates)] = true,
         [nameof(CheckForBlacklistUpdates)] = true,
         [nameof(CheckContentIntegrity)] = true,
+#if SMAPI_FOR_ANDROID
+        [nameof(ListenForConsoleInput)] = false,
+#else
         [nameof(ListenForConsoleInput)] = true,
+#endif
         [nameof(ParanoidWarnings)] = Constants.IsDebugBuild,
         [nameof(UseBetaChannel)] = Constants.ApiVersion.IsPrerelease(),
         [nameof(GitHubProjectName)] = "Pathoschild/SMAPI",

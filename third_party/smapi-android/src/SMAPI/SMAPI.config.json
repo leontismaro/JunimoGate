@@ -54,7 +54,7 @@ in future SMAPI versions.
      * Whether SMAPI should listen for console input. Disabling this will prevent you from using
      * console commands. On some specific Linux systems, disabling this may reduce CPU usage.
      */
-    "ListenForConsoleInput": true,
+    "ListenForConsoleInput": false,
 
     /**
      * Whether SMAPI should rewrite mods for compatibility. This may prevent older mods from
