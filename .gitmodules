@@ -1,0 +1,3 @@
+[submodule "smapi"]
+	path = smapi
+	url = https://github.com/leontismaro/JunimoGate-SMAPI.git

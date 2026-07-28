@@ -6,9 +6,10 @@
     <RootNamespace>JunimoGate.SmapiSmokeMod</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <JunimoGateRequiresSmapi>true</JunimoGateRequiresSmapi>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../third_party/smapi-android/src/SMAPI/SMAPI.csproj" />
+    <ProjectReference Include="../../smapi/src/SMAPI/SMAPI.csproj" />
     <Reference Include="StardewValley"><HintPath>$(JunimoGateGameReferenceDir)/StardewValley.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
   <Target Name="PublishSmokeMod" AfterTargets="Build">

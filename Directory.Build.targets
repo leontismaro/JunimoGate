@@ -1,0 +1,8 @@
+<Project>
+  <Target Name="ValidateJunimoGateSmapiSubmodule"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(JunimoGateRequiresSmapi)' == 'true'">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)smapi/src/SMAPI/SMAPI.csproj')"
+           Text="The SMAPI submodule is not initialized. Run 'git submodule update --init --recursive' from the JunimoGate repository root." />
+  </Target>
+</Project>

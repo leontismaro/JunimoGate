@@ -17,6 +17,7 @@
     <RunAOTCompilation>false</RunAOTCompilation>
     <AndroidUseAssemblyStore>false</AndroidUseAssemblyStore>
     <AndroidEnableAssemblyCompression>false</AndroidEnableAssemblyCompression>
+    <JunimoGateRequiresSmapi>true</JunimoGateRequiresSmapi>
     <!-- Dynamically loaded game assemblies reference framework/Android APIs invisible to the trimmer. -->
     <PublishTrimmed Condition="'$(Configuration)' == 'Release'">false</PublishTrimmed>
   </PropertyGroup>
@@ -24,11 +25,11 @@
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
     <ProjectReference Include="../JunimoGate.GameHost/JunimoGate.GameHost.csproj" />
-    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI/bin/$(Configuration)/net9.0-android35.0/StardewModdingAPI.dll"
+    <AndroidAsset Include="../../smapi/src/SMAPI/bin/$(Configuration)/net9.0-android35.0/StardewModdingAPI.dll"
                   Link="smapi-managed/StardewModdingAPI.dll" />
-    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI.Toolkit/bin/$(Configuration)/net9.0/StardewModdingAPI.Toolkit.dll"
+    <AndroidAsset Include="../../smapi/src/SMAPI.Toolkit/bin/$(Configuration)/net9.0/StardewModdingAPI.Toolkit.dll"
                   Link="smapi-managed/StardewModdingAPI.Toolkit.dll" />
-    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI.Toolkit.CoreInterfaces/bin/$(Configuration)/net9.0/StardewModdingAPI.Toolkit.CoreInterfaces.dll"
+    <AndroidAsset Include="../../smapi/src/SMAPI.Toolkit.CoreInterfaces/bin/$(Configuration)/net9.0/StardewModdingAPI.Toolkit.CoreInterfaces.dll"
                   Link="smapi-managed/StardewModdingAPI.Toolkit.CoreInterfaces.dll" />
     <TrimmerRootDescriptor Include="linker.xml"
                            Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' == 'true'" />

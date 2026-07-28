@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net9.0-android35.0</TargetFramework>
     <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <JunimoGateRequiresSmapi>true</JunimoGateRequiresSmapi>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.11" />
@@ -10,19 +11,19 @@
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Extraction/JunimoGate.Extraction.csproj" />
     <ProjectReference Include="../JunimoGate.Rewriter/JunimoGate.Rewriter.csproj" />
-    <ProjectReference Include="../../third_party/smapi-android/src/SMAPI/SMAPI.csproj" />
+    <ProjectReference Include="../../smapi/src/SMAPI/SMAPI.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI/SMAPI.config.json">
+    <AndroidAsset Include="../../smapi/src/SMAPI/SMAPI.config.json">
       <Link>smapi-internal/config.json</Link>
     </AndroidAsset>
-    <AndroidAsset Include="../../third_party/smapi-android/resources/metadata.json">
+    <AndroidAsset Include="../../smapi/resources/metadata.json">
       <Link>smapi-internal/metadata.json</Link>
     </AndroidAsset>
-    <AndroidAsset Include="../../third_party/smapi-android/resources/blacklist.json">
+    <AndroidAsset Include="../../smapi/resources/blacklist.json">
       <Link>smapi-internal/blacklist.json</Link>
     </AndroidAsset>
-    <AndroidAsset Include="../../third_party/smapi-android/src/SMAPI/i18n/*.json">
+    <AndroidAsset Include="../../smapi/src/SMAPI/i18n/*.json">
       <Link>smapi-internal/i18n/%(Filename)%(Extension)</Link>
     </AndroidAsset>
   </ItemGroup>
