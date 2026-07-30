@@ -6,8 +6,8 @@ using Mono.Cecil;
 namespace JunimoGate.Rewriter;
 
 /// <summary>
-/// Resolves only managed assemblies named by one fresh execution plan. Every dependency is rechecked
-/// against the plan-owned size and SHA-256 immediately before Cecil reads it.
+/// Resolves only managed assemblies named by one fresh execution plan. Each dependency is checked
+/// against the plan-owned size and SHA-256 once, then reused by full assembly identity.
 /// </summary>
 internal sealed class ValidatedExecutionPlanAssemblyResolver : IAssemblyResolver
 {
@@ -71,12 +71,12 @@ internal sealed class ValidatedExecutionPlanAssemblyResolver : IAssemblyResolver
             throw new AssemblyResolutionException(name);
         }
 
-        var bytes = ReadValidatedBytes(payload);
         if (cache.TryGetValue(name.FullName, out var cached))
         {
             return cached;
         }
 
+        var bytes = ReadValidatedBytes(payload);
         var stream = new MemoryStream(bytes, writable: false);
         AssemblyDefinition assembly;
         try

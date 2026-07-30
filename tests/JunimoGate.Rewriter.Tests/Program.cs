@@ -66,6 +66,8 @@ try
             AppliedWorkspacePreparationTests.BuiltThenCacheHit(root)),
         ("Applied cache rejects a null mutation before ordering", () =>
             AppliedWorkspacePreparationTests.NullMutationIsRejectedBeforeOrdering(root)),
+        ("Cecil resolver checks its identity cache before reading the dependency again", () =>
+            ValidatedExecutionPlanAssemblyResolverTests.CachePrecedesFileValidation(root)),
         ("Applied activation rejects a package identity race", () =>
             AppliedWorkspacePreparationTests.LiveIdentityRaceRejectsActivation(root)),
         ("Applied preparation rejects source manifest drift before rewrite", () =>
