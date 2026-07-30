@@ -5,14 +5,14 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 ## GameHost compatibility
 
 
-产品兼容单位是语义 recipe family。分析器应检查：
+产品兼容单位是 `stardew-android-mainactivity-bridge/v1`。当前分析器检查：
 
 - 目标 type/member signature；
 - 局部 IL consumer pattern；
 - stack、参数和返回类型；
 - Activity/permission/storage/save/display bridge 能力；
-- licensing use 分类与保持不变；
-- 改写后 references、bridge calls 和 remaining unclassified uses。
+- 改写目标集合不包含 licensing callbacks。M5-PoC 已确认当前规则不会把这些方法作为改写目标，也不会修改它们，后续兼容分析不再扫描、hash、分类或重复验证它们；只有未来新增明确触及该区域的改写规则时才重新评估；
+- 改写后只检查本次目标及其直接依赖、宿主桥接调用和未完成的目标替换，不把检查范围扩张到 licensing callbacks。
 
 以下变化本身不应导致“不支持”：
 
@@ -23,11 +23,14 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 - native binary hash 改变但所需 ABI/API 仍兼容；
 - 未命中已知 exact fingerprint。
 
-未知构建应先运行一次语义兼容分析。只有真正无法分类的结构变化才进入 `Unsupported`/`Needs adaptation`，并输出最小差异报告。
+未知构建在 Deep Prepare 的 applied cache 未命中后直接运行一次局部兼容分析；全部规则通过则自动改写并缓存。只有目标签名、唯一局部来源、类型/stack 或 postcondition 失败时才进入 `Unsupported`。
+
 
 ## Launch compatibility
 
-正常启动使用 Fast Launch，不重复运行 APK/workspace 全量 hash、metadata/native probe 或 Cecil rewrite。轻量链已经单次化为 Launcher snapshot 一次、点击时 PackageManager 一次、descriptor snapshot 零次、`:game` snapshot 一次、SMAPI 前 runtime inventory 一次；后续 load/open 不再额外校验。完整 Deep Prepare 只在首次导入、游戏更新、schema 变化、明确损坏、手动修复或显式验收时执行。
+正常启动使用 Fast Launch，不重复运行 APK/workspace 全量 hash、metadata/native probe 或 Cecil rewrite。轻量链已经单次化为 Launcher snapshot 一次、点击时 PackageManager 一次、descriptor snapshot 零次、`:game` snapshot 一次、SMAPI 前 runtime inventory 一次；后续 load/open 不再额外校验。完整 Deep Prepare 只在首次导入、游戏更新、schema 变化、自动恢复检测到明确损坏或显式验收时执行。
+
+2026-07-30 已真机执行 237 -> 239 -> 245 的版本更新链。每次点击都先检测 `PackageChanged`，随后只执行一次 Deep Prepare，新建 source/applied workspace、运行一次局部兼容分析和一次 rewrite，并在同一次点击继续启动；下一次启动恢复 Fast Launch。新版本达到 Running 后，Launcher 自动删除上一版 source/applied cache，最终私有目录只保留一套 active workspace 和一份 snapshot。
 
 ## SMAPI and Mod compatibility
 

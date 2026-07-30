@@ -12,9 +12,9 @@ The host filter, synthetic extraction tests, read-only game inspector, and platf
 ./build/test-host.sh
 ```
 
-The full host suite currently passes 130/130 tests: Core 13, Extraction 55, Rewriter 51, Mods 6, and RuntimeProbe 5. One of the five RuntimeProbe host tests executes and reports all ten hard cases on CoreCLR; those ten case results are not ten additional host-suite tests. The actual Android runtime decision comes from the physical-device reports described below.
+The full host suite currently passes 93/93 tests: Core 17, Extraction 56, Rewriter 9, Mods 6, and RuntimeProbe 5. Rewriter coverage now targets the product semantic rules and applied-cache transaction instead of the removed exact probes/catalog. One of the five RuntimeProbe host tests executes and reports all ten hard cases on CoreCLR; those ten case results are not ten additional host-suite tests. The actual Android runtime decision comes from the physical-device reports described below.
 
-The inspector identifies APK roles by ZIP contents rather than split filenames. It can inventory AssemblyStore v2 entries, extract managed assembly images supplied by the user, and inspect .NET metadata without decompiling source or extracting `assets/Content/`:
+The inspector identifies APK roles by ZIP contents rather than split filenames. It can inventory and extract both legacy AssemblyStore v1 (`assemblies/*.blob`) and modern ELF-wrapped AssemblyStore v2 images supplied by the user, and inspect .NET metadata without decompiling source or extracting `assets/Content/`:
 
 ```bash
 # JSON inventory goes to stdout.
@@ -50,6 +50,9 @@ M4's extraction and atomic-workspace capability is complete for the tested Play 
 
 The PoC used exact recipe `play-1.6.15.3-gamehost-bridge@1`, complete-method hashes, fixed global counts, repeated trust validation and a three-file applied workspace. Those mechanisms are retained only as golden evidence for the tested build. They are not the product compatibility model and must not be extended version-by-version.
 
+The M5-PoC also already established that the rewrite target set contains no licensing callbacks and that repository test assemblies contain no commercial game code. Future compatibility and launch work must not add repeated licensing-method scans, hashes, reports, gates, or duplicate synthetic proof assemblies unless a new rewrite explicitly expands into that code area.
+
+
 
 ```bash
 git clone --recurse-submodules https://github.com/leontismaro/JunimoGate.git
@@ -79,9 +82,6 @@ JUNIMOGATE_PROXY_URL=http://127.0.0.1:10808 ./build/build-monogame-android.sh
 # report v2 metrics/progress, state, redaction, and App-PID logcat.
 ./build/verify-game-workspace.sh
 
-# Requires the tested Play installation on one ARM64 device. Runs the metadata-only
-# Gate 0 probe twice, independently recomputes evidence keys, and copies only redacted JSON.
-./build/verify-gamehost-probe.sh
 ```
 
 ## Boundaries

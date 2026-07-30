@@ -1,6 +1,5 @@
 # Startup chain
 
-> 当前产品入口是已实现的 Launch Alpha：首次/更新时 Deep Prepare，正常打开时 Fast Launch，用户点击后进入独立的 SMAPI 游戏进程。固定版本的 M5-PoC exact rewrite 仍只作为当前 1.6.15.3 基线，不得扩展为逐版本白名单。
 
 ## 1. 当前已验证链：M5-PoC
 
@@ -37,7 +36,7 @@ MainActivity / LauncherCoordinator
   -> 读取 active prepared snapshot
   -> 只验证 snapshot envelope，不读取 PackageManager，不遍历程序集/Content
   -> 有效：保留 PreparedGameHandle 并显示 Ready
-  -> 缺失/失效：一个事务内完成 discovery / extraction / exact compatibility / rewrite（Deep Prepare）
+  -> 缺失/失效：一个事务内完成 discovery / extraction / local semantic compatibility / rewrite（Deep Prepare）
   -> Ready，等待用户点击 Launch game
   -> 复用状态在点击时读取一次 PackageManager marker
   -> 更新则完成一次 Deep Prepare 并自动继续同一次启动请求
@@ -48,7 +47,7 @@ MainActivity / LauncherCoordinator
   -> 一次性建立并验证 PreparedRuntimeFiles inventory
   -> 注册统一程序集解析
   -> 在 Default AssemblyLoadContext 加载提取的游戏程序集
-  -> 安装 GameHostBridge / ContentBridge / audio bridge
+  -> 安装 GameHostBridge / SmapiContentBridge
   -> new SmapiRuntime(options)
   -> SmapiSession.Start()
   -> SCore
@@ -61,8 +60,12 @@ MainActivity / LauncherCoordinator
   -> 游戏
 ```
 
+若 `:game` 在进入 Running 前失败，Launcher 会读取一次持久化结果并自动继续：请求或 bundle 失败先做局部恢复；仍失败时删除本次可重建 runtime cache，完整 Deep Prepare 后再启动一次；第二级仍失败才停止。整个流程不要求用户理解或选择 snapshot/workspace，也不删除 Mods、配置、日志、备份、实时存档或原游戏。新版本首次 Running 确认前只保留一个旧 cache 作为回退，确认后自动淘汰；游戏进程存活时不运行淘汰。
 
-当前 Deep Prepare 的冷构建预算仍是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；managed probe、native inventory、recipe evaluation、rewrite 各 1 次。正常复用启动已经达到：Launcher snapshot 读取 1 次、PackageManager snapshot 1 次、descriptor snapshot 读取 0 次、`:game` snapshot 读取 1 次、runtime inventory 1 次；所有 APK/workspace hash、probe 和 rewrite 均为 0。2026-07-27 真机 inventory 覆盖 65 个程序集和 3556 个 Content 文件，耗时 102ms。runtime inventory 只读取文件元数据，不读取或 hash Content 内容，并且后续每次 Content 打开或程序集加载不再重复校验。
+JunimoGate 自身日志与 SMAPI/Mod 日志分开。Launcher 和 `:game` 分别写 app-private `product-logs/launcher-{current,previous}.jsonl` 与 `product-logs/game-{current,previous}.jsonl`，同时保留原有 logcat 输出。每个文件最多 512 KiB，每个进程只保留当前和前一次两份；日志写入失败不得改变启动结果。记录范围限于进程/build identity、启动状态、Deep Prepare 结果、轻量包检查、descriptor 交接、runtime inventory、恢复/淘汰动作、错误码和异常栈，不记录每帧、每次程序集加载或 Content 打开。一次性 descriptor 只记录前 8 位关联 ID，不把完整能力令牌写入日志。当前不提供查看、导出或上传界面。
+
+
+当前 Deep Prepare 的冷构建预算是：PackageManager snapshot 2 次；每个 APK 打开 1 次、完整 SHA-256 1 次；新写 source workspace payload 全量重读 0 次；旧 managed probe、native inventory 和 catalog evaluation 均为 0；applied cache 未命中时局部兼容分析与 rewrite 各 1 次，命中时均为 0。正常复用启动已经达到：Launcher snapshot 读取 1 次、PackageManager snapshot 1 次、descriptor snapshot 读取 0 次、`:game` snapshot 读取 1 次、runtime inventory 1 次；所有 APK/workspace hash、probe 和 rewrite 均为 0。2026-07-27 真机 inventory 覆盖 65 个程序集和 3556 个 Content 文件，耗时 102ms。runtime inventory 只读取文件元数据，不读取或 hash Content 内容，并且后续每次 Content 打开或程序集加载不再重复校验。
 
 产品路径不使用：
 
@@ -80,18 +83,19 @@ MainActivity / LauncherCoordinator
 - 选择 active workspace/Profile；
 - 创建 `GameLaunchDescriptor`；
 - 启动 `SmapiGameActivity`；
-- 当前展示准备/不支持/失败的最小状态；SMAPI/Mod 日志产品界面后置。
+- 当前展示准备/不支持/失败的最小状态；JunimoGate 日志已持久化，查看/导出界面和 SMAPI/Mod 日志界面后置。
 
 ### `JunimoGate.Android`
 
 - PackageManager 游戏发现；
 - app-private storage；
+- 有界、分进程的 JunimoGate 产品日志；
 - Android Activity、进程和路径边界；
 - 首次导入或实际更新时进入 workspace 准备。
 
 ### `JunimoGate.Extraction` / `JunimoGate.Rewriter`
 
-- 复用现有 Play 1.6.15.3 source/applied workspace；
+- 生成 source workspace，并用局部结构规则构建或复用 applied workspace；
 - 不为 SMAPI 新增 support key、probe、完整方法 SHA 或重复全量验证；
 - 首次/更新 Deep Prepare 与正常 Fast Launch 已分开；同一 Deep Prepare 复用一个 APK session。
 
@@ -172,8 +176,9 @@ workspace、程序集改写结果、SMAPI internal 和 Mod rewrite cache 位于 
 8. 增加最小 Mods 导入、列表、启停和日志
 ```
 
+snapshot 自动失效、package update marker、session router、Fast Launch 单次检查链和跨版本局部结构规则已完成。2026-07-30 真机执行 237 -> 239 -> 245 更新链：点击会拒绝旧 snapshot、自动 Deep Prepare，新建 source/applied workspace 后启动；下一次启动恢复 Fast Launch，并在新版本 Running 后删除上一版缓存。
 
-当前真机范围是 Play 1.6.15.3/versionCode 245、ARM64、ARM64 test device、Android 16/API36。正常 Fast Launch 不执行 APK/workspace 全量 hash、metadata/native probe、Cecil workspace rewrite 或 applied workspace 重建；只有首次导入、检测到游戏更新、workspace 缺失/损坏或显式修复才进入 Deep Prepare。默认 Profile 当前保持零 Mod，Smoke Mod 仅作为可重复验收 fixture 存放在 `disabled`。
+
 
 ## 7. 保留边界
 
@@ -182,7 +187,7 @@ workspace、程序集改写结果、SMAPI internal 和 Mod rewrite cache 位于 
 - source workspace 与 rewritten overlay 分离；
 - staging 后原子提交；
 - 调用方不能提供任意 workspace/assembly/Content 路径；
-- licensing callbacks 不修改；
+- licensing callbacks 不属于改写目标；这一点已由 M5-PoC 验证，后续启动和兼容流程不再扫描、hash 或重复验证这些方法；
 - 使用 stock .NET Android Mono、JIT、no interpreter、no game AOT/runtime copy；
 - 保留 `StardewModdingAPI` 程序集身份和 LGPL 源码/notice 义务；
 - 不复制 GPLv3 SMAPILoader 实现。

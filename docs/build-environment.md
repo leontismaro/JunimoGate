@@ -86,7 +86,7 @@ The script prefers the project-local .NET SDK when present, builds `JunimoGate.H
 
 RuntimeProbe host tests run the same ten hard cases on CoreCLR. Passing them verifies the probe implementation; the Android compatibility decision is based on the physical-device reports in [`runtime-probe-result.md`](runtime-probe-result.md).
 
-Extraction tests use synthetic ELF64, AssemblyStore v2, APK ZIP, MZ, and XALZ fixtures only; no game material is present.
+Extraction tests use synthetic legacy AssemblyStore v1, ELF64-wrapped AssemblyStore v2, APK ZIP, MZ, and XALZ fixtures only; no game material is present.
 
 ## Patched Harmony and cache helper
 
@@ -174,7 +174,7 @@ dotnet run --project tools/JunimoGate.GameInspector -- extract-assemblies /tmp/j
 dotnet run --project tools/JunimoGate.GameInspector -- inspect-assemblies /tmp/junimogate-inspector-check
 ```
 
-`inventory` reports APK SHA-256/size, content-derived roles, AssemblyStore entries, and runtime native libraries. `extract-assemblies` reads only matching `lib/<abi>/libassemblies.<abi>.blob.so` entries and refuses unsafe/duplicate names and overwrites. `inspect-assemblies` reads metadata identities, target frameworks, assembly/module references, and P/Invoke declarations; it does not decompile method bodies or source.
+`inventory` reports APK SHA-256/size, content-derived roles, legacy v1 or modern v2 AssemblyStore entries, and runtime native libraries. `extract-assemblies` reads either the exact legacy `assemblies/assemblies.blob` + selected-ABI blob + manifest set, or matching modern `lib/<abi>/libassemblies.<abi>.blob.so` entries. Both paths refuse malformed bounds, unsafe/duplicate names, and overwrites. `inspect-assemblies` reads metadata identities, target frameworks, assembly/module references, and P/Invoke declarations; it does not decompile method bodies or source.
 
 Never write or copy APKs, game assets, DLLs, native libraries, decompiled source, or generated manifests into tracked repository paths. Use `/tmp`, ignored `artifacts/` or `local-game/`, or—when explicitly permitted—`../Stardew Valley_1.6.15.3/analysis/`.
 

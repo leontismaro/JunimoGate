@@ -4,7 +4,7 @@ JunimoGate's project-wide license has not yet been selected. The notices below a
 
 ## .NET for Android AssemblyStore format reference
 
-The AssemblyStore v2 format semantics and naming used by `src/JunimoGate.Extraction/AssemblyStoreV2.cs` were adapted from the official `dotnet/android` `assembly-store-reader-mk2` source:
+The AssemblyStore v1/v2 format semantics and naming used by `src/JunimoGate.Extraction/LegacyAssemblyStoreV1.cs` and `src/JunimoGate.Extraction/AssemblyStoreV2.cs` were adapted from the official `dotnet/android` `assembly-store-reader-mk2` source:
 
 - repository: <https://github.com/dotnet/android>
 - baseline commit: `1361e50584b56e690e2b8b5f6db6a04a1d2b7b38`
