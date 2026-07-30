@@ -62,7 +62,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             stage = GameStartupStage.RuntimeInventory;
             var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot);
             stage = GameStartupStage.LoaderInstallation;
-            loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles);
+            loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles, launch.ModsDirectory);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
@@ -72,7 +72,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             stage = GameStartupStage.SmapiSession;
             var startupCompletion = new TaskCompletionSource<SmapiFailure?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
-            CreateAndRunSession(snapshot, loader, startupCompletion);
+            CreateAndRunSession(snapshot, launch, loader, startupCompletion);
             var reportedFailure = await startupCompletion.Task;
             if (reportedFailure is not null)
             {
@@ -126,6 +126,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void CreateAndRunSession(
         PreparedGameSnapshot snapshot,
+        ConsumedGameLaunch launch,
         SmapiDefaultAssemblyLoader assemblyLoader,
         TaskCompletionSource<SmapiFailure?> startupCompletion)
     {
@@ -134,7 +135,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             Activity = this,
             GameAssemblyDirectory = snapshot.SourceWorkspacePath,
             ContentDirectory = Path.Combine(snapshot.SourceWorkspacePath, "Content"),
-            ModsDirectory = snapshot.ModsDirectory,
+            ModsDirectory = launch.ModsDirectory,
             InternalDirectory = snapshot.InternalDirectory,
             ConfigDirectory = snapshot.ConfigDirectory,
             LogDirectory = snapshot.LogDirectory,
@@ -142,6 +143,13 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             BackupDirectory = snapshot.BackupDirectory,
             MainThread = new ActivityDispatcher(this),
             AssemblyLoader = assemblyLoader,
+            AssemblyBindingPolicy = launch.Profile.AssemblyBindingPolicy switch
+            {
+                JunimoGate.Mods.ModAssemblyBindingPolicy.Strict => StardewModdingAPI.AndroidHost.ModAssemblyBindingPolicy.Strict,
+                JunimoGate.Mods.ModAssemblyBindingPolicy.FirstLoaded => StardewModdingAPI.AndroidHost.ModAssemblyBindingPolicy.FirstLoaded,
+                JunimoGate.Mods.ModAssemblyBindingPolicy.HighestCompatible => StardewModdingAPI.AndroidHost.ModAssemblyBindingPolicy.HighestCompatible,
+                _ => throw new InvalidDataException("The launch Profile binding policy is invalid."),
+            },
             AttachGameView = view => RunOnUiThread(() => SetContentView(view)),
             ReportModLoadingReady = () =>
             {

@@ -7,6 +7,7 @@ using Android.Util;
 using Android.Views;
 using Android.Widget;
 using JunimoGate.GameHost;
+using JunimoGate.Mods;
 using Log = JunimoGate.Android.JunimoGateLog;
 using OperationCanceledException = System.OperationCanceledException;
 
@@ -25,6 +26,8 @@ public sealed class MainActivity : Activity
     private TextView? statusText;
     private ProgressBar? progressBar;
     private Button? launchButton;
+    private Spinner? bindingPolicySpinner;
+    private bool syncingBindingPolicy;
     private bool returningFromGame;
     private bool destroyed;
 
@@ -58,6 +61,20 @@ public sealed class MainActivity : Activity
         };
         launchButton.Click += OnLaunchClicked;
 
+        var bindingPolicyLabel = new TextView(this)
+        {
+            Text = "Mod dependency policy",
+            TextSize = 14,
+        };
+        bindingPolicySpinner = new Spinner(this) { Enabled = false };
+        var bindingPolicyAdapter = new ArrayAdapter<string>(
+            this,
+            global::Android.Resource.Layout.SimpleSpinnerItem,
+            ["Highest compatible", "Strict", "First loaded"]);
+        bindingPolicyAdapter.SetDropDownViewResource(global::Android.Resource.Layout.SimpleSpinnerDropDownItem);
+        bindingPolicySpinner.Adapter = bindingPolicyAdapter;
+        bindingPolicySpinner.ItemSelected += OnBindingPolicySelected;
+
         var layout = new LinearLayout(this)
         {
             Orientation = Orientation.Vertical,
@@ -70,6 +87,12 @@ public sealed class MainActivity : Activity
             1));
         layout.AddView(progressBar, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WrapContent,
+            ViewGroup.LayoutParams.WrapContent));
+        layout.AddView(bindingPolicyLabel, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MatchParent,
+            ViewGroup.LayoutParams.WrapContent));
+        layout.AddView(bindingPolicySpinner, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MatchParent,
             ViewGroup.LayoutParams.WrapContent));
         layout.AddView(launchButton, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MatchParent,
@@ -108,6 +131,8 @@ public sealed class MainActivity : Activity
         destroyed = true;
         if (launchButton is not null)
             launchButton.Click -= OnLaunchClicked;
+        if (bindingPolicySpinner is not null)
+            bindingPolicySpinner.ItemSelected -= OnBindingPolicySelected;
         if (coordinator is not null)
         {
             coordinator.StateChanged -= OnLauncherStateChanged;
@@ -125,6 +150,7 @@ public sealed class MainActivity : Activity
         statusText = null;
         progressBar = null;
         launchButton = null;
+        bindingPolicySpinner = null;
         base.OnDestroy();
     }
 
@@ -207,7 +233,50 @@ public sealed class MainActivity : Activity
                 progressBar.Visibility = state.ShowProgress ? ViewStates.Visible : ViewStates.Gone;
             if (launchButton is not null)
                 launchButton.Enabled = state.CanLaunch;
+            if (bindingPolicySpinner is not null)
+            {
+                syncingBindingPolicy = true;
+                bindingPolicySpinner.SetSelection(state.AssemblyBindingPolicy switch
+                {
+                    ModAssemblyBindingPolicy.HighestCompatible => 0,
+                    ModAssemblyBindingPolicy.Strict => 1,
+                    ModAssemblyBindingPolicy.FirstLoaded => 2,
+                    _ => 0,
+                });
+                bindingPolicySpinner.Enabled = state.CanConfigureProfile;
+                syncingBindingPolicy = false;
+            }
         });
+    }
+
+    private async void OnBindingPolicySelected(object? sender, AdapterView.ItemSelectedEventArgs eventArgs)
+    {
+        if (syncingBindingPolicy || destroyed || coordinator is null ||
+            lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
+        {
+            return;
+        }
+
+        var policy = eventArgs.Position switch
+        {
+            0 => ModAssemblyBindingPolicy.HighestCompatible,
+            1 => ModAssemblyBindingPolicy.Strict,
+            2 => ModAssemblyBindingPolicy.FirstLoaded,
+            _ => throw new InvalidOperationException("The selected Mod dependency policy is invalid."),
+        };
+        try
+        {
+            await coordinator.UpdateBindingPolicyAsync(policy, cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Activity destruction cancels pending Profile writes.
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Launcher", "profile-policy-update-failed", exception);
+            _ = InitializeAsync(cancellation.Token);
+        }
     }
 
     private bool TryRouteToActiveGame()

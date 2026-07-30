@@ -6,6 +6,7 @@ using Android.Util;
 using JunimoGate.Android;
 using JunimoGate.Core;
 using JunimoGate.Extraction;
+using JunimoGate.Mods;
 using JunimoGate.Rewriter;
 using Log = JunimoGate.Android.JunimoGateLog;
 
@@ -13,11 +14,11 @@ namespace JunimoGate.GameHost;
 
 public static class GameLaunchSchema
 {
-    public const string Snapshot = "junimogate-prepared-game-snapshot/v6";
-    public const string Descriptor = "junimogate-game-launch-descriptor/v3";
+    public const string Snapshot = "junimogate-prepared-game-snapshot/v7";
+    public const string Descriptor = "junimogate-game-launch-descriptor/v4";
     public const string Activation = "junimogate-game-activation/v1";
     public const string Outcome = "junimogate-game-launch-outcome/v1";
-    public const string BuildId = "smapi-4.5.2-junimogate.11";
+    public const string BuildId = "smapi-4.5.2-junimogate.13";
 }
 
 public sealed record PreparedManagedAssembly(string SimpleName, string RelativePath, long Size);
@@ -39,7 +40,6 @@ public sealed record PreparedGameSnapshot(
     string AppliedWorkspacePath,
     string OverlayAssemblyPath,
     long OverlayAssemblySize,
-    string ModsDirectory,
     string InternalDirectory,
     string ConfigDirectory,
     string LogDirectory,
@@ -84,7 +84,7 @@ public sealed record PreparedGameSnapshot(
                 throw new InvalidDataException("A prepared game snapshot path is not host-owned.");
         }
 
-        foreach (var path in new[] { ModsDirectory, ConfigDirectory, LogDirectory, BackupDirectory })
+        foreach (var path in new[] { ConfigDirectory, LogDirectory, BackupDirectory })
         {
             if (!Path.IsPathFullyQualified(path) || !IsContained(path, userDataRoot))
                 throw new InvalidDataException("A prepared SMAPI user-data path is not host-owned.");
@@ -166,7 +166,31 @@ public sealed record GameLaunchDescriptor(
     string SnapshotId,
     string CapabilityKey,
     int RecoveryLevel,
+    ProfileLaunchSelection Profile,
     DateTimeOffset IssuedAtUtc);
+
+public sealed record ProfileLaunchSelection(
+    string ProfileId,
+    long Revision,
+    ModAssemblyBindingPolicy AssemblyBindingPolicy)
+{
+    public ProfileId Validate()
+    {
+        if (!JunimoGate.Mods.ProfileId.TryParse(ProfileId, out var id) || Revision < 1 ||
+            !Enum.IsDefined(AssemblyBindingPolicy))
+        {
+            throw new InvalidDataException("The launch Profile selection is malformed.");
+        }
+        return id;
+    }
+
+    public static ProfileLaunchSelection From(ModProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        _ = profile.Validate();
+        return new ProfileLaunchSelection(profile.Id, profile.Revision, profile.AssemblyBindingPolicy);
+    }
+}
 
 public sealed record GameLaunchHandle(string Key);
 
@@ -191,13 +215,16 @@ public sealed record ConsumedGameLaunch(
     string AttemptId,
     string SnapshotId,
     int RecoveryLevel,
-    PreparedGameSnapshot Snapshot);
+    PreparedGameSnapshot Snapshot,
+    ProfileLaunchSelection Profile,
+    string ModsDirectory);
 
 public sealed record PendingGameLaunchOutcome(
     string AttemptId,
     string SnapshotId,
     int RecoveryLevel,
     PreparedGameSnapshot Snapshot,
+    ProfileLaunchSelection Profile,
     GameLaunchOutcomeStatus Status,
     GameStartupStage Stage,
     string Code);
@@ -207,6 +234,7 @@ public enum GameLaunchIssueStatus
     Issued,
     PackageChanged,
     ActiveSnapshotChanged,
+    ProfileChanged,
 }
 
 public sealed record GameLaunchIssueResult(GameLaunchIssueStatus Status, GameLaunchHandle? Launch)
@@ -468,7 +496,6 @@ public static class GameDeepPrepareCoordinator
             capability.AppliedExecutionPlan.AppliedWorkspacePath,
             capability.AppliedExecutionPlan.OverlayAssemblyPath,
             capability.AppliedExecutionPlan.OverlayAssemblySize,
-            Path.Combine(userDataRoot, "profiles", "default", "Mods", "enabled"),
             BundledSmapiAssets.GetInternalDirectory(runtimeRoot),
             Path.Combine(userDataRoot, "config"),
             Path.Combine(userDataRoot, "logs"),
@@ -479,8 +506,8 @@ public static class GameDeepPrepareCoordinator
             DateTimeOffset.UtcNow);
         foreach (var directory in new[]
                  {
-                     snapshot.ModsDirectory, snapshot.ConfigDirectory,
-                     snapshot.LogDirectory, snapshot.SaveDirectory, snapshot.BackupDirectory,
+                     snapshot.ConfigDirectory, snapshot.LogDirectory,
+                     snapshot.SaveDirectory, snapshot.BackupDirectory,
                  })
         {
             Directory.CreateDirectory(directory);
@@ -643,18 +670,23 @@ public static class GameLaunchRegistry
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,
+        ProfileLaunchSelection profile,
         CancellationToken cancellationToken) =>
-        await TryIssueLaunchAsync(context, preparedGame, recoveryLevel: 0, cancellationToken).ConfigureAwait(false);
+        await TryIssueLaunchAsync(context, preparedGame, profile, recoveryLevel: 0, cancellationToken).ConfigureAwait(false);
 
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,
+        ProfileLaunchSelection profile,
         int recoveryLevel,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(preparedGame);
+        ArgumentNullException.ThrowIfNull(profile);
         if (recoveryLevel is < 0 or > 2)
             throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
+        if (!await IsCurrentProfileAsync(context, profile, cancellationToken).ConfigureAwait(false))
+            return new GameLaunchIssueResult(GameLaunchIssueStatus.ProfileChanged, null);
         var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
         if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
             return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
@@ -671,6 +703,7 @@ public static class GameLaunchRegistry
             preparedGame.SnapshotId,
             key,
             recoveryLevel,
+            profile,
             DateTimeOffset.UtcNow);
         await WriteJsonAsync(Path.Combine(root, $"descriptor-{key}.json"), descriptor, cancellationToken)
             .ConfigureAwait(false);
@@ -686,7 +719,7 @@ public static class GameLaunchRegistry
 
             state = state with
             {
-                Pending = new PendingLaunchAttempt(key, preparedGame.SnapshotId, recoveryLevel, DateTimeOffset.UtcNow),
+                Pending = new PendingLaunchAttempt(key, preparedGame.SnapshotId, recoveryLevel, profile, DateTimeOffset.UtcNow),
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
@@ -729,7 +762,8 @@ public static class GameLaunchRegistry
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The launch request is invalid.");
             if (descriptor.Schema != GameLaunchSchema.Descriptor || descriptor.CapabilityKey != key ||
-                !IsSnapshotId(descriptor.SnapshotId) || descriptor.RecoveryLevel is < 0 or > 2)
+                !IsSnapshotId(descriptor.SnapshotId) || descriptor.RecoveryLevel is < 0 or > 2 ||
+                !await IsCurrentProfileAsync(context, descriptor.Profile, cancellationToken).ConfigureAwait(false))
             {
                 throw new InvalidDataException("The launch request is invalid.");
             }
@@ -741,6 +775,9 @@ public static class GameLaunchRegistry
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The prepared game snapshot is invalid.");
             snapshot.ValidateEnvelope(context);
+            var profileId = descriptor.Profile.Validate();
+            var profileLayout = new ProfileLayout(GetProfilesRoot(context), profileId);
+            Directory.CreateDirectory(profileLayout.EnabledDirectory);
             Log.Info(
                 "JunimoGate.LaunchTrace",
                 $"descriptor-consumed attempt={key[..8]} level={descriptor.RecoveryLevel} gameSnapshotReads=1");
@@ -748,7 +785,9 @@ public static class GameLaunchRegistry
                 key,
                 descriptor.SnapshotId,
                 descriptor.RecoveryLevel,
-                snapshot);
+                snapshot,
+                descriptor.Profile,
+                profileLayout.EnabledDirectory);
         }
         finally
         {
@@ -793,7 +832,7 @@ public static class GameLaunchRegistry
         if (pending is null)
             return null;
         if (!IsSnapshotId(pending.AttemptId) || !IsSnapshotId(pending.SnapshotId) ||
-            pending.RecoveryLevel is < 0 or > 2)
+            pending.RecoveryLevel is < 0 or > 2 || pending.Profile is null)
         {
             await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
             return null;
@@ -826,6 +865,7 @@ public static class GameLaunchRegistry
                 pending.SnapshotId,
                 pending.RecoveryLevel,
                 snapshot,
+                pending.Profile,
                 GameLaunchOutcomeStatus.Failed,
                 GameStartupStage.LaunchRequest,
                 "launch_interrupted");
@@ -849,6 +889,7 @@ public static class GameLaunchRegistry
                 pending.SnapshotId,
                 pending.RecoveryLevel,
                 snapshot,
+                pending.Profile,
                 outcome.Status,
                 outcome.Stage,
                 outcome.Code);
@@ -864,6 +905,7 @@ public static class GameLaunchRegistry
                 pending.SnapshotId,
                 pending.RecoveryLevel,
                 snapshot,
+                pending.Profile,
                 GameLaunchOutcomeStatus.Failed,
                 GameStartupStage.LaunchRequest,
                 "launch_outcome_invalid");
@@ -1261,10 +1303,45 @@ public static class GameLaunchRegistry
         value is { Length: > 0 and <= 128 } && value.All(static character =>
             character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-');
 
+    private static string GetProfilesRoot(Context context) =>
+        Path.Combine(AndroidPrivateStorage.GetUserDataRoot(context.ApplicationContext ?? context), "profiles");
+
+    private static async ValueTask<bool> IsCurrentProfileAsync(
+        Context context,
+        ProfileLaunchSelection? selection,
+        CancellationToken cancellationToken)
+    {
+        if (selection is null)
+            return false;
+        ProfileId profileId;
+        try
+        {
+            profileId = selection.Validate();
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+
+        try
+        {
+            var profile = await new ModProfileRepository(GetProfilesRoot(context))
+                .ReadAsync(profileId, cancellationToken)
+                .ConfigureAwait(false);
+            return profile.Revision == selection.Revision &&
+                   profile.AssemblyBindingPolicy == selection.AssemblyBindingPolicy;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return false;
+        }
+    }
+
     internal sealed record PendingLaunchAttempt(
         string AttemptId,
         string SnapshotId,
         int RecoveryLevel,
+        ProfileLaunchSelection Profile,
         DateTimeOffset IssuedAtUtc);
 
     internal sealed record GameActivationState(

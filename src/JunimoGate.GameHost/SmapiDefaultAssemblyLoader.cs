@@ -10,19 +10,24 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
     private static readonly HashSet<string> ProtectedNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "StardewValley", "StardewModdingAPI", "StardewModdingAPI.Toolkit", "StardewModdingAPI.Toolkit.CoreInterfaces",
-        "JunimoGate.App", "JunimoGate.GameHost", "JunimoGate.Android", "JunimoGate.Core", "JunimoGate.Extraction", "JunimoGate.Rewriter",
+        "JunimoGate.App", "JunimoGate.GameHost", "JunimoGate.Android", "JunimoGate.Core", "JunimoGate.Extraction", "JunimoGate.Mods", "JunimoGate.Rewriter",
         "MonoGame.Framework", "0Harmony",
     };
-
     private readonly PreparedGameSnapshot snapshot;
+    private readonly string modsRoot;
     private readonly Dictionary<string, string> gamePaths = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> modPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RegisteredModAssembly> modAssemblies = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RegisteredModAssembly> modAssembliesBySource = new(StringComparer.Ordinal);
     private readonly string rewriteCache;
     private bool installed;
 
-    public SmapiDefaultAssemblyLoader(PreparedGameSnapshot snapshot, PreparedRuntimeFiles runtimeFiles)
+    public SmapiDefaultAssemblyLoader(
+        PreparedGameSnapshot snapshot,
+        PreparedRuntimeFiles runtimeFiles,
+        string modsRoot)
     {
         this.snapshot = snapshot;
+        this.modsRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(modsRoot));
         rewriteCache = Path.Combine(Path.GetDirectoryName(snapshot.InternalDirectory)!, "mod-rewrite-cache");
         Directory.CreateDirectory(rewriteCache);
         foreach (var entry in runtimeFiles.ManagedAssemblyPaths)
@@ -41,17 +46,15 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
 
     public Assembly LoadFromPath(string absolutePath)
     {
-        var path = RequireContained(absolutePath, snapshot.ModsDirectory);
-        var name = AssemblyName.GetAssemblyName(path).Name ?? throw new FileLoadException("A Mod assembly has no simple name.");
-        RejectShadow(name);
-        modPaths[name] = path;
-        IndexModDirectory(Path.GetDirectoryName(path)!);
-        return LoadExisting(name) ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
+        var path = RequireContained(absolutePath, modsRoot);
+        var entry = RegisterSource(path);
+        return LoadRegistered(entry);
     }
 
     public Assembly LoadRewritten(string sourcePath, ReadOnlyMemory<byte> assemblyBytes, ReadOnlyMemory<byte>? symbols)
     {
-        _ = RequireContained(sourcePath, snapshot.ModsDirectory);
+        var source = RequireContained(sourcePath, modsRoot);
+        var sourceEntry = RegisterSource(source);
         var digest = Convert.ToHexStringLower(SHA256.HashData(assemblyBytes.Span));
         var path = Path.Combine(rewriteCache, digest + ".dll");
         if (!File.Exists(path))
@@ -65,10 +68,13 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
             var pdbPath = Path.ChangeExtension(path, ".pdb");
             if (!File.Exists(pdbPath)) File.WriteAllBytes(pdbPath, pdb.ToArray());
         }
-        var name = AssemblyName.GetAssemblyName(path).Name ?? throw new FileLoadException("A rewritten Mod assembly has no simple name.");
-        RejectShadow(name);
-        modPaths[name] = path;
-        return LoadExisting(name) ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
+        var rewrittenIdentity = AssemblyName.GetAssemblyName(path);
+        if (!sourceEntry.Identity.FullName.Equals(rewrittenIdentity.FullName, StringComparison.Ordinal))
+            throw new FileLoadException("A rewritten Mod assembly changed its assembly identity.", DisplayPath(source));
+        var rewritten = sourceEntry with { LoadPath = path };
+        modAssemblies[sourceEntry.SimpleName] = rewritten;
+        modAssembliesBySource[source] = rewritten;
+        return LoadRegistered(rewritten);
     }
 
     private Assembly? Resolve(AssemblyLoadContext context, AssemblyName requested)
@@ -79,7 +85,7 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         var existing = LoadExisting(name);
         if (existing is not null) return existing;
         if (gamePaths.ContainsKey(name)) return LoadIndexed(name);
-        if (modPaths.TryGetValue(name, out var modPath)) return AssemblyLoadContext.Default.LoadFromAssemblyPath(modPath);
+        if (modAssemblies.TryGetValue(name, out var mod)) return AssemblyLoadContext.Default.LoadFromAssemblyPath(mod.LoadPath);
         if (ProtectedNames.Contains(name) || name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("Microsoft.", StringComparison.Ordinal))
             return null;
         return null;
@@ -95,25 +101,39 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         return AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
     }
 
-    private void IndexModDirectory(string directory)
+    private RegisteredModAssembly RegisterSource(string sourcePath)
     {
-        foreach (var path in Directory.EnumerateFiles(directory, "*.dll", SearchOption.TopDirectoryOnly))
-        {
-            var contained = RequireContained(path, snapshot.ModsDirectory);
-            var name = AssemblyName.GetAssemblyName(contained).Name;
-            if (string.IsNullOrWhiteSpace(name)) continue;
-            RejectShadow(name);
-            if (gamePaths.ContainsKey(name)) throw new FileLoadException("A Mod cannot shadow a game assembly.");
-            modPaths.TryAdd(name, contained);
-        }
+        if (modAssembliesBySource.TryGetValue(sourcePath, out var registered))
+            return registered;
+
+        var identity = AssemblyName.GetAssemblyName(sourcePath);
+        var name = identity.Name;
+        if (string.IsNullOrWhiteSpace(name))
+            throw new FileLoadException("A Mod assembly has no simple name.", DisplayPath(sourcePath));
+        if (IsProtected(name) || gamePaths.ContainsKey(name))
+            throw Conflict(name, "host, game, or framework", DisplayPath(sourcePath));
+        if (modAssemblies.TryGetValue(name, out var existing))
+            throw Conflict(name, DisplayPath(existing.SourcePath), DisplayPath(sourcePath));
+        var loaded = LoadExisting(name);
+        if (loaded is not null)
+            throw Conflict(name, $"loaded assembly {loaded.FullName}", DisplayPath(sourcePath));
+
+        var entry = new RegisteredModAssembly(name, identity, sourcePath, sourcePath);
+        modAssemblies.Add(name, entry);
+        modAssembliesBySource.Add(sourcePath, entry);
+        return entry;
     }
 
+    private static Assembly LoadRegistered(RegisteredModAssembly entry) =>
+        LoadExisting(entry.SimpleName) ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(entry.LoadPath);
+
     private static Assembly? LoadExisting(string name) => AssemblyLoadContext.Default.Assemblies.FirstOrDefault(a => a.GetName().Name?.Equals(name, StringComparison.OrdinalIgnoreCase) == true);
-    private static void RejectShadow(string name)
-    {
-        if (ProtectedNames.Contains(name) || name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("Microsoft.", StringComparison.Ordinal))
-            throw new FileLoadException("A Mod attempted to shadow a protected host or framework assembly.");
-    }
+    private static bool IsProtected(string name) =>
+        ProtectedNames.Contains(name) || name.StartsWith("System.", StringComparison.Ordinal) ||
+        name.StartsWith("Microsoft.", StringComparison.Ordinal);
+    private static FileLoadException Conflict(string name, string firstOwner, string secondOwner) =>
+        new($"Mod assembly identity '{name}' conflicts between '{firstOwner}' and '{secondOwner}'. Disable one of the conflicting Mods.");
+    private string DisplayPath(string path) => Path.GetRelativePath(modsRoot, path).Replace(Path.DirectorySeparatorChar, '/');
     private static string RequireContained(string path, string root)
     {
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
@@ -129,4 +149,10 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         AppDomain.CurrentDomain.AssemblyResolve -= ResolveAppDomain;
         installed = false;
     }
+
+    private sealed record RegisteredModAssembly(
+        string SimpleName,
+        AssemblyName Identity,
+        string SourcePath,
+        string LoadPath);
 }

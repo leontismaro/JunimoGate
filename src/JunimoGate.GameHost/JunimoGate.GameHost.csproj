@@ -10,6 +10,7 @@
     <ProjectReference Include="../JunimoGate.Core/JunimoGate.Core.csproj" />
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Extraction/JunimoGate.Extraction.csproj" />
+    <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
     <ProjectReference Include="../JunimoGate.Rewriter/JunimoGate.Rewriter.csproj" />
     <ProjectReference Include="../../smapi/src/SMAPI/SMAPI.csproj" />
   </ItemGroup>

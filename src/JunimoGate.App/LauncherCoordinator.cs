@@ -1,6 +1,8 @@
 using Android.Content;
 using Android.Util;
+using JunimoGate.Android;
 using JunimoGate.GameHost;
+using JunimoGate.Mods;
 using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.App;
@@ -21,19 +23,25 @@ internal sealed record LauncherState(
     LauncherStatus Status,
     string Message,
     bool ShowProgress,
-    bool CanLaunch);
+    bool CanLaunch,
+    ModAssemblyBindingPolicy AssemblyBindingPolicy = ModAssemblyBindingPolicy.HighestCompatible,
+    bool CanConfigureProfile = false);
 
 internal sealed class LauncherCoordinator : IDisposable
 {
     private readonly Context context;
+    private readonly ModProfileRepository profiles;
+    private readonly ProfileId profileId = ProfileId.Parse("default");
     private readonly SemaphoreSlim operationLock = new(1, 1);
     private PreparedGameHandle? preparedGame;
+    private ModProfile? profile;
     private bool disposed;
 
     public LauncherCoordinator(Context context)
     {
         ArgumentNullException.ThrowIfNull(context);
         this.context = context.ApplicationContext ?? context;
+        profiles = new ModProfileRepository(Path.Combine(AndroidPrivateStorage.GetUserDataRoot(this.context), "profiles"));
         CurrentState = new LauncherState(
             LauncherStatus.Checking,
             "Checking the installed game…",
@@ -51,6 +59,7 @@ internal sealed class LauncherCoordinator : IDisposable
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            profile = await profiles.OpenOrCreateAsync(profileId, cancellationToken).ConfigureAwait(false);
             var pending = await GameLaunchRegistry.TryReadPendingOutcomeAsync(context, cancellationToken)
                 .ConfigureAwait(false);
             if (pending is not null)
@@ -122,12 +131,12 @@ internal sealed class LauncherCoordinator : IDisposable
                 PublishPreparationResult(retried);
             }
 
-            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null)
+            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null || profile is null)
                 return null;
 
             PublishLaunching();
             var issue = await GameLaunchRegistry
-                .TryIssueLaunchAsync(context, preparedGame, cancellationToken)
+                .TryIssueLaunchAsync(context, preparedGame, ProfileLaunchSelection.From(profile), cancellationToken)
                 .ConfigureAwait(false);
             if (issue.IsIssued)
                 return issue.Launch;
@@ -149,6 +158,13 @@ internal sealed class LauncherCoordinator : IDisposable
                 return null;
             }
 
+            if (issue.Status == GameLaunchIssueStatus.ProfileChanged)
+            {
+                profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
+                Publish(ReadyState(preparedGame));
+                return null;
+            }
+
             Publish(new LauncherState(
                 LauncherStatus.Preparing,
                 "The installed game changed. Preparing it again…",
@@ -163,7 +179,7 @@ internal sealed class LauncherCoordinator : IDisposable
 
             PublishLaunching();
             issue = await GameLaunchRegistry
-                .TryIssueLaunchAsync(context, preparedGame, cancellationToken)
+                .TryIssueLaunchAsync(context, preparedGame, ProfileLaunchSelection.From(profile), cancellationToken)
                 .ConfigureAwait(false);
             if (issue.IsIssued)
                 return issue.Launch;
@@ -190,6 +206,30 @@ internal sealed class LauncherCoordinator : IDisposable
         }
 
         return null;
+    }
+
+    public async ValueTask UpdateBindingPolicyAsync(
+        ModAssemblyBindingPolicy policy,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null || profile is null)
+                return;
+            profile = await profiles.UpdateBindingPolicyAsync(
+                    profileId,
+                    profile.Revision,
+                    policy,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            Publish(ReadyState(preparedGame));
+        }
+        finally
+        {
+            operationLock.Release();
+        }
     }
 
     public void ReportLaunchFailure()
@@ -277,7 +317,7 @@ internal sealed class LauncherCoordinator : IDisposable
             preparedGame = prepared.PreparedGame;
             PublishLaunching();
             var issue = await GameLaunchRegistry
-                .TryIssueLaunchAsync(context, preparedGame!, level, cancellationToken)
+                .TryIssueLaunchAsync(context, preparedGame!, pending.Profile, level, cancellationToken)
                 .ConfigureAwait(false);
             if (issue.IsIssued)
             {
@@ -307,6 +347,8 @@ internal sealed class LauncherCoordinator : IDisposable
     {
         if (disposed || CurrentState == state)
             return;
+        if (profile is not null)
+            state = state with { AssemblyBindingPolicy = profile.AssemblyBindingPolicy };
         CurrentState = state;
         Log.Info("JunimoGate.Launcher", $"state:{state.Status}");
         StateChanged?.Invoke(state);
@@ -321,7 +363,7 @@ internal sealed class LauncherCoordinator : IDisposable
         Publish(Map(result));
     }
 
-    private static LauncherState Map(GamePreparationResult result) => result.Status switch
+    private LauncherState Map(GamePreparationResult result) => result.Status switch
     {
         GamePreparationStatus.Ready => ReadyState(result.PreparedGame!),
         GamePreparationStatus.GameNotInstalled => new LauncherState(
@@ -343,11 +385,13 @@ internal sealed class LauncherCoordinator : IDisposable
         ShowProgress: false,
         CanLaunch: true);
 
-    private static LauncherState ReadyState(PreparedGameHandle handle) => new(
+    private LauncherState ReadyState(PreparedGameHandle handle) => new(
         LauncherStatus.Ready,
         $"Stardew Valley {handle.VersionName}\n\nReady to launch through SMAPI.",
         ShowProgress: false,
-        CanLaunch: true);
+        CanLaunch: true,
+        AssemblyBindingPolicy: profile?.AssemblyBindingPolicy ?? ModAssemblyBindingPolicy.HighestCompatible,
+        CanConfigureProfile: true);
 
     private void PublishLaunching() => Publish(new LauncherState(
         LauncherStatus.Launching,

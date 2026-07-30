@@ -26,7 +26,7 @@ internal sealed class PreparedRuntimeFiles
 
         foreach (var directory in new[]
                  {
-                     snapshot.SourceWorkspacePath, snapshot.AppliedWorkspacePath, snapshot.ModsDirectory,
+                     snapshot.SourceWorkspacePath, snapshot.AppliedWorkspacePath,
                      snapshot.InternalDirectory, snapshot.ConfigDirectory, snapshot.LogDirectory,
                      snapshot.SaveDirectory, snapshot.BackupDirectory,
                  })
