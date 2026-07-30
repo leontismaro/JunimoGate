@@ -343,59 +343,90 @@ public sealed class GameWorkspacePreparer
             var modernSources = openedSources
                 .Where(static source => source.Inventory.Roles.Contains(ApkSourceRoleNames.ModernAssemblyBlob, StringComparer.Ordinal))
                 .ToArray();
-            var legacyOnly = modernSources.Length == 0 && openedSources.Any(
-                static source => source.Inventory.Roles.Contains(ApkSourceRoleNames.LegacyAssemblyBlob, StringComparer.Ordinal));
-            if (legacyOnly)
-            {
-                throw new WorkspacePreparationException(
-                    WorkspaceErrorCodes.UnsupportedAssemblyStore,
-                    "Legacy-only assembly storage is not supported.");
-            }
+            var selectedModernStores = modernSources.SelectMany(source =>
+                AssemblyStoreV2.FindInApk(source.Archive)
+                    .Where(store => store.Abi.Equals(installation.SelectedAbi, StringComparison.OrdinalIgnoreCase))
+                    .Select(store => (Source: source, Store: store))).ToArray();
+            var legacySources = selectedModernStores.Length == 0
+                ? openedSources.Where(static source =>
+                    source.Inventory.Roles.Contains(ApkSourceRoleNames.LegacyAssemblyBlob, StringComparer.Ordinal)).ToArray()
+                : [];
 
             var assembliesDirectory = Path.Combine(stagingPath, "assemblies");
             var selectedStoreCount = 0;
             await using (var transaction = new AssemblyExtractionTransaction(assembliesDirectory))
             {
-                foreach (var source in modernSources)
+                foreach (var selected in selectedModernStores)
                 {
-                    var stores = AssemblyStoreV2.FindInApk(source.Archive)
-                        .Where(store => store.Abi.Equals(installation.SelectedAbi, StringComparison.OrdinalIgnoreCase))
-                        .ToArray();
-                    foreach (var storeEntry in stores)
+                    selectedStoreCount++;
+                    try
                     {
-                        selectedStoreCount++;
-                        try
+                        using var store = selected.Store.Open();
+                        foreach (var item in store.Items.OrderBy(static item => item.Name, StringComparer.Ordinal))
                         {
-                            using var store = storeEntry.Open();
-                            foreach (var item in store.Items.OrderBy(static item => item.Name, StringComparer.Ordinal))
+                            ExtractedAssemblyFile extracted;
+                            try
                             {
-                                ExtractedAssemblyFile extracted;
-                                try
-                                {
-                                    extracted = await transaction.ExtractAsync(store, item, cancellationToken).ConfigureAwait(false);
-                                }
-                                catch (IOException exception) when (exception.Message.Contains("Duplicate", StringComparison.OrdinalIgnoreCase) || exception.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    throw new WorkspacePreparationException(
-                                        WorkspaceErrorCodes.DuplicateOutput,
-                                        "Assembly stores produce a duplicate output.");
-                                }
-
-                                outputs.Add(new WorkspaceExtractedFileManifest(
-                                    "assembly",
-                                    $"assemblies/{extracted.Name}",
-                                    extracted.Size,
-                                    extracted.Sha256,
-                                    source.Identity.Label,
-                                    storeEntry.Entry.FullName));
+                                extracted = await transaction.ExtractAsync(store, item, cancellationToken).ConfigureAwait(false);
                             }
+                            catch (IOException exception) when (exception.Message.Contains("Duplicate", StringComparison.OrdinalIgnoreCase) || exception.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new WorkspacePreparationException(
+                                    WorkspaceErrorCodes.DuplicateOutput,
+                                    "Assembly stores produce a duplicate output.");
+                            }
+
+                            outputs.Add(new WorkspaceExtractedFileManifest(
+                                "assembly",
+                                $"assemblies/{extracted.Name}",
+                                extracted.Size,
+                                extracted.Sha256,
+                                selected.Source.Identity.Label,
+                                selected.Store.Entry.FullName));
                         }
-                        catch (AssemblyStoreFormatException)
+                    }
+                    catch (AssemblyStoreFormatException)
+                    {
+                        throw new WorkspacePreparationException(
+                            WorkspaceErrorCodes.UnsupportedAssemblyStore,
+                            "A selected-ABI assembly store has an unsupported or invalid format.");
+                    }
+                }
+
+                foreach (var source in legacySources)
+                {
+                    try
+                    {
+                        using var store = LegacyAssemblyStoreSet.Open(source.Archive, installation.SelectedAbi);
+                        selectedStoreCount++;
+                        foreach (var item in store.Items)
                         {
-                            throw new WorkspacePreparationException(
-                                WorkspaceErrorCodes.UnsupportedAssemblyStore,
-                                "A selected-ABI assembly store has an unsupported or invalid format.");
+                            ExtractedAssemblyFile extracted;
+                            try
+                            {
+                                extracted = await transaction.ExtractAsync(store, item, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (IOException exception) when (exception.Message.Contains("Duplicate", StringComparison.OrdinalIgnoreCase) || exception.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new WorkspacePreparationException(
+                                    WorkspaceErrorCodes.DuplicateOutput,
+                                    "Legacy assembly stores produce a duplicate output.");
+                            }
+
+                            outputs.Add(new WorkspaceExtractedFileManifest(
+                                "assembly",
+                                $"assemblies/{extracted.Name}",
+                                extracted.Size,
+                                extracted.Sha256,
+                                source.Identity.Label,
+                                item.SourceEntry));
                         }
+                    }
+                    catch (AssemblyStoreFormatException)
+                    {
+                        throw new WorkspacePreparationException(
+                            WorkspaceErrorCodes.UnsupportedAssemblyStore,
+                            "The selected-ABI legacy assembly store has an unsupported or invalid format.");
                     }
                 }
             }

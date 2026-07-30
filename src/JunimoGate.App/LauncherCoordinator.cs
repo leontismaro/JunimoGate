@@ -1,6 +1,7 @@
 using Android.Content;
 using Android.Util;
 using JunimoGate.GameHost;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.App;
 
@@ -8,6 +9,7 @@ internal enum LauncherStatus
 {
     Checking,
     Preparing,
+    Recovering,
     Ready,
     Launching,
     GameNotInstalled,
@@ -43,16 +45,32 @@ internal sealed class LauncherCoordinator : IDisposable
 
     public LauncherState CurrentState { get; private set; }
 
-    public async Task InitializeAsync(CancellationToken cancellationToken)
+    public async Task<GameLaunchHandle?> InitializeAsync(CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var pending = await GameLaunchRegistry.TryReadPendingOutcomeAsync(context, cancellationToken)
+                .ConfigureAwait(false);
+            if (pending is not null)
+            {
+                preparedGame = null;
+                if (pending.Status == GameLaunchOutcomeStatus.Running)
+                {
+                    await GameLaunchRegistry.CompletePendingRunningAsync(context, pending, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    return await RecoverPendingLaunchAsync(pending, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             if (preparedGame is not null)
             {
                 Publish(ReadyState(preparedGame));
-                return;
+                return null;
             }
 
             Publish(new LauncherState(
@@ -65,6 +83,7 @@ internal sealed class LauncherCoordinator : IDisposable
                 .PrepareOrReuseAsync(context, progress, cancellationToken)
                 .ConfigureAwait(false);
             PublishPreparationResult(result);
+            return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -73,8 +92,10 @@ internal sealed class LauncherCoordinator : IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException)
         {
+            Log.Error("JunimoGate.Launcher", "initialize-failed", exception);
             preparedGame = null;
             Publish(FailedState());
+            return null;
         }
         finally
         {
@@ -88,6 +109,19 @@ internal sealed class LauncherCoordinator : IDisposable
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (CurrentState.Status == LauncherStatus.Failed)
+            {
+                Publish(new LauncherState(
+                    LauncherStatus.Preparing,
+                    "Preparing Stardew Valley for launch…",
+                    ShowProgress: true,
+                    CanLaunch: false));
+                var retried = await GameDeepPrepareCoordinator
+                    .PrepareAsync(context, new PreparationProgress(this), cancellationToken)
+                    .ConfigureAwait(false);
+                PublishPreparationResult(retried);
+            }
+
             if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null)
                 return null;
 
@@ -97,6 +131,8 @@ internal sealed class LauncherCoordinator : IDisposable
                 .ConfigureAwait(false);
             if (issue.IsIssued)
                 return issue.Launch;
+
+            Log.Warn("JunimoGate.Launcher", $"launch-request-not-issued status={issue.Status}");
 
             if (issue.Status == GameLaunchIssueStatus.ActiveSnapshotChanged)
             {
@@ -132,6 +168,7 @@ internal sealed class LauncherCoordinator : IDisposable
             if (issue.IsIssued)
                 return issue.Launch;
 
+            Log.Error("JunimoGate.Launcher", $"launch-request-rejected-after-prepare status={issue.Status}");
             preparedGame = null;
             Publish(FailedState("launch_state_changed_after_prepare"));
             return null;
@@ -143,6 +180,7 @@ internal sealed class LauncherCoordinator : IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException)
         {
+            Log.Error("JunimoGate.Launcher", "launch-request-failed", exception);
             preparedGame = null;
             Publish(FailedState());
         }
@@ -163,6 +201,102 @@ internal sealed class LauncherCoordinator : IDisposable
         }
     }
 
+    public async ValueTask<GameLaunchHandle?> RecoverLaunchDispatchFailureAsync(
+        GameLaunchHandle launch,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(launch);
+        try
+        {
+            await GameLaunchRegistry.RecordOutcomeAsync(
+                    context,
+                    launch.Key,
+                    GameLaunchOutcomeStatus.Failed,
+                    GameStartupStage.LaunchRequest,
+                    "activity_start_failed",
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("JunimoGate.Launcher", "launch-dispatch-outcome-failed", exception);
+        }
+        return await InitializeAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<GameLaunchHandle?> RecoverPendingLaunchAsync(
+        PendingGameLaunchOutcome pending,
+        CancellationToken cancellationToken)
+    {
+        Log.Warn(
+            "JunimoGate.Recovery",
+            $"startup-failure attempt={pending.AttemptId[..8]} stage={pending.Stage} code={pending.Code} level={pending.RecoveryLevel}");
+        await GameLaunchRegistry.CompletePendingFailureAsync(context, pending, cancellationToken)
+            .ConfigureAwait(false);
+        if (pending.Code == "mod_loading_failed" || pending.RecoveryLevel >= 2)
+        {
+            Log.Error(
+                "JunimoGate.Recovery",
+                $"automatic-recovery-stopped stage={pending.Stage} code={pending.Code} level={pending.RecoveryLevel}");
+            Publish(FailedState(pending.Code));
+            return null;
+        }
+
+        for (var level = pending.RecoveryLevel + 1; level <= 2; level++)
+        {
+            Log.Info(
+                "JunimoGate.Recovery",
+                $"automatic-recovery-started stage={pending.Stage} code={pending.Code} level={level}");
+            Publish(new LauncherState(
+                LauncherStatus.Recovering,
+                "Preparing Stardew Valley for launch…",
+                ShowProgress: true,
+                CanLaunch: false));
+            var prepared = await GameDeepPrepareCoordinator
+                .RecoverAsync(
+                    context,
+                    pending.Snapshot,
+                    pending.Stage,
+                    level,
+                    new PreparationProgress(this),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!prepared.IsReady)
+            {
+                Log.Warn(
+                    "JunimoGate.Recovery",
+                    $"automatic-recovery-prepare-failed status={prepared.Status} code={prepared.Code} level={level}");
+                if (prepared.Status is GamePreparationStatus.GameNotInstalled or GamePreparationStatus.Unsupported || level == 2)
+                {
+                    PublishPreparationResult(prepared);
+                    return null;
+                }
+                continue;
+            }
+
+            preparedGame = prepared.PreparedGame;
+            PublishLaunching();
+            var issue = await GameLaunchRegistry
+                .TryIssueLaunchAsync(context, preparedGame!, level, cancellationToken)
+                .ConfigureAwait(false);
+            if (issue.IsIssued)
+            {
+                Log.Info("JunimoGate.Recovery", $"automatic-recovery-launch-issued level={level}");
+                return issue.Launch;
+            }
+            Log.Warn(
+                "JunimoGate.Recovery",
+                $"automatic-recovery-launch-not-issued status={issue.Status} level={level}");
+            if (level == 2)
+                break;
+        }
+
+        preparedGame = null;
+        Log.Error("JunimoGate.Recovery", "automatic-recovery-exhausted");
+        Publish(FailedState("startup_recovery_exhausted"));
+        return null;
+    }
+
     public void Dispose()
     {
         disposed = true;
@@ -171,7 +305,7 @@ internal sealed class LauncherCoordinator : IDisposable
 
     private void Publish(LauncherState state)
     {
-        if (disposed)
+        if (disposed || CurrentState == state)
             return;
         CurrentState = state;
         Log.Info("JunimoGate.Launcher", $"state:{state.Status}");
@@ -180,6 +314,9 @@ internal sealed class LauncherCoordinator : IDisposable
 
     private void PublishPreparationResult(GamePreparationResult result)
     {
+        Log.Info(
+            "JunimoGate.Launcher",
+            $"preparation-result status={result.Status} code={result.Code} ready={(result.IsReady ? 1 : 0)}");
         preparedGame = result.IsReady ? result.PreparedGame : null;
         Publish(Map(result));
     }
@@ -202,9 +339,9 @@ internal sealed class LauncherCoordinator : IDisposable
 
     private static LauncherState FailedState(string code = "launcher_failed") => new(
         LauncherStatus.Failed,
-        $"JunimoGate could not prepare the game. Reopen the app to retry.\n\nCode: {code}",
+        $"Stardew Valley could not start.\n\nCode: {code}",
         ShowProgress: false,
-        CanLaunch: false);
+        CanLaunch: true);
 
     private static LauncherState ReadyState(PreparedGameHandle handle) => new(
         LauncherStatus.Ready,

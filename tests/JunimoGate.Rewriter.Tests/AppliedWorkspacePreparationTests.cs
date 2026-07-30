@@ -13,25 +13,10 @@ internal static class AppliedWorkspacePreparationTests
     public static void RequestGuards(string root)
     {
         var fixture = AppliedFixture.Create(Path.Combine(root, "applied-request-guards"));
-        var approved = ApprovedDecision();
         TestHarness.Throws<ArgumentException>(() => new GameHostAppliedWorkspacePreparationRequest(
             Path.Combine(fixture.WorkspacePath, "applied"),
             fixture.Candidate,
-            fixture.Plan,
-            approved));
-
-        var blocked = new GameHostRecipeDecision(
-            GameHostRecipeEligibilityStatus.BlockedPendingBridgeRecipe,
-            GameHostRecipeDecisionCodes.BridgeRecipePending,
-            GameHostRecipeCatalog.TestedPlaySupportKey,
-            GameHostEntitlementPolicy.TrustedInstalledSource,
-            null,
-            []);
-        TestHarness.Throws<ArgumentException>(() => new GameHostAppliedWorkspacePreparationRequest(
-            Path.Combine(root, "blocked-applied"),
-            fixture.Candidate,
-            fixture.Plan,
-            blocked));
+            fixture.Plan));
     }
 
     public static void BuiltThenCacheHit(string root)
@@ -40,7 +25,7 @@ internal static class AppliedWorkspacePreparationTests
         var rewriteCount = 0;
         var preparer = new GameHostAppliedWorkspacePreparer(
             new FixedRevalidator(fixture.Candidate),
-            (decision, plan, request, cancellationToken) =>
+            (plan, request, cancellationToken) =>
             {
                 rewriteCount++;
                 return FakeRewriteAsync(fixture, request, cancellationToken);
@@ -48,8 +33,7 @@ internal static class AppliedWorkspacePreparationTests
         var request = new GameHostAppliedWorkspacePreparationRequest(
             fixture.AppliedRoot,
             fixture.Candidate,
-            fixture.Plan,
-            ApprovedDecision());
+            fixture.Plan);
 
         var built = preparer.PrepareAsync(request).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(GameHostAppliedWorkspacePreparationStatus.Built, built.Status);
@@ -77,18 +61,56 @@ internal static class AppliedWorkspacePreparationTests
         TestHarness.Equal<string?>(null, state.PreviousKey);
     }
 
-    public static void LiveIdentityRaceRejectsActivation(string root)
+    public static void NullMutationIsRejectedBeforeOrdering(string root)
     {
-        var fixture = AppliedFixture.Create(Path.Combine(root, "applied-live-race"));
-        var changed = fixture.WithVersionCode(GameHostRecipeCatalog.TestedPlayLongVersionCode + 1);
+        var fixture = AppliedFixture.Create(Path.Combine(root, "applied-null-mutation"));
         var preparer = new GameHostAppliedWorkspacePreparer(
-            new FixedRevalidator(changed),
-            (_, _, request, cancellationToken) => FakeRewriteAsync(fixture, request, cancellationToken));
+            new FixedRevalidator(fixture.Candidate),
+            (_, request, cancellationToken) => FakeRewriteAsync(fixture, request, cancellationToken));
         var request = new GameHostAppliedWorkspacePreparationRequest(
             fixture.AppliedRoot,
             fixture.Candidate,
-            fixture.Plan,
-            ApprovedDecision());
+            fixture.Plan);
+        var built = preparer.PrepareAsync(request).AsTask().GetAwaiter().GetResult();
+        TestHarness.True(built.IsSuccess);
+
+        var rewritePath = Path.Combine(
+            built.Plan!.AppliedWorkspacePath,
+            GameHostAppliedWorkspaceContract.RewriteManifestFileName);
+        var rewrite = WorkspaceJson.ReadBoundedAsync<GameHostRewriteManifestV2>(
+                rewritePath,
+                1024 * 1024,
+                CancellationToken.None)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.True(rewrite is not null);
+
+        var malformedPath = Path.Combine(root, "rewrite-manifest-null-mutation.json");
+        File.WriteAllText(
+            malformedPath,
+            JsonSerializer.Serialize(rewrite! with { Mutations = [null!] }, WorkspaceJson.Options));
+        var malformed = WorkspaceJson.ReadBoundedAsync<GameHostRewriteManifestV2>(
+                malformedPath,
+                1024 * 1024,
+                CancellationToken.None)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.True(malformed is not null);
+
+        var result = GameHostAppliedWorkspaceValidator.ValidateRecipeResult(malformed!);
+        TestHarness.False(result.IsValid);
+        TestHarness.True(result.ErrorCodes.SequenceEqual([GameHostAppliedWorkspaceErrorCodes.RecipeMismatch]));
+    }
+
+    public static void LiveIdentityRaceRejectsActivation(string root)
+    {
+        var fixture = AppliedFixture.Create(Path.Combine(root, "applied-live-race"));
+        var changed = fixture.WithVersionCode(fixture.Candidate.Installation.LongVersionCode + 1);
+        var preparer = new GameHostAppliedWorkspacePreparer(
+            new FixedRevalidator(changed),
+            (_, request, cancellationToken) => FakeRewriteAsync(fixture, request, cancellationToken));
+        var request = new GameHostAppliedWorkspacePreparationRequest(
+            fixture.AppliedRoot,
+            fixture.Candidate,
+            fixture.Plan);
 
         var result = preparer.PrepareAsync(request).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(GameHostAppliedWorkspacePreparationStatus.Rejected, result.Status);
@@ -107,13 +129,13 @@ internal static class AppliedWorkspacePreparationTests
         var sourceManifestPath = Path.Combine(fixture.WorkspacePath, WorkspaceManifestConstants.SourceManifestFileName);
         var source = File.ReadAllText(sourceManifestPath);
         File.WriteAllText(sourceManifestPath, source.Replace(
-            GameHostRecipeCatalog.TestedPlayVersionName,
+            fixture.Candidate.Installation.VersionName,
             "9.9.9",
             StringComparison.Ordinal));
         var rewriteCalled = false;
         var preparer = new GameHostAppliedWorkspacePreparer(
             new FixedRevalidator(fixture.Candidate),
-            (_, _, request, cancellationToken) =>
+            (_, request, cancellationToken) =>
             {
                 rewriteCalled = true;
                 return FakeRewriteAsync(fixture, request, cancellationToken);
@@ -121,8 +143,7 @@ internal static class AppliedWorkspacePreparationTests
         var request = new GameHostAppliedWorkspacePreparationRequest(
             fixture.AppliedRoot,
             fixture.Candidate,
-            fixture.Plan,
-            ApprovedDecision());
+            fixture.Plan);
 
         var result = preparer.PrepareAsync(request).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(GameHostAppliedWorkspacePreparationStatus.Rejected, result.Status);
@@ -160,16 +181,15 @@ internal static class AppliedWorkspacePreparationTests
         var outputBytes = new byte[] { 0x4a, 0x47, 0x42, 0x52, 0x49, 0x44, 0x47, 0x45 };
         await File.WriteAllBytesAsync(request.StagingOutputPath, outputBytes, cancellationToken).ConfigureAwait(false);
         var outputDigest = Sha256Digest.Parse(Convert.ToHexStringLower(SHA256.HashData(outputBytes)));
-        var mutations = GameHostBridgeRecipe.ApprovedMutations
-            .Select(contract => new AppliedRewriteMutationEvidence(
-                contract.MutationId,
-                contract.InputRelativePath,
-                contract.TargetMemberSignature,
-                contract.ExpectedMatchCount,
-                contract.ExpectedMatchCount,
-                contract.PreconditionSha256,
-                contract.PostconditionSha256,
-                contract.EntitlementBehavior))
+        var mutations = GameHostBridgeRecipe.Rules
+            .Select(rule => new AppliedRewriteMutationEvidence(
+                rule.RuleId,
+                rule.InputRelativePath,
+                rule.TargetMemberSignature,
+                rule.ExpectedMatchCount,
+                rule.ExpectedMatchCount,
+                rule.Replacements,
+                PostconditionPassed: true))
             .ToImmutableArray();
         var rewrite = new RewriteResult(
             RewriteStatus.Succeeded,
@@ -180,22 +200,13 @@ internal static class AppliedWorkspacePreparationTests
                 StartupStage.Rewrite,
                 DiagnosticSeverity.Information,
                 GameHostBridgeRewriteDiagnosticCodes.Succeeded,
-                "Synthetic exact-writer output for applied transaction tests.")]);
+                "Synthetic semantic-writer output for applied transaction tests.")]);
         return new GameHostBridgeRewriteResult(
             rewrite,
             Sha256Digest.Parse(fixture.StardewPayload.Sha256),
-            GameHostRecipeCatalog.TestedPlayTargetMvid,
+            "StardewValley, Version=1.6.99.0, Culture=neutral, PublicKeyToken=null",
             mutations);
     }
-
-    private static GameHostRecipeDecision ApprovedDecision() =>
-        new(
-            GameHostRecipeEligibilityStatus.Approved,
-            GameHostRecipeDecisionCodes.Approved,
-            GameHostRecipeCatalog.TestedPlaySupportKey,
-            GameHostEntitlementPolicy.TrustedInstalledSource,
-            GameHostBridgeRecipe.Identity,
-            GameHostBridgeRecipe.ApprovedMutations);
 
     private sealed class FixedRevalidator : IWorkspaceCandidateRevalidator
     {
@@ -269,11 +280,11 @@ internal static class AppliedWorkspacePreparationTests
                 new ApkSourceIdentity(splitApkPath, splitDigest, new FileInfo(splitApkPath).Length, "split-1", "config.arm64_v8a"),
             };
             var installation = new GameInstallationIdentity(
-                GameHostRecipeCatalog.TestedPlayPackageName,
-                GameHostRecipeCatalog.TestedPlayVersionName,
-                GameHostRecipeCatalog.TestedPlayLongVersionCode,
+                KnownGameCertificate.PlayPackageName,
+                "1.6.99",
+                999,
                 signing,
-                GameHostRecipeCatalog.TestedPlayAbi,
+                GameInstallationDiscoveryCoordinator.SupportedAbi,
                 sources);
             var candidate = new GameInstallationCandidate(
                 installation,
@@ -282,8 +293,8 @@ internal static class AppliedWorkspacePreparationTests
                     new ApkSourceInventory(
                         "split-1",
                         [ApkSourceRoleNames.ModernAssemblyBlob],
-                        [GameHostRecipeCatalog.TestedPlayAbi],
-                        [GameHostRecipeCatalog.TestedPlayAbi]),
+                        [GameInstallationDiscoveryCoordinator.SupportedAbi],
+                        [GameInstallationDiscoveryCoordinator.SupportedAbi]),
                 ]);
             var workspaceKey = WorkspaceCacheKey.Create(
                 installation.PackageName,

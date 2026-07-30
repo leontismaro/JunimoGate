@@ -29,7 +29,7 @@ else
   }
 fi
 
-"$dotnet_command" build "$root/JunimoGate.Host.slnf" --configuration "$configuration"
+"$dotnet_command" build "$root/JunimoGate.Host.slnf" --configuration "$configuration" -m:1
 
 for project in \
   JunimoGate.Core.Tests \

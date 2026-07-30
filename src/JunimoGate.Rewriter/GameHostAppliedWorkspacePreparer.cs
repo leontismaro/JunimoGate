@@ -33,8 +33,8 @@ public enum GameHostAppliedWorkspacePreparationStatus
 }
 
 /// <summary>
-/// Binds one applied-workspace transaction to the original candidate, a sealed fresh M4 execution
-/// plan, and the catalog-issued exact bridge capability. No caller-selected source path is accepted.
+/// Binds one applied-workspace transaction to the original candidate and a validated source plan.
+/// No caller-selected source path or recipe is accepted.
 /// </summary>
 public sealed class GameHostAppliedWorkspacePreparationRequest
 {
@@ -42,7 +42,6 @@ public sealed class GameHostAppliedWorkspacePreparationRequest
         string appliedRootPath,
         GameInstallationCandidate originalCandidate,
         ValidatedExecutionPlan sourceExecutionPlan,
-        GameHostRecipeDecision decision,
         bool verifySourcePayloadHashes = true,
         bool revalidateInstallation = true,
         bool validateCommittedAfterBuild = true)
@@ -50,32 +49,24 @@ public sealed class GameHostAppliedWorkspacePreparationRequest
         ArgumentException.ThrowIfNullOrWhiteSpace(appliedRootPath);
         ArgumentNullException.ThrowIfNull(originalCandidate);
         ArgumentNullException.ThrowIfNull(sourceExecutionPlan);
-        ArgumentNullException.ThrowIfNull(decision);
 
         AppliedRootPath = Path.GetFullPath(appliedRootPath);
         OriginalCandidate = originalCandidate;
         SourceExecutionPlan = sourceExecutionPlan;
-        Decision = decision;
         VerifySourcePayloadHashes = verifySourcePayloadHashes;
         RevalidateInstallation = revalidateInstallation;
         ValidateCommittedAfterBuild = validateCommittedAfterBuild;
 
         if (!originalCandidate.Installation.PackageName.Equals(sourceExecutionPlan.PackageName, StringComparison.Ordinal) ||
-            !decision.CanRewrite ||
-            decision.EntitlementPolicy != GameHostEntitlementPolicy.TrustedInstalledSource ||
-            decision.Recipe != GameHostBridgeRecipe.Identity ||
-            !decision.SupportKey.Equals(GameHostRecipeCatalog.TestedPlaySupportKey, StringComparison.Ordinal) ||
-            !decision.ApprovedMutations.SequenceEqual(GameHostBridgeRecipe.ApprovedMutations) ||
             PathsOverlap(AppliedRootPath, sourceExecutionPlan.WorkspacePath))
         {
-            throw new ArgumentException("The applied workspace request is not bound to the approved trusted source.");
+            throw new ArgumentException("The applied workspace request is not bound to the validated source.");
         }
     }
 
     public string AppliedRootPath { get; }
     public GameInstallationCandidate OriginalCandidate { get; }
     public ValidatedExecutionPlan SourceExecutionPlan { get; }
-    public GameHostRecipeDecision Decision { get; }
     public bool VerifySourcePayloadHashes { get; }
     public bool RevalidateInstallation { get; }
     public bool ValidateCommittedAfterBuild { get; }
@@ -151,14 +142,13 @@ public sealed record GameHostAppliedWorkspacePreparationResult(
 }
 
 internal delegate ValueTask<GameHostBridgeRewriteResult> GameHostBridgeRewriteOperation(
-    GameHostRecipeDecision decision,
     ValidatedExecutionPlan plan,
     RewriteRequest request,
     CancellationToken cancellationToken);
 
 /// <summary>
-/// Builds one content-addressed applied workspace containing only the rewritten overlay and the two
-/// frozen applied manifests. Original commercial payloads remain in the immutable M4 workspace.
+/// Builds one content-addressed applied workspace containing only the rewritten overlay and its two
+/// applied manifests. Original commercial payloads remain in the immutable source workspace.
 /// </summary>
 public sealed class GameHostAppliedWorkspacePreparer
 {
@@ -167,11 +157,11 @@ public sealed class GameHostAppliedWorkspacePreparer
     private const string StagingDirectoryName = "staging";
     private const string QuarantineDirectoryName = "quarantine";
     private const string CacheIndexDirectoryName = "cache-index";
-    private const string CacheIndexSchema = "junimogate-applied-cache-index/v1";
+    private const string CacheIndexSchema = "junimogate-applied-cache-index/v2";
     private const string LockFileName = ".workspace.lock";
     private const string PendingPrefix = "pending-";
     private const string OverlayRelativePath = "overlay/assemblies/StardewValley.dll";
-    private const string ToolBuildId = "junimogate-gamehost-bridge-writer-v1";
+    private const string ToolBuildId = "junimogate-gamehost-bridge-writer-v2";
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ProcessLocks =
         new(StringComparer.Ordinal);
@@ -180,7 +170,7 @@ public sealed class GameHostAppliedWorkspacePreparer
     private readonly GameHostBridgeRewriteOperation rewriteOperation;
 
     public GameHostAppliedWorkspacePreparer(IWorkspaceCandidateRevalidator revalidator)
-        : this(revalidator, RewriteExactAsync)
+        : this(revalidator, RewriteSemanticAsync)
     {
     }
 
@@ -264,7 +254,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                 sourceSnapshot.ExtractionManifestSha256,
                 sourceSnapshot.RewriteManifestV1Sha256,
                 sourceSnapshot.OriginalPayloadSet);
-            var lookupKey = CreateCacheLookupKey(sourceBinding, request.Decision, tool);
+            var lookupKey = CreateCacheLookupKey(sourceBinding, tool);
             var cachedPlan = await TryLoadCachedPlanAsync(
                 cacheIndexRoot,
                 committedRoot,
@@ -295,13 +285,12 @@ public sealed class GameHostAppliedWorkspacePreparer
                 GameHostBridgeRecipe.InputRelativePath.Replace('/', Path.DirectorySeparatorChar));
             metrics.RewriteCount++;
             var rewrite = await rewriteOperation(
-                request.Decision,
                 request.SourceExecutionPlan,
                 new RewriteRequest(inputPath, stagingOverlayPath, GameHostBridgeRecipe.Identity),
                 cancellationToken).ConfigureAwait(false);
             if (!rewrite.IsSuccess ||
                 rewrite.InputDigest is null ||
-                rewrite.InputModuleVersionId is null ||
+                string.IsNullOrWhiteSpace(rewrite.InputAssemblyIdentity) ||
                 rewrite.Rewrite.OutputDigest is null ||
                 rewrite.Mutations.IsDefaultOrEmpty)
             {
@@ -313,7 +302,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                     metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.RewriteRejected,
                     DiagnosticSeverity.Error,
-                    "The exact bridge writer did not produce an approved overlay.");
+                    "The game assembly did not satisfy the MainActivity bridge rules.");
             }
 
             var inputPayload = request.SourceExecutionPlan.Payloads.Single(payload =>
@@ -321,22 +310,18 @@ public sealed class GameHostAppliedWorkspacePreparer
                 payload.RelativePath.Equals(GameHostBridgeRecipe.InputRelativePath, StringComparison.Ordinal));
             var inputIdentity = new AppliedRewriteInputIdentity(
                 inputPayload.RelativePath,
-                GameHostRecipeCatalog.TestedPlayTargetIdentity,
-                rewrite.InputModuleVersionId,
+                rewrite.InputAssemblyIdentity,
                 inputPayload.Size,
                 rewrite.InputDigest.Value.ToString());
             var outputInfo = new FileInfo(stagingOverlayPath);
             var outputIdentity = new AppliedRewriteOutputIdentity(
                 inputPayload.RelativePath,
                 OverlayRelativePath,
-                GameHostRecipeCatalog.TestedPlayTargetIdentity,
-                rewrite.InputModuleVersionId,
-                AppliedModuleVersionIdPolicy.Preserve,
+                rewrite.InputAssemblyIdentity,
                 outputInfo.Length,
                 rewrite.Rewrite.OutputDigest.Value.ToString());
             var appliedKey = GameHostAppliedWorkspaceKey.Create(
                 sourceBinding,
-                request.Decision.SupportKey,
                 GameHostBridgeRecipe.Identity,
                 tool,
                 [inputIdentity],
@@ -347,7 +332,6 @@ public sealed class GameHostAppliedWorkspacePreparer
                 GameHostAppliedWorkspaceContract.RewriteManifestSchema,
                 appliedKey,
                 sourceBinding,
-                request.Decision.SupportKey,
                 GameHostBridgeRecipe.Identity,
                 GameHostAppliedWorkspaceContract.RewriteStatusApplied,
                 tool,
@@ -357,7 +341,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                 new AppliedRewritePostValidation(
                     GameHostAppliedWorkspaceContract.PostValidationPassed,
                     ReopenedWithIndependentReader: true,
-                    InputGuardsPassed: true,
+                    LocalGuardsPassed: true,
                     PostconditionsPassed: true,
                     AssemblyIdentityPassed: true,
                     ReferenceClosurePassed: true));
@@ -370,7 +354,6 @@ public sealed class GameHostAppliedWorkspacePreparer
                 GameHostAppliedWorkspaceContract.AppliedManifestSchema,
                 appliedKey,
                 request.SourceExecutionPlan.WorkspaceKey,
-                request.Decision.SupportKey,
                 GameHostBridgeRecipe.Identity,
                 rewriteManifestSha256,
                 sourceSnapshot.OriginalPayloadSet.Digest,
@@ -389,8 +372,8 @@ public sealed class GameHostAppliedWorkspacePreparer
                 appliedManifest,
                 sourceSnapshot.OriginalPayloads,
                 stagedFiles);
-            var authorization = GameHostAppliedWorkspaceValidator.ValidateAuthorization(rewriteManifest, request.Decision);
-            if (!shape.IsValid || !authorization.IsValid)
+            var recipeResult = GameHostAppliedWorkspaceValidator.ValidateRecipeResult(rewriteManifest);
+            if (!shape.IsValid || !recipeResult.IsValid)
             {
                 return Result(
                     GameHostAppliedWorkspacePreparationStatus.Rejected,
@@ -399,8 +382,8 @@ public sealed class GameHostAppliedWorkspacePreparer
                     metrics,
                     GameHostAppliedWorkspaceDiagnosticCodes.ManifestRejected,
                     DiagnosticSeverity.Error,
-                    "The staged applied workspace failed exact shape or authorization validation.",
-                    string.Join(',', shape.ErrorCodes.Concat(authorization.ErrorCodes).Distinct(StringComparer.Ordinal)));
+                    "The staged applied workspace failed shape or recipe-result validation.",
+                    string.Join(',', shape.ErrorCodes.Concat(recipeResult.ErrorCodes).Distinct(StringComparer.Ordinal)));
             }
 
             var committedPath = Path.Combine(committedRoot, appliedKey);
@@ -423,7 +406,7 @@ public sealed class GameHostAppliedWorkspacePreparer
                         metrics,
                         GameHostAppliedWorkspaceDiagnosticCodes.ManifestRejected,
                         DiagnosticSeverity.Error,
-                        "An existing applied workspace with the same key failed exact validation.");
+                    "An existing applied workspace with the same key failed validation.");
                 }
 
                 DeleteOwnedTree(stagingPath);
@@ -507,8 +490,8 @@ public sealed class GameHostAppliedWorkspacePreparer
                 cacheHit ? GameHostAppliedWorkspaceDiagnosticCodes.CacheHit : GameHostAppliedWorkspaceDiagnosticCodes.Built,
                 DiagnosticSeverity.Information,
                 cacheHit
-                    ? "The exact applied workspace was revalidated and activated from cache."
-                    : "The exact applied workspace was committed and activated.");
+                    ? "The applied workspace was revalidated and activated from cache."
+                    : "The semantic bridge workspace was committed and activated.");
         }
         catch (OperationCanceledException)
         {
@@ -542,17 +525,15 @@ public sealed class GameHostAppliedWorkspacePreparer
         }
     }
 
-    private static ValueTask<GameHostBridgeRewriteResult> RewriteExactAsync(
-        GameHostRecipeDecision decision,
+    private static ValueTask<GameHostBridgeRewriteResult> RewriteSemanticAsync(
         ValidatedExecutionPlan plan,
         RewriteRequest request,
         CancellationToken cancellationToken) =>
-        new GameHostBridgeAssemblyRewriter(decision, plan)
+        new GameHostBridgeAssemblyRewriter(plan)
             .RewriteWithEvidenceAsync(request, cancellationToken);
 
     private static string CreateCacheLookupKey(
         AppliedSourceWorkspaceBinding source,
-        GameHostRecipeDecision decision,
         AppliedRewriterToolIdentity tool)
     {
         var canonical = string.Join('\n',
@@ -562,8 +543,7 @@ public sealed class GameHostAppliedWorkspacePreparer
             source.ExtractionManifestSha256,
             source.RewriteManifestV1Sha256,
             source.OriginalPayloadSet.Digest,
-            decision.SupportKey,
-            decision.Recipe?.ToString() ?? string.Empty,
+            GameHostBridgeRecipe.Identity.ToString(),
             tool.BuildId,
             tool.MonoCecilVersion);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
@@ -609,14 +589,13 @@ public sealed class GameHostAppliedWorkspacePreparer
                 rewrite.AppliedWorkspaceKey != index.AppliedWorkspaceKey ||
                 applied.AppliedWorkspaceKey != index.AppliedWorkspaceKey ||
                 rewrite.Source?.WorkspaceKey != request.SourceExecutionPlan.WorkspaceKey ||
-                rewrite.SupportKey != request.Decision.SupportKey ||
-                rewrite.Recipe != request.Decision.Recipe)
+                rewrite.Recipe != GameHostBridgeRecipe.Identity)
             {
                 return null;
             }
 
-            var authorization = GameHostAppliedWorkspaceValidator.ValidateAuthorization(rewrite, request.Decision);
-            if (!authorization.IsValid)
+            var recipeResult = GameHostAppliedWorkspaceValidator.ValidateRecipeResult(rewrite);
+            if (!recipeResult.IsValid)
                 return null;
             var rewriteHash = await HashFileAsync(rewritePath, cancellationToken).ConfigureAwait(false);
             var appliedHash = await HashFileAsync(appliedPath, cancellationToken).ConfigureAwait(false);

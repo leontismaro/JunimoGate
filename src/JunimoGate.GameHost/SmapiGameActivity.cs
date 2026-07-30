@@ -9,6 +9,7 @@ using Android.Widget;
 using Android.Window;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI.AndroidHost;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
@@ -31,10 +32,12 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private BackInvokedCallback? backInvokedCallback;
     private long lastBackHandledUptime;
     private bool destroyed;
+    private string? lastSmapiFailureCode;
 
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        Log.Initialize(this, "game", GameLaunchSchema.BuildId);
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
             RegisterBackInvokedCallback();
         status = new TextView(this) { Text = "JunimoGate SMAPI\n\nStarting prepared session…", TextSize = 16 };
@@ -46,30 +49,85 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             return;
         }
 
+        var attemptId = Intent?.GetStringExtra(LaunchKeyExtra);
+        var stage = GameStartupStage.LaunchRequest;
         try
         {
-            var key = Intent?.GetStringExtra(LaunchKeyExtra) ?? throw new InvalidDataException("The launch capability is missing.");
-            var snapshot = await GameLaunchRegistry.ConsumeAsync(this, key, CancellationToken.None);
+            var key = attemptId ?? throw new InvalidDataException("The launch capability is missing.");
+            GameSessionRegistry.MarkActive(this);
+            var launch = await GameLaunchRegistry.ConsumeAsync(this, key, CancellationToken.None);
+            var snapshot = launch.Snapshot;
+            stage = GameStartupStage.SmapiBundle;
             await BundledSmapiAssets.ProvisionAndValidateAsync(this, snapshot.InternalDirectory, CancellationToken.None);
+            stage = GameStartupStage.RuntimeInventory;
             var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot);
+            stage = GameStartupStage.LoaderInstallation;
             loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
+            stage = GameStartupStage.GameAssembly;
             _ = loader.LoadGameAssembly();
-            GameSessionRegistry.MarkActive(this);
             Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameLaunchSchema.BuildId}:smapi=4.5.2");
-            CreateAndRunSession(snapshot, loader);
+            stage = GameStartupStage.SmapiSession;
+            var startupCompletion = new TaskCompletionSource<SmapiFailure?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            CreateAndRunSession(snapshot, loader, startupCompletion);
+            var reportedFailure = await startupCompletion.Task;
+            if (reportedFailure is not null)
+            {
+                throw new InvalidOperationException(
+                    $"SMAPI reported startup failure '{reportedFailure.Code}'.",
+                    reportedFailure.Exception);
+            }
+            stage = GameStartupStage.Running;
+            try
+            {
+                await GameLaunchRegistry.RecordOutcomeAsync(
+                    this,
+                    launch.AttemptId,
+                    GameLaunchOutcomeStatus.Running,
+                    stage,
+                    "session_running",
+                    CancellationToken.None);
+            }
+            catch (Exception outcomeException) when (outcomeException is IOException or UnauthorizedAccessException)
+            {
+                Log.Error("JunimoGate.SMAPI", "startup-outcome-failed", outcomeException);
+            }
         }
         catch (Exception ex)
         {
-            Log.Error("JunimoGate.SMAPI", $"startup-failed:{ex.GetType().Name}");
+            Log.Error(
+                "JunimoGate.SMAPI",
+                $"startup-failed stage={stage} code={lastSmapiFailureCode ?? "unclassified"}",
+                ex);
+            if (attemptId is not null)
+            {
+                try
+                {
+                    await GameLaunchRegistry.RecordOutcomeAsync(
+                        this,
+                        attemptId,
+                        GameLaunchOutcomeStatus.Failed,
+                        stage,
+                        lastSmapiFailureCode ?? $"startup_{stage.ToString().ToLowerInvariant()}",
+                        CancellationToken.None);
+                }
+                catch (Exception outcomeException)
+                {
+                    Log.Error("JunimoGate.SMAPI", "startup-outcome-failed", outcomeException);
+                }
+            }
             FailStartup();
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void CreateAndRunSession(PreparedGameSnapshot snapshot, SmapiDefaultAssemblyLoader assemblyLoader)
+    private void CreateAndRunSession(
+        PreparedGameSnapshot snapshot,
+        SmapiDefaultAssemblyLoader assemblyLoader,
+        TaskCompletionSource<SmapiFailure?> startupCompletion)
     {
         var runtime = new SmapiRuntime(new SmapiRuntimeOptions
         {
@@ -85,14 +143,39 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             MainThread = new ActivityDispatcher(this),
             AssemblyLoader = assemblyLoader,
             AttachGameView = view => RunOnUiThread(() => SetContentView(view)),
-            ReportFailure = failure => Log.Error("JunimoGate.SMAPI", $"{failure.Code}:{failure.Exception?.ToString() ?? failure.Message}"),
+            ReportModLoadingReady = () =>
+            {
+                Log.Info("JunimoGate.SMAPI", "mod-loading-ready");
+                startupCompletion.TrySetResult(null);
+            },
+            ReportFailure = failure =>
+            {
+                lastSmapiFailureCode = failure.Code;
+                if (failure.Exception is null)
+                    Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code} message={failure.Message}");
+                else
+                    Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code}", failure.Exception);
+                startupCompletion.TrySetResult(failure);
+            },
         });
         session = runtime.CreateSession();
         session.Run();
     }
 
-    protected override void OnResume() { base.OnResume(); session?.OnResume(); SetImmersive(); }
-    protected override void OnPause() { session?.OnPause(); base.OnPause(); }
+    protected override void OnResume()
+    {
+        base.OnResume();
+        Log.Info("JunimoGate.SMAPI", $"activity-resumed sessionCreated={(session is null ? 0 : 1)}");
+        session?.OnResume();
+        SetImmersive();
+    }
+
+    protected override void OnPause()
+    {
+        Log.Info("JunimoGate.SMAPI", $"activity-paused sessionCreated={(session is null ? 0 : 1)}");
+        session?.OnPause();
+        base.OnPause();
+    }
     protected override void OnNewIntent(global::Android.Content.Intent? intent) { base.OnNewIntent(intent); Log.Info("JunimoGate.SMAPI", "session-routed-to-front"); }
     public override void OnWindowFocusChanged(bool hasFocus) { base.OnWindowFocusChanged(hasFocus); session?.OnWindowFocusChanged(hasFocus); if (hasFocus) SetImmersive(); }
 #pragma warning disable CS0672
@@ -102,6 +185,9 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     protected override void OnDestroy()
     {
         var terminateGameProcess = IsFinishing;
+        Log.Info(
+            "JunimoGate.SMAPI",
+            $"activity-destroyed finishing={(IsFinishing ? 1 : 0)} changingConfiguration={(IsChangingConfigurations ? 1 : 0)} terminateProcess={(terminateGameProcess ? 1 : 0)}");
         destroyed = true;
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
             UnregisterBackInvokedCallback();
@@ -126,7 +212,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 return;
             Toast.MakeText(
                 this,
-                "SMAPI startup failed. Return to JunimoGate and prepare the game again.",
+                "Stardew Valley could not start. Returning to JunimoGate.",
                 ToastLength.Long)?.Show();
             Finish();
         });

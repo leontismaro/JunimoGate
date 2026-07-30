@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Android.Util;
 using JunimoGate.Core;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 

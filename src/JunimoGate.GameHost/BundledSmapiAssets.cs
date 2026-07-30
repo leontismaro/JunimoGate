@@ -2,6 +2,7 @@ using System.Text.Json;
 using Android.Content;
 using Android.Util;
 using JunimoGate.Android;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
@@ -21,6 +22,35 @@ internal static class BundledSmapiAssets
         "bundles",
         GameLaunchSchema.BuildId,
         "smapi-internal");
+
+    public static void DiscardCurrentBundle(Context context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var safe = context.ApplicationContext ?? context;
+        var internalDirectory = GetInternalDirectory(AndroidPrivateStorage.GetRuntimeRoot(safe));
+        var bundleRoot = Path.GetDirectoryName(internalDirectory)
+            ?? throw new InvalidDataException("The SMAPI bundle path is invalid.");
+        MoveAndDeleteDirectory(bundleRoot);
+    }
+
+    public static int PruneOldBundles(Context context, ref long reclaimedBytes)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var safe = context.ApplicationContext ?? context;
+        var bundlesRoot = Path.Combine(AndroidPrivateStorage.GetRuntimeRoot(safe), "smapi", "bundles");
+        if (!Directory.Exists(bundlesRoot))
+            return 0;
+        var removed = 0;
+        foreach (var directory in Directory.EnumerateDirectories(bundlesRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            if (Path.GetFileName(directory).Equals(GameLaunchSchema.BuildId, StringComparison.Ordinal))
+                continue;
+            reclaimedBytes += GetDirectoryBytes(directory);
+            MoveAndDeleteDirectory(directory);
+            removed++;
+        }
+        return removed;
+    }
 
     public static async Task ProvisionAndValidateAsync(
         Context context,
@@ -214,6 +244,30 @@ internal static class BundledSmapiAssets
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // A stale private staging directory is harmless and can be replaced on the next launch.
+        }
+    }
+
+    private static void MoveAndDeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("A bundled SMAPI directory is a reparse point.");
+        var moved = path + $".deleting-{Guid.NewGuid():N}";
+        Directory.Move(path, moved);
+        TryDeleteDirectory(moved);
+    }
+
+    private static long GetDirectoryBytes(string path)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
+                .Sum(static file => new FileInfo(file).Length);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return 0;
         }
     }
 

@@ -7,14 +7,17 @@ using JunimoGate.Android;
 using JunimoGate.Core;
 using JunimoGate.Extraction;
 using JunimoGate.Rewriter;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
 public static class GameLaunchSchema
 {
-    public const string Snapshot = "junimogate-prepared-game-snapshot/v4";
-    public const string Descriptor = "junimogate-game-launch-descriptor/v2";
-    public const string BuildId = "smapi-4.5.2-junimogate.9";
+    public const string Snapshot = "junimogate-prepared-game-snapshot/v6";
+    public const string Descriptor = "junimogate-game-launch-descriptor/v3";
+    public const string Activation = "junimogate-game-activation/v1";
+    public const string Outcome = "junimogate-game-launch-outcome/v1";
+    public const string BuildId = "smapi-4.5.2-junimogate.11";
 }
 
 public sealed record PreparedManagedAssembly(string SimpleName, string RelativePath, long Size);
@@ -24,12 +27,15 @@ public sealed record PreparedContentFile(string RelativePath, long Size);
 public sealed record PreparedGameSnapshot(
     string Schema,
     string BuildId,
+    string CompatibilityRuleId,
     string PackageName,
     string VersionName,
     long VersionCode,
     string Abi,
     string PackageMarker,
+    string SourceWorkspaceKey,
     string SourceWorkspacePath,
+    string AppliedWorkspaceKey,
     string AppliedWorkspacePath,
     string OverlayAssemblyPath,
     long OverlayAssemblySize,
@@ -46,8 +52,10 @@ public sealed record PreparedGameSnapshot(
     public void ValidateEnvelope(Context context)
     {
         if (Schema != GameLaunchSchema.Snapshot || BuildId != GameLaunchSchema.BuildId ||
+            CompatibilityRuleId != GameCompatibilityIds.StardewAndroidMainActivityBridgeV1 ||
             string.IsNullOrWhiteSpace(PackageName) || VersionCode <= 0 ||
             !Sha256Digest.TryParse(PackageMarker, out _) ||
+            !IsCacheKey(SourceWorkspaceKey) || !IsCacheKey(AppliedWorkspaceKey) ||
             string.IsNullOrWhiteSpace(SourceWorkspacePath) || string.IsNullOrWhiteSpace(AppliedWorkspacePath) ||
             string.IsNullOrWhiteSpace(OverlayAssemblyPath) || OverlayAssemblySize <= 0 ||
             ManagedAssemblies is null || ManagedAssemblies.Count == 0 ||
@@ -61,6 +69,12 @@ public sealed record PreparedGameSnapshot(
         var userDataRoot = Path.GetFullPath(AndroidPrivateStorage.GetUserDataRoot(safeContext));
         var gameSaveRoot = Path.GetFullPath(AndroidPrivateStorage.GetGameSaveRoot(safeContext));
         var expectedInternalDirectory = Path.GetFullPath(BundledSmapiAssets.GetInternalDirectory(runtimeRoot));
+        var expectedSourceWorkspace = Path.GetFullPath(Path.Combine(runtimeRoot, "workspaces", SourceWorkspaceKey));
+        var expectedAppliedWorkspace = Path.GetFullPath(Path.Combine(
+            runtimeRoot,
+            "gamehost-applied-v2",
+            "committed",
+            AppliedWorkspaceKey));
         foreach (var path in new[]
                  {
                      SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath, InternalDirectory,
@@ -78,6 +92,11 @@ public sealed record PreparedGameSnapshot(
 
         if (!Path.GetFullPath(InternalDirectory).Equals(expectedInternalDirectory, StringComparison.Ordinal))
             throw new InvalidDataException("A prepared SMAPI bundle path does not match this JunimoGate build.");
+        if (!Path.GetFullPath(SourceWorkspacePath).Equals(expectedSourceWorkspace, StringComparison.Ordinal) ||
+            !Path.GetFullPath(AppliedWorkspacePath).Equals(expectedAppliedWorkspace, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("A prepared workspace path does not match its cache key.");
+        }
 
         if (!Path.IsPathFullyQualified(SaveDirectory) ||
             !Path.GetFullPath(SaveDirectory).Equals(gameSaveRoot, StringComparison.Ordinal))
@@ -85,6 +104,10 @@ public sealed record PreparedGameSnapshot(
             throw new InvalidDataException("The prepared game save path is not host-owned.");
         }
     }
+
+    private static bool IsCacheKey(string value) =>
+        value is { Length: 64 } && value.All(static character =>
+            character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static bool IsContained(string path, string root)
     {
@@ -142,9 +165,42 @@ public sealed record GameLaunchDescriptor(
     string Schema,
     string SnapshotId,
     string CapabilityKey,
+    int RecoveryLevel,
     DateTimeOffset IssuedAtUtc);
 
 public sealed record GameLaunchHandle(string Key);
+
+public enum GameStartupStage
+{
+    LaunchRequest,
+    SmapiBundle,
+    RuntimeInventory,
+    LoaderInstallation,
+    GameAssembly,
+    SmapiSession,
+    Running,
+}
+
+public enum GameLaunchOutcomeStatus
+{
+    Running,
+    Failed,
+}
+
+public sealed record ConsumedGameLaunch(
+    string AttemptId,
+    string SnapshotId,
+    int RecoveryLevel,
+    PreparedGameSnapshot Snapshot);
+
+public sealed record PendingGameLaunchOutcome(
+    string AttemptId,
+    string SnapshotId,
+    int RecoveryLevel,
+    PreparedGameSnapshot Snapshot,
+    GameLaunchOutcomeStatus Status,
+    GameStartupStage Stage,
+    string Code);
 
 public enum GameLaunchIssueStatus
 {
@@ -171,6 +227,35 @@ public static class GameDeepPrepareCoordinator
         IProgress<GamePreparationProgress>? progress = null,
         CancellationToken cancellationToken = default) =>
         await PrepareCoreAsync(context, allowReuse: false, progress, cancellationToken).ConfigureAwait(false);
+
+    public static async ValueTask<GamePreparationResult> RecoverAsync(
+        Context context,
+        PreparedGameSnapshot failedSnapshot,
+        GameStartupStage failedStage,
+        int recoveryLevel,
+        IProgress<GamePreparationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(failedSnapshot);
+        if (recoveryLevel is < 1 or > 2)
+            throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
+        if (recoveryLevel == 1 && failedStage is GameStartupStage.LaunchRequest or GameStartupStage.SmapiBundle)
+        {
+            if (failedStage == GameStartupStage.SmapiBundle)
+                BundledSmapiAssets.DiscardCurrentBundle(context);
+            var handle = await GameLaunchRegistry.ActivateAsync(context, failedSnapshot, cancellationToken)
+                .ConfigureAwait(false);
+            return Ready(handle);
+        }
+
+        progress?.Report(new GamePreparationProgress(
+            GamePreparationStage.Preparing,
+            "Preparing the game runtime for another launch…"));
+        await RuntimeCacheMaintenance
+            .PrepareRecoveryAsync(context, failedSnapshot, failedStage, recoveryLevel, cancellationToken)
+            .ConfigureAwait(false);
+        return await PrepareCoreAsync(context, allowReuse: false, progress, cancellationToken).ConfigureAwait(false);
+    }
 
     private static async ValueTask<GamePreparationResult> PrepareCoreAsync(
         Context context,
@@ -239,6 +324,10 @@ public static class GameDeepPrepareCoordinator
             }
             catch (GameInstallationPreparationException exception)
             {
+                Log.Warn(
+                    "JunimoGate.DeepPrepare",
+                    $"package-preparation-rejected code={exception.Code}",
+                    exception);
                 return await CompleteDeepPrepareAsync(safe, new GamePreparationResult(
                     GamePreparationStatus.Unsupported,
                     null,
@@ -253,6 +342,7 @@ public static class GameDeepPrepareCoordinator
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
                                           InvalidDataException or InvalidOperationException or CryptographicException)
         {
+            Log.Error("JunimoGate.DeepPrepare", "deep-prepare-failed", exception);
             var result = new GamePreparationResult(
                 GamePreparationStatus.Failed,
                 null,
@@ -366,12 +456,15 @@ public static class GameDeepPrepareCoordinator
         var snapshot = new PreparedGameSnapshot(
             GameLaunchSchema.Snapshot,
             GameLaunchSchema.BuildId,
+            GameCompatibilityIds.StardewAndroidMainActivityBridgeV1,
             source.PackageName,
             source.VersionName,
             source.LongVersionCode,
             source.SelectedAbi,
             PackageUpdateMarker.Create(package),
+            source.WorkspaceKey,
             source.WorkspacePath,
+            capability.AppliedExecutionPlan.AppliedWorkspaceKey,
             capability.AppliedExecutionPlan.AppliedWorkspacePath,
             capability.AppliedExecutionPlan.OverlayAssemblyPath,
             capability.AppliedExecutionPlan.OverlayAssemblySize,
@@ -428,9 +521,7 @@ public static class GameDeepPrepareCoordinator
         private long workspacePayloadBytesHashed;
         private string appliedWorkspaceStatus = "not-run";
         private long appliedWorkspaceDurationMilliseconds;
-        private int managedProbeCount;
-        private int nativeInventoryCount;
-        private int recipeEvaluationCount;
+        private int compatibilityAnalysisCount;
         private int rewriteCount;
 
         public int PackageManagerSnapshotCount { get; set; }
@@ -458,9 +549,7 @@ public static class GameDeepPrepareCoordinator
             if (result.Metrics is null)
                 return;
             appliedWorkspaceDurationMilliseconds = result.Metrics.DurationMilliseconds;
-            managedProbeCount = result.Metrics.ManagedProbeCount;
-            nativeInventoryCount = result.Metrics.NativeInventoryCount;
-            recipeEvaluationCount = result.Metrics.RecipeEvaluationCount;
+            compatibilityAnalysisCount = result.Metrics.CompatibilityAnalysisCount;
             rewriteCount = result.Metrics.RewriteCount;
         }
 
@@ -476,9 +565,7 @@ public static class GameDeepPrepareCoordinator
             workspacePayloadBytesHashed,
             appliedWorkspaceStatus,
             appliedWorkspaceDurationMilliseconds,
-            managedProbeCount,
-            nativeInventoryCount,
-            recipeEvaluationCount,
+            compatibilityAnalysisCount,
             rewriteCount);
     }
 
@@ -496,7 +583,11 @@ public static class GameLaunchRegistry
 {
     private const int MaximumSnapshotBytes = 64 * 1024 * 1024;
     private const int MaximumDescriptorBytes = 64 * 1024;
+    private const int MaximumStateBytes = 64 * 1024;
+    private const int MaximumOutcomeBytes = 64 * 1024;
     private static readonly TimeSpan StaleDescriptorAge = TimeSpan.FromDays(1);
+    private static readonly TimeSpan PendingLaunchStartupGrace = TimeSpan.FromMinutes(2);
+    private static readonly SemaphoreSlim StateLock = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -513,8 +604,31 @@ public static class GameLaunchRegistry
         var snapshotId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         await WriteJsonAsync(Path.Combine(root, $"snapshot-{snapshotId}.json"), snapshot, cancellationToken)
             .ConfigureAwait(false);
-        await WriteTextAsync(Path.Combine(root, "active-snapshot.json"), snapshotId, cancellationToken)
-            .ConfigureAwait(false);
+        GameActivationState state;
+        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            var previous = current.ActiveConfirmed && IsSnapshotId(current.ActiveSnapshotId)
+                ? current.ActiveSnapshotId
+                : current.PreviousSnapshotId;
+            state = new GameActivationState(
+                GameLaunchSchema.Activation,
+                snapshotId,
+                ActiveConfirmed: false,
+                previous,
+                FailedSnapshotId: null,
+                Pending: null,
+                DateTimeOffset.UtcNow);
+            await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            StateLock.Release();
+        }
+
+        await CleanupRegistryAsync(context, state, cancellationToken).ConfigureAwait(false);
+        await RuntimeCacheMaintenance.PruneAsync(context, state, cancellationToken).ConfigureAwait(false);
         return CreateHandle(snapshotId, snapshot, reused: false);
     }
 
@@ -529,11 +643,20 @@ public static class GameLaunchRegistry
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,
+        CancellationToken cancellationToken) =>
+        await TryIssueLaunchAsync(context, preparedGame, recoveryLevel: 0, cancellationToken).ConfigureAwait(false);
+
+    public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
+        Context context,
+        PreparedGameHandle preparedGame,
+        int recoveryLevel,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(preparedGame);
-        var activeSnapshotId = await TryReadActiveSnapshotIdAsync(context, cancellationToken).ConfigureAwait(false);
-        if (!preparedGame.SnapshotId.Equals(activeSnapshotId, StringComparison.Ordinal))
+        if (recoveryLevel is < 0 or > 2)
+            throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
+        var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+        if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
             return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
         if (!await IsCurrentPackageAsync(context, preparedGame.Snapshot, cancellationToken).ConfigureAwait(false))
         {
@@ -547,14 +670,38 @@ public static class GameLaunchRegistry
             GameLaunchSchema.Descriptor,
             preparedGame.SnapshotId,
             key,
+            recoveryLevel,
             DateTimeOffset.UtcNow);
         await WriteJsonAsync(Path.Combine(root, $"descriptor-{key}.json"), descriptor, cancellationToken)
             .ConfigureAwait(false);
-        Log.Info("JunimoGate.LaunchTrace", "descriptor-issued descriptorSnapshotReads=0");
+        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
+            {
+                TryDeleteFile(Path.Combine(root, $"descriptor-{key}.json"));
+                return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
+            }
+
+            state = state with
+            {
+                Pending = new PendingLaunchAttempt(key, preparedGame.SnapshotId, recoveryLevel, DateTimeOffset.UtcNow),
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            StateLock.Release();
+        }
+        Log.Info(
+            "JunimoGate.LaunchTrace",
+            $"descriptor-issued attempt={key[..8]} level={recoveryLevel} descriptorSnapshotReads=0");
         return new GameLaunchIssueResult(GameLaunchIssueStatus.Issued, new GameLaunchHandle(key));
     }
 
-    public static async ValueTask<PreparedGameSnapshot> ConsumeAsync(
+    public static async ValueTask<ConsumedGameLaunch> ConsumeAsync(
         Context context,
         string key,
         CancellationToken cancellationToken)
@@ -582,7 +729,7 @@ public static class GameLaunchRegistry
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The launch request is invalid.");
             if (descriptor.Schema != GameLaunchSchema.Descriptor || descriptor.CapabilityKey != key ||
-                descriptor.SnapshotId.Length != 32 || descriptor.SnapshotId.Any(static c => !Uri.IsHexDigit(c)))
+                !IsSnapshotId(descriptor.SnapshotId) || descriptor.RecoveryLevel is < 0 or > 2)
             {
                 throw new InvalidDataException("The launch request is invalid.");
             }
@@ -594,13 +741,248 @@ public static class GameLaunchRegistry
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The prepared game snapshot is invalid.");
             snapshot.ValidateEnvelope(context);
-            Log.Info("JunimoGate.LaunchTrace", "game snapshotReads=1");
-            return snapshot;
+            Log.Info(
+                "JunimoGate.LaunchTrace",
+                $"descriptor-consumed attempt={key[..8]} level={descriptor.RecoveryLevel} gameSnapshotReads=1");
+            return new ConsumedGameLaunch(
+                key,
+                descriptor.SnapshotId,
+                descriptor.RecoveryLevel,
+                snapshot);
         }
         finally
         {
             TryDeleteFile(consumingPath);
         }
+    }
+
+    public static async ValueTask RecordOutcomeAsync(
+        Context context,
+        string attemptId,
+        GameLaunchOutcomeStatus status,
+        GameStartupStage stage,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSnapshotId(attemptId))
+            throw new ArgumentException("The launch outcome identity is invalid.");
+        code = IsCode(code) ? code : "startup_failed";
+        var outcome = new StoredLaunchOutcome(
+            GameLaunchSchema.Outcome,
+            attemptId,
+            status,
+            stage,
+            code,
+            DateTimeOffset.UtcNow);
+        await WriteJsonAsync(
+                Path.Combine(GetRoot(context), $"outcome-{attemptId}.json"),
+                outcome,
+                cancellationToken)
+            .ConfigureAwait(false);
+        Log.Info(
+            "JunimoGate.Launch",
+            $"outcome-recorded attempt={attemptId[..8]} status={status} stage={stage} code={code}");
+    }
+
+    public static async ValueTask<PendingGameLaunchOutcome?> TryReadPendingOutcomeAsync(
+        Context context,
+        CancellationToken cancellationToken)
+    {
+        var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+        var pending = state.Pending;
+        if (pending is null)
+            return null;
+        if (!IsSnapshotId(pending.AttemptId) || !IsSnapshotId(pending.SnapshotId) ||
+            pending.RecoveryLevel is < 0 or > 2)
+        {
+            await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
+        var snapshot = await TryReadSnapshotAsync(context, pending.SnapshotId, cancellationToken).ConfigureAwait(false);
+        if (snapshot is null)
+        {
+            await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        var outcomePath = Path.Combine(GetRoot(context), $"outcome-{pending.AttemptId}.json");
+        if (!File.Exists(outcomePath))
+        {
+            if (GameSessionRegistry.IsGameProcessActive(context))
+                return null;
+            var pendingAge = DateTimeOffset.UtcNow - pending.IssuedAtUtc;
+            if (pendingAge <= PendingLaunchStartupGrace)
+            {
+                Log.Info(
+                    "JunimoGate.Launch",
+                    $"launch-still-starting attempt={pending.AttemptId[..8]} level={pending.RecoveryLevel}");
+                return null;
+            }
+            Log.Warn(
+                "JunimoGate.Launch",
+                $"launch-interrupted attempt={pending.AttemptId[..8]} level={pending.RecoveryLevel}");
+            return new PendingGameLaunchOutcome(
+                pending.AttemptId,
+                pending.SnapshotId,
+                pending.RecoveryLevel,
+                snapshot,
+                GameLaunchOutcomeStatus.Failed,
+                GameStartupStage.LaunchRequest,
+                "launch_interrupted");
+        }
+
+        try
+        {
+            var outcome = await ReadJsonAsync<StoredLaunchOutcome>(
+                    outcomePath,
+                    MaximumOutcomeBytes,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome is null || outcome.Schema != GameLaunchSchema.Outcome ||
+                outcome.AttemptId != pending.AttemptId || !Enum.IsDefined(outcome.Status) ||
+                !Enum.IsDefined(outcome.Stage) || !IsCode(outcome.Code))
+            {
+                throw new InvalidDataException("The launch outcome is invalid.");
+            }
+            return new PendingGameLaunchOutcome(
+                pending.AttemptId,
+                pending.SnapshotId,
+                pending.RecoveryLevel,
+                snapshot,
+                outcome.Status,
+                outcome.Stage,
+                outcome.Code);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            Log.Warn(
+                "JunimoGate.Launch",
+                $"launch-outcome-invalid attempt={pending.AttemptId[..8]} level={pending.RecoveryLevel}",
+                exception);
+            return new PendingGameLaunchOutcome(
+                pending.AttemptId,
+                pending.SnapshotId,
+                pending.RecoveryLevel,
+                snapshot,
+                GameLaunchOutcomeStatus.Failed,
+                GameStartupStage.LaunchRequest,
+                "launch_outcome_invalid");
+        }
+    }
+
+    public static async ValueTask CompletePendingRunningAsync(
+        Context context,
+        PendingGameLaunchOutcome pending,
+        CancellationToken cancellationToken)
+    {
+        GameActivationState? completed = null;
+        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            if (state.Pending?.AttemptId != pending.AttemptId)
+                return;
+            var confirmsActive = state.ActiveSnapshotId == pending.SnapshotId;
+            state = state with
+            {
+                ActiveConfirmed = confirmsActive,
+                PreviousSnapshotId = confirmsActive ? null : state.PreviousSnapshotId,
+                FailedSnapshotId = null,
+                Pending = null,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+            completed = state;
+        }
+        finally
+        {
+            StateLock.Release();
+        }
+        if (completed is null)
+            return;
+        Log.Info(
+            "JunimoGate.Launch",
+            $"running-confirmed attempt={pending.AttemptId[..8]} active={(completed.ActiveConfirmed ? 1 : 0)}");
+        CleanupAttemptFiles(context, pending.AttemptId);
+        await CleanupRegistryAsync(context, completed, cancellationToken).ConfigureAwait(false);
+        await RuntimeCacheMaintenance.PruneAsync(context, completed, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async ValueTask CompletePendingFailureAsync(
+        Context context,
+        PendingGameLaunchOutcome pending,
+        CancellationToken cancellationToken)
+    {
+        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            if (state.Pending?.AttemptId != pending.AttemptId)
+                return;
+            var failedIsActive = state.ActiveSnapshotId == pending.SnapshotId;
+            state = state with
+            {
+                ActiveSnapshotId = failedIsActive ? null : state.ActiveSnapshotId,
+                ActiveConfirmed = failedIsActive ? false : state.ActiveConfirmed,
+                FailedSnapshotId = pending.SnapshotId,
+                Pending = null,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+            CleanupAttemptFiles(context, pending.AttemptId);
+            Log.Warn(
+                "JunimoGate.Launch",
+                $"failure-completed attempt={pending.AttemptId[..8]} stage={pending.Stage} code={pending.Code} level={pending.RecoveryLevel}");
+        }
+        finally
+        {
+            StateLock.Release();
+        }
+    }
+
+    internal static async ValueTask DropPreviousIfUsesAsync(
+        Context context,
+        PreparedGameSnapshot failed,
+        CancellationToken cancellationToken)
+    {
+        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            if (!IsSnapshotId(state.PreviousSnapshotId))
+                return;
+            var previous = await TryReadSnapshotAsync(context, state.PreviousSnapshotId!, cancellationToken).ConfigureAwait(false);
+            if (previous is null ||
+                previous.SourceWorkspaceKey == failed.SourceWorkspaceKey ||
+                previous.AppliedWorkspaceKey == failed.AppliedWorkspaceKey)
+            {
+                state = state with { PreviousSnapshotId = null, UpdatedAtUtc = DateTimeOffset.UtcNow };
+                await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            StateLock.Release();
+        }
+    }
+
+    internal static async ValueTask<IReadOnlyList<PreparedGameSnapshot>> ReadRetainedSnapshotsAsync(
+        Context context,
+        GameActivationState state,
+        CancellationToken cancellationToken)
+    {
+        var ids = new[] { state.ActiveSnapshotId, state.PreviousSnapshotId, state.Pending?.SnapshotId }
+            .Where(IsSnapshotId)
+            .Distinct(StringComparer.Ordinal)
+            .Cast<string>();
+        var snapshots = new List<PreparedGameSnapshot>();
+        foreach (var id in ids)
+        {
+            var snapshot = await TryReadSnapshotAsync(context, id, cancellationToken).ConfigureAwait(false);
+            if (snapshot is not null)
+                snapshots.Add(snapshot);
+        }
+        return snapshots;
     }
 
     private static async ValueTask<(string SnapshotId, PreparedGameSnapshot Snapshot)?> TryReadActiveAsync(
@@ -610,25 +992,17 @@ public static class GameLaunchRegistry
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            var snapshotId = await TryReadActiveSnapshotIdAsync(context, cancellationToken).ConfigureAwait(false);
-            if (snapshotId is null)
+            var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            var snapshotId = state.ActiveSnapshotId;
+            if (!IsSnapshotId(snapshotId))
                 return null;
-            var root = GetRoot(context);
-            var snapshotPath = Path.Combine(root, $"snapshot-{snapshotId}.json");
-            if (!File.Exists(snapshotPath))
-                return null;
-            var snapshot = await ReadJsonAsync<PreparedGameSnapshot>(
-                    snapshotPath,
-                    MaximumSnapshotBytes,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var snapshot = await TryReadSnapshotAsync(context, snapshotId!, cancellationToken).ConfigureAwait(false);
             if (snapshot is null)
                 return null;
-            snapshot.ValidateEnvelope(context);
             Log.Info(
                 "JunimoGate.LaunchTrace",
                 $"launcher snapshotReads=1 durationMs={Math.Max(1, stopwatch.ElapsedMilliseconds)}");
-            return (snapshotId, snapshot);
+            return (snapshotId!, snapshot);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -637,6 +1011,7 @@ public static class GameLaunchRegistry
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
                                           InvalidDataException or CryptographicException or ArgumentException)
         {
+            Log.Warn("JunimoGate.LaunchTrace", "active-snapshot-read-failed", exception);
             return null;
         }
     }
@@ -668,6 +1043,7 @@ public static class GameLaunchRegistry
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                           InvalidOperationException or CryptographicException)
         {
+            Log.Warn("JunimoGate.LaunchTrace", "package-snapshot-check-failed", exception);
             return false;
         }
     }
@@ -675,15 +1051,50 @@ public static class GameLaunchRegistry
     private static PreparedGameHandle CreateHandle(string snapshotId, PreparedGameSnapshot snapshot, bool reused) =>
         new(snapshotId, snapshot, reused);
 
-    private static async ValueTask<string?> TryReadActiveSnapshotIdAsync(
+    private static async ValueTask<GameActivationState> TryReadStateAsync(
         Context context,
         CancellationToken cancellationToken)
     {
         var activePath = Path.Combine(GetRoot(context), "active-snapshot.json");
         if (!File.Exists(activePath))
+            return GameActivationState.Empty;
+        try
+        {
+            var state = await ReadJsonAsync<GameActivationState>(activePath, MaximumStateBytes, cancellationToken)
+                .ConfigureAwait(false);
+            return state is not null && state.Schema == GameLaunchSchema.Activation
+                ? state
+                : GameActivationState.Empty;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            return GameActivationState.Empty;
+        }
+    }
+
+    private static Task WriteStateAsync(Context context, GameActivationState state, CancellationToken cancellationToken) =>
+        WriteJsonAsync(Path.Combine(GetRoot(context), "active-snapshot.json"), state, cancellationToken);
+
+    private static async ValueTask<PreparedGameSnapshot?> TryReadSnapshotAsync(
+        Context context,
+        string snapshotId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var path = Path.Combine(GetRoot(context), $"snapshot-{snapshotId}.json");
+            if (!File.Exists(path))
+                return null;
+            var snapshot = await ReadJsonAsync<PreparedGameSnapshot>(path, MaximumSnapshotBytes, cancellationToken)
+                .ConfigureAwait(false);
+            snapshot?.ValidateEnvelope(context);
+            return snapshot;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
+                                          InvalidDataException or CryptographicException or ArgumentException)
+        {
             return null;
-        var snapshotId = (await File.ReadAllTextAsync(activePath, cancellationToken).ConfigureAwait(false)).Trim();
-        return snapshotId.Length == 32 && snapshotId.All(static c => Uri.IsHexDigit(c)) ? snapshotId : null;
+        }
     }
 
     private static string GetRoot(Context context)
@@ -737,18 +1148,73 @@ public static class GameLaunchRegistry
         }
     }
 
-    private static async Task WriteTextAsync(string path, string value, CancellationToken cancellationToken)
+    private static ValueTask CleanupRegistryAsync(
+        Context context,
+        GameActivationState state,
+        CancellationToken cancellationToken)
     {
-        var temporaryPath = path + $".{Guid.NewGuid():N}.tmp";
+        var retained = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in new[] { state.ActiveSnapshotId, state.PreviousSnapshotId, state.FailedSnapshotId, state.Pending?.SnapshotId })
+        {
+            if (IsSnapshotId(id))
+                retained.Add(id!);
+        }
         try
         {
-            await File.WriteAllTextAsync(temporaryPath, value, cancellationToken).ConfigureAwait(false);
-            File.Move(temporaryPath, path, overwrite: true);
+            foreach (var path in Directory.EnumerateFiles(GetRoot(context), "snapshot-*.json", SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var name = Path.GetFileNameWithoutExtension(path);
+                var id = name.StartsWith("snapshot-", StringComparison.Ordinal) ? name[9..] : string.Empty;
+                if (IsSnapshotId(id) && !retained.Contains(id))
+                    TryDeleteFile(path);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Registry cleanup is best-effort and never changes the selected snapshot.
+        }
+        CleanupStaleDescriptors(GetRoot(context));
+        return ValueTask.CompletedTask;
+    }
+
+    private static async ValueTask ClearInvalidPendingAsync(
+        Context context,
+        GameActivationState observed,
+        PendingLaunchAttempt pending,
+        CancellationToken cancellationToken)
+    {
+        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+            if (state.Pending?.AttemptId != observed.Pending?.AttemptId)
+                return;
+            var pendingWasActive = IsSnapshotId(pending.SnapshotId) && state.ActiveSnapshotId == pending.SnapshotId;
+            state = state with
+            {
+                ActiveSnapshotId = pendingWasActive ? null : state.ActiveSnapshotId,
+                ActiveConfirmed = pendingWasActive ? false : state.ActiveConfirmed,
+                FailedSnapshotId = IsSnapshotId(pending.SnapshotId) ? pending.SnapshotId : state.FailedSnapshotId,
+                Pending = null,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            TryDeleteFile(temporaryPath);
+            StateLock.Release();
         }
+        if (IsSnapshotId(pending.AttemptId))
+            CleanupAttemptFiles(context, pending.AttemptId);
+    }
+
+    private static void CleanupAttemptFiles(Context context, string attemptId)
+    {
+        var root = GetRoot(context);
+        TryDeleteFile(Path.Combine(root, $"outcome-{attemptId}.json"));
+        TryDeleteFile(Path.Combine(root, $"descriptor-{attemptId}.json"));
+        TryDeleteFile(Path.Combine(root, $"descriptor-{attemptId}.json.consuming"));
     }
 
     private static void CleanupStaleDescriptors(string root)
@@ -786,4 +1252,45 @@ public static class GameLaunchRegistry
             // A stale private temporary file is safer than replacing an unrelated path.
         }
     }
+
+    private static bool IsSnapshotId(string? value) =>
+        value is { Length: 32 } && value.All(static character =>
+            character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool IsCode(string value) =>
+        value is { Length: > 0 and <= 128 } && value.All(static character =>
+            character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-');
+
+    internal sealed record PendingLaunchAttempt(
+        string AttemptId,
+        string SnapshotId,
+        int RecoveryLevel,
+        DateTimeOffset IssuedAtUtc);
+
+    internal sealed record GameActivationState(
+        string Schema,
+        string? ActiveSnapshotId,
+        bool ActiveConfirmed,
+        string? PreviousSnapshotId,
+        string? FailedSnapshotId,
+        PendingLaunchAttempt? Pending,
+        DateTimeOffset UpdatedAtUtc)
+    {
+        public static GameActivationState Empty { get; } = new(
+            GameLaunchSchema.Activation,
+            null,
+            false,
+            null,
+            null,
+            null,
+            DateTimeOffset.UnixEpoch);
+    }
+
+    private sealed record StoredLaunchOutcome(
+        string Schema,
+        string AttemptId,
+        GameLaunchOutcomeStatus Status,
+        GameStartupStage Stage,
+        string Code,
+        DateTimeOffset RecordedAtUtc);
 }

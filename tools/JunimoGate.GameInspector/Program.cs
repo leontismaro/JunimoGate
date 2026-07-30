@@ -69,7 +69,8 @@ internal static class GameInspector
             using var archive = ZipFile.OpenRead(fullPath);
             var roles = ApkEntryInventory.Classify(archive.Entries.Select(entry => entry.FullName));
             var stores = new List<object>();
-            foreach (var candidate in AssemblyStoreV2.FindInApk(archive))
+            var modernCandidates = AssemblyStoreV2.FindInApk(archive);
+            foreach (var candidate in modernCandidates)
             {
                 using var store = candidate.Open();
                 stores.Add(new
@@ -89,6 +90,25 @@ internal static class GameInspector
                 });
             }
 
+            object? legacyStore = null;
+            if (modernCandidates.Count == 0 && LegacyAssemblyStoreSet.HasCandidate(archive))
+            {
+                using var store = LegacyAssemblyStoreSet.Open(archive, "arm64-v8a");
+                legacyStore = new
+                {
+                    version = 1,
+                    abi = "arm64-v8a",
+                    entryCount = store.Items.Count,
+                    entries = store.Items.Select(item => new
+                    {
+                        name = item.Name,
+                        abi = item.Abi,
+                        dataSize = item.DataSize,
+                        sourceEntry = item.SourceEntry,
+                    }),
+                };
+            }
+
             var nativeLibraries = archive.Entries
                 .Select(ToRuntimeNativeLibrary)
                 .Where(item => item is not null)
@@ -101,6 +121,7 @@ internal static class GameInspector
                 sha256,
                 roles = RoleNames(roles.Roles),
                 assemblyStores = stores,
+                legacyAssemblyStore = legacyStore,
                 runtimeNativeLibraries = nativeLibraries,
             });
         }
@@ -123,7 +144,8 @@ internal static class GameInspector
             sourceFiles.Add(new { path = fullPath, size = apkSize, sha256 = apkHash });
 
             using var archive = ZipFile.OpenRead(fullPath);
-            foreach (var candidate in AssemblyStoreV2.FindInApk(archive))
+            var modernCandidates = AssemblyStoreV2.FindInApk(archive);
+            foreach (var candidate in modernCandidates)
             {
                 using var store = candidate.Open();
                 foreach (var item in store.Items)
@@ -138,6 +160,26 @@ internal static class GameInspector
                         storedDataSize = item.DataSize,
                         sourceApk = fullPath,
                         sourceEntry = candidate.Entry.FullName,
+                        descriptorIndex = item.DescriptorIndex,
+                    });
+                }
+            }
+
+            if (modernCandidates.Count == 0 && LegacyAssemblyStoreSet.HasCandidate(archive))
+            {
+                using var store = LegacyAssemblyStoreSet.Open(archive, "arm64-v8a");
+                foreach (var item in store.Items)
+                {
+                    var file = await transaction.ExtractAsync(store, item).ConfigureAwait(false);
+                    extracted.Add(new
+                    {
+                        name = file.Name,
+                        size = file.Size,
+                        sha256 = file.Sha256,
+                        abi = item.Abi,
+                        storedDataSize = item.DataSize,
+                        sourceApk = fullPath,
+                        sourceEntry = item.SourceEntry,
                         descriptorIndex = item.DescriptorIndex,
                     });
                 }

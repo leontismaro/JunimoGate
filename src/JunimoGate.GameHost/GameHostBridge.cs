@@ -1,14 +1,15 @@
 using Android.App;
 using Android.Content.PM;
 using Android.Util;
+using JunimoGate.Core;
 using JunimoGate.Extraction;
-using JunimoGate.Rewriter;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
 /// <summary>
-/// Narrow Android capabilities exposed to an exact rewritten game recipe. The bridge is unusable
-/// until a catalog-approved recipe and a freshly validated installed-source plan are attached.
+/// Narrow Android capabilities exposed to the rewritten game. The bridge is unusable until a
+/// prepared snapshot for the semantic MainActivity rule family is attached.
 /// </summary>
 public static class GameHostBridge
 {
@@ -90,7 +91,7 @@ public static class GameHostBridge
         var versionCode = GetSession().VersionCode;
         if (versionCode is < int.MinValue or > int.MaxValue)
         {
-            throw new InvalidOperationException("The trusted game versionCode does not fit the tested game API.");
+            throw new InvalidOperationException("The prepared game versionCode does not fit the bridge API.");
         }
 
         return checked((int)versionCode);
@@ -114,54 +115,14 @@ public static class GameHostBridge
         return false;
     }
 
-    internal static void Attach(
-        GameHostActivity activity,
-        ValidatedExecutionPlan plan,
-        GameHostRecipeDecision decision)
-    {
-        ArgumentNullException.ThrowIfNull(activity);
-        ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(decision);
-
-        if (!decision.CanRewrite ||
-            decision.EntitlementPolicy != GameHostEntitlementPolicy.TrustedInstalledSource ||
-            !decision.SupportKey.Equals(GameHostRecipeCatalog.TestedPlaySupportKey, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("The support catalog has not authorized this GameHost bridge session.");
-        }
-
-        if (!plan.PackageName.Equals(GameHostRecipeCatalog.TestedPlayPackageName, StringComparison.Ordinal) ||
-            !plan.VersionName.Equals(GameHostRecipeCatalog.TestedPlayVersionName, StringComparison.Ordinal) ||
-            plan.LongVersionCode != GameHostRecipeCatalog.TestedPlayLongVersionCode ||
-            !plan.SelectedAbi.Equals(GameHostRecipeCatalog.TestedPlayAbi, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("The validated execution plan does not match the approved game identity.");
-        }
-
-        if (activity.IsFinishing || activity.IsDestroyed)
-        {
-            throw new InvalidOperationException("The framework-created GameHost Activity is not usable.");
-        }
-
-        lock (SessionLock)
-        {
-            if (session is not null && !ReferenceEquals(session.Activity, activity))
-            {
-                throw new InvalidOperationException("A different GameHost bridge session is already active.");
-            }
-
-            session = new BridgeSession(activity, plan.LongVersionCode);
-        }
-    }
-
     internal static void Attach(Activity activity, PreparedGameSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(activity);
         ArgumentNullException.ThrowIfNull(snapshot);
-        if (snapshot.PackageName != GameHostRecipeCatalog.TestedPlayPackageName ||
-            snapshot.VersionName != GameHostRecipeCatalog.TestedPlayVersionName ||
-            snapshot.VersionCode != GameHostRecipeCatalog.TestedPlayLongVersionCode ||
-            snapshot.Abi != GameHostRecipeCatalog.TestedPlayAbi || activity.IsFinishing || activity.IsDestroyed)
+        if (snapshot.CompatibilityRuleId != GameCompatibilityIds.StardewAndroidMainActivityBridgeV1 ||
+            snapshot.PackageName != KnownGameCertificate.PlayPackageName ||
+            snapshot.Abi != GameInstallationDiscoveryCoordinator.SupportedAbi ||
+            activity.IsFinishing || activity.IsDestroyed)
             throw new InvalidOperationException("The prepared SMAPI bridge snapshot is not usable.");
         lock (SessionLock)
         {
@@ -188,7 +149,7 @@ public static class GameHostBridge
         lock (SessionLock)
         {
             return session ?? throw new InvalidOperationException(
-                "No catalog-approved trusted GameHost bridge session is active.");
+                "No prepared GameHost bridge session is active.");
         }
     }
 

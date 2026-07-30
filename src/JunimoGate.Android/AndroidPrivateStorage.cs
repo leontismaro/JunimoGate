@@ -11,6 +11,7 @@ public static class AndroidPrivateStorage
     private const string RootDirectoryName = "junimogate";
     private const string RuntimeDirectoryName = "runtime";
     private const string ReportsDirectoryName = "reports";
+    private const string ProductLogsDirectoryName = "product-logs";
     private const string UserDataDirectoryName = "user-data";
     private const string LegacyMigrationMarkerName = ".storage-layout-v1";
     private const string UserDataMigrationMarkerName = ".storage-layout-v2";
@@ -104,6 +105,9 @@ public static class AndroidPrivateStorage
 
     public static string GetReportsRoot(Context context) =>
         GetOwnedDirectory(context, ReportsDirectoryName);
+
+    public static string GetProductLogsRoot(Context context) =>
+        GetOwnedDirectory(context, ProductLogsDirectoryName);
 
     public static string GetUserDataRoot(Context context) =>
         GetOwnedDirectory(context, UserDataDirectoryName);

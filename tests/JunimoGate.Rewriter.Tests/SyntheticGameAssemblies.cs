@@ -1,323 +1,281 @@
-using System.Runtime.Versioning;
+using System.Security.Cryptography;
+using JunimoGate.Core;
+using JunimoGate.Extraction;
+using JunimoGate.Rewriter;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
 namespace JunimoGate.Rewriter.Tests;
 
 internal sealed record SyntheticGameOptions(
-    bool IncludeMainActivity = true,
-    bool DuplicateMainActivity = false,
-    bool IncludeInstanceField = true,
-    bool DuplicateInstanceField = false,
-    bool StaticInstanceField = true,
-    bool IncludeUnresolvedInteropEnumAttribute = false);
+    Version? AssemblyVersion = null,
+    Guid? ModuleVersionId = null,
+    bool AddIrrelevantCall = false,
+    bool AddExtraLocal = false,
+    string? MissingRuleId = null,
+    string? DuplicateRuleId = null,
+    string? InvalidStackRuleId = null);
 
-internal sealed record SyntheticGamePaths(string Root, string Target, string Dependency);
+internal sealed record SyntheticGameFixture(
+    string WorkspacePath,
+    string InputPath,
+    string OutputPath,
+    ValidatedExecutionPlan Plan);
 
 internal static class SyntheticGameAssemblies
 {
-    private static readonly Guid TargetMvid = Guid.Parse("11111111-2222-3333-4444-555555555555");
-    private static readonly Guid DependencyMvid = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
-
-    public static SyntheticGamePaths Create(string root, SyntheticGameOptions? options = null)
+    public static SyntheticGameFixture Create(string root, SyntheticGameOptions? options = null)
     {
         options ??= new SyntheticGameOptions();
-        Directory.CreateDirectory(root);
-        var targetPath = Path.Combine(root, "StardewValley.dll");
-        var dependencyPath = Path.Combine(root, "GameDependency.dll");
-        var unresolvedContractsPath = Path.Combine(root, "Missing.Android.Contracts.dll");
+        var workspace = Path.Combine(root, "source");
+        var input = Path.Combine(workspace, GameHostBridgeRecipe.InputRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var output = Path.Combine(root, "staging", "StardewValley.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(input)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        WriteGame(input, options);
 
-        if (options.IncludeUnresolvedInteropEnumAttribute)
-        {
-            WriteUnresolvedAndroidContracts(unresolvedContractsPath);
-        }
-
-        WriteTarget(targetPath, options, unresolvedContractsPath);
-        if (options.IncludeUnresolvedInteropEnumAttribute)
-        {
-            File.Delete(unresolvedContractsPath);
-        }
-
-        WriteDependency(dependencyPath);
-        return new SyntheticGamePaths(root, targetPath, dependencyPath);
+        var bytes = File.ReadAllBytes(input);
+        var payload = new ValidatedWorkspacePayload(
+            "assembly",
+            GameHostBridgeRecipe.InputRelativePath,
+            bytes.LongLength,
+            Convert.ToHexStringLower(SHA256.HashData(bytes)));
+        var plan = new ValidatedExecutionPlan(
+            KnownGameCertificate.PlayPackageName,
+            options.AssemblyVersion?.ToString() ?? "1.6.99",
+            999,
+            GameInstallationDiscoveryCoordinator.SupportedAbi,
+            new string('a', 64),
+            workspace,
+            new string('b', 64),
+            DateTimeOffset.UtcNow,
+            [payload]);
+        return new SyntheticGameFixture(workspace, input, output, plan);
     }
 
-    private static void WriteTarget(
-        string path,
-        SyntheticGameOptions options,
-        string unresolvedContractsPath)
+    private static void WriteGame(string path, SyntheticGameOptions options)
     {
-        var assembly = AssemblyDefinition.CreateAssembly(
-            new AssemblyNameDefinition("StardewValley", new Version(1, 6, 15, 3)),
+        using var assembly = AssemblyDefinition.CreateAssembly(
+            new AssemblyNameDefinition("StardewValley", options.AssemblyVersion ?? new Version(1, 6, 99, 0)),
             "StardewValley",
             ModuleKind.Dll);
-        using (assembly)
-        {
-            var module = assembly.MainModule;
-            module.Mvid = TargetMvid;
-            AddTargetFramework(assembly, module);
-
-            if (options.IncludeMainActivity)
-            {
-                AddMainActivity(module, options);
-                if (options.DuplicateMainActivity)
-                {
-                    AddMainActivity(module, options);
-                }
-            }
-
-            if (options.IncludeUnresolvedInteropEnumAttribute)
-            {
-                AddUnresolvedInteropEnumAttribute(assembly, unresolvedContractsPath);
-            }
-
-            assembly.Write(path, new WriterParameters { WriteSymbols = false });
-        }
-    }
-
-    private static void AddTargetFramework(AssemblyDefinition assembly, ModuleDefinition module)
-    {
-        var constructor = typeof(TargetFrameworkAttribute).GetConstructor([typeof(string)])!;
-        var attribute = new CustomAttribute(module.ImportReference(constructor));
-        attribute.ConstructorArguments.Add(
-            new CustomAttributeArgument(module.TypeSystem.String, ".NETCoreApp,Version=v9.0"));
-        assembly.CustomAttributes.Add(attribute);
-    }
-
-    private static void AddMainActivity(ModuleDefinition module, SyntheticGameOptions options)
-    {
-        var androidAssembly = new AssemblyNameReference("Mono.Android", new Version(0, 0, 0, 0));
-        if (!module.AssemblyReferences.Any(reference => reference.Name == androidAssembly.Name))
-        {
-            module.AssemblyReferences.Add(androidAssembly);
-        }
-
-        var activityBase = new TypeReference("Android.App", "Activity", module, androidAssembly, false);
-        var activity = new TypeDefinition(
+        var module = assembly.MainModule;
+        module.Mvid = options.ModuleVersionId ?? Guid.NewGuid();
+        var monoAndroid = AddReference(module, "Mono.Android");
+        var monoGame = AddReference(module, "MonoGame.Framework");
+        var androidX = AddReference(module, "Xamarin.AndroidX.DocumentFile");
+        var activityType = new TypeReference("Android.App", "Activity", module, monoAndroid, false);
+        var mainActivity = new TypeDefinition(
             "StardewValley",
             "MainActivity",
             TypeAttributes.Public | TypeAttributes.Class,
-            activityBase);
-        module.Types.Add(activity);
+            activityType);
+        module.Types.Add(mainActivity);
+        var instance = new FieldDefinition(
+            "instance",
+            FieldAttributes.Public | FieldAttributes.Static,
+            mainActivity);
+        mainActivity.Fields.Add(instance);
 
-        FieldDefinition? instance = null;
-        if (options.IncludeInstanceField)
+        var sourceMethods = new Dictionary<string, MethodDefinition>(StringComparer.Ordinal);
+        var sourceFields = new Dictionary<string, FieldDefinition>(StringComparer.Ordinal);
+        foreach (var action in GameHostBridgeRecipe.Plans.SelectMany(static plan => plan.Actions))
         {
-            var attributes = FieldAttributes.Public;
-            if (options.StaticInstanceField)
+            if (action.Kind == GameHostBridgeActionKind.Activity)
+                continue;
+            if (action.Kind == GameHostBridgeActionKind.Field)
             {
-                attributes |= FieldAttributes.Static;
+                sourceFields.TryAdd(action.SourceName, new FieldDefinition(
+                    action.SourceName,
+                    FieldAttributes.Public,
+                    ResolveType(module, mainActivity, monoAndroid, monoGame, androidX, action.SourceReturnType)));
+                continue;
             }
 
-            instance = new FieldDefinition("instance", attributes, activity);
-            activity.Fields.Add(instance);
-            if (options.DuplicateInstanceField)
-            {
-                activity.Fields.Add(new FieldDefinition("instance", attributes, activity));
-            }
+            var key = action.SourceName + "(" + string.Join(',', action.SourceParameters) + ")";
+            if (sourceMethods.ContainsKey(key))
+                continue;
+            var method = new MethodDefinition(
+                action.SourceName,
+                MethodAttributes.Public,
+                ResolveType(module, mainActivity, monoAndroid, monoGame, androidX, action.SourceReturnType));
+            foreach (var parameter in action.SourceParameters)
+                method.Parameters.Add(new ParameterDefinition(ResolveType(module, mainActivity, monoAndroid, monoGame, androidX, parameter)));
+            EmitDefaultReturn(method);
+            sourceMethods.Add(key, method);
         }
+        foreach (var field in sourceFields.Values)
+            mainActivity.Fields.Add(field);
+        foreach (var method in sourceMethods.Values)
+            mainActivity.Methods.Add(method);
 
-        var constructor = AddVoidMethod(activity, ".ctor", MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName);
-        AddVoidMethod(activity, "OnCreate", MethodAttributes.Family | MethodAttributes.Virtual);
-        AddVoidMethod(activity, "OnResume", MethodAttributes.Family | MethodAttributes.Virtual);
-        AddVoidMethod(activity, "OnPause", MethodAttributes.Family | MethodAttributes.Virtual);
-        AddVoidMethod(activity, "OnDestroy", MethodAttributes.Family | MethodAttributes.Virtual);
-        var bootstrap = AddVoidMethod(activity, "Bootstrap", MethodAttributes.Public | MethodAttributes.Static);
-        var run = AddVoidMethod(activity, "Run", MethodAttributes.Public);
-
-        AddRegisterAttribute(module, activity);
-
-        if (instance is not null)
+        var finish = new MethodReference("Finish", module.TypeSystem.Void, activityType) { HasThis = true };
+        var helper = AddHelper(module);
+        foreach (var plan in GameHostBridgeRecipe.Plans)
         {
-            AddReadAndCallMethod(activity, instance, run);
-            AddWriteMethod(activity, instance);
-            AddAddressMethod(activity, instance);
-            AddDirectBootstrapCall(activity, bootstrap);
+            var owner = GetOrAddType(module, mainActivity, plan.Type);
+            var attributes = MethodAttributes.Public;
+            var isInstance = plan.TargetMemberSignature.StartsWith("instance;", StringComparison.Ordinal);
+            if (!isInstance)
+                attributes |= MethodAttributes.Static;
+            if (plan.Name == ".ctor")
+                attributes |= MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+            var target = new MethodDefinition(
+                plan.Name,
+                attributes,
+                ResolveType(module, mainActivity, monoAndroid, monoGame, androidX, plan.ReturnType));
+            foreach (var parameter in plan.Parameters)
+                target.Parameters.Add(new ParameterDefinition(ResolveType(module, mainActivity, monoAndroid, monoGame, androidX, parameter)));
+            owner.Methods.Add(target);
+
+            if (options.AddExtraLocal)
+            {
+                target.Body.InitLocals = true;
+                target.Body.Variables.Add(new VariableDefinition(module.TypeSystem.Int32));
+            }
+            if (options.AddIrrelevantCall)
+                target.Body.Instructions.Add(Instruction.Create(OpCodes.Call, helper));
+
+            if (plan.Id != options.MissingRuleId)
+            {
+                EmitActions(target, plan, instance, sourceMethods, sourceFields, finish, mainActivity, duplicate: false);
+                if (plan.Id == options.DuplicateRuleId)
+                    EmitActions(target, plan, instance, sourceMethods, sourceFields, finish, mainActivity, duplicate: true);
+            }
+            if (plan.Id == options.InvalidStackRuleId)
+                target.Body.Instructions.Add(Instruction.Create(OpCodes.Pop));
+            EmitReturn(target);
         }
 
-        _ = constructor;
-        AddPInvokeMethod(module, activity, "NativeTick", "libgame.so", "native_tick", PInvokeAttributes.CallConvCdecl | PInvokeAttributes.CharSetAnsi);
+        assembly.Write(path, new WriterParameters { WriteSymbols = false });
     }
 
-    private static MethodDefinition AddVoidMethod(TypeDefinition type, string name, MethodAttributes attributes)
+    private static void EmitActions(
+        MethodDefinition target,
+        GameHostBridgeMethodPlan plan,
+        FieldReference instance,
+        IReadOnlyDictionary<string, MethodDefinition> sourceMethods,
+        IReadOnlyDictionary<string, FieldDefinition> sourceFields,
+        MethodReference finish,
+        TypeDefinition mainActivity,
+        bool duplicate)
     {
-        var method = new MethodDefinition(name, attributes, type.Module.TypeSystem.Void);
+        var il = target.Body.Instructions;
+        foreach (var action in plan.Actions)
+        {
+            if (action.Kind == GameHostBridgeActionKind.Activity)
+            {
+                il.Add(Instruction.Create(OpCodes.Ldsfld, instance));
+                if (plan.RewriteActivityLocal)
+                {
+                    target.Body.InitLocals = true;
+                    var local = new VariableDefinition(mainActivity);
+                    target.Body.Variables.Add(local);
+                    il.Add(Instruction.Create(OpCodes.Stloc, local));
+                    il.Add(Instruction.Create(OpCodes.Ldloc, local));
+                }
+                il.Add(Instruction.Create(OpCodes.Callvirt, finish));
+                continue;
+            }
+
+            il.Add(Instruction.Create(OpCodes.Ldsfld, instance));
+            if (action.Kind == GameHostBridgeActionKind.Field)
+            {
+                il.Add(Instruction.Create(OpCodes.Ldfld, sourceFields[action.SourceName]));
+                il.Add(Instruction.Create(OpCodes.Pop));
+                continue;
+            }
+
+            var key = action.SourceName + "(" + string.Join(',', action.SourceParameters) + ")";
+            var source = sourceMethods[key];
+            foreach (var parameter in source.Parameters)
+                EmitDefaultValue(il, parameter.ParameterType);
+            il.Add(Instruction.Create(OpCodes.Callvirt, source));
+            if (source.ReturnType.MetadataType != MetadataType.Void)
+                il.Add(Instruction.Create(OpCodes.Pop));
+        }
+        _ = duplicate;
+    }
+
+    private static MethodDefinition AddHelper(ModuleDefinition module)
+    {
+        var type = new TypeDefinition("StardewValley", "CompatibilityNoise", TypeAttributes.Public, module.TypeSystem.Object);
+        module.Types.Add(type);
+        var method = new MethodDefinition("Noop", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
         type.Methods.Add(method);
         return method;
     }
 
-    private static void AddReadAndCallMethod(TypeDefinition type, FieldReference instance, MethodReference run)
+    private static TypeDefinition GetOrAddType(ModuleDefinition module, TypeDefinition mainActivity, string fullName)
     {
-        var method = new MethodDefinition("UseInstance", MethodAttributes.Public | MethodAttributes.Static, type.Module.TypeSystem.Void);
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsfld, instance));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, run));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
-        type.Methods.Add(method);
-    }
-
-    private static void AddWriteMethod(TypeDefinition type, FieldReference instance)
-    {
-        var method = new MethodDefinition("WriteInstance", MethodAttributes.Public | MethodAttributes.Static, type.Module.TypeSystem.Void);
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldnull));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Stsfld, instance));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
-        type.Methods.Add(method);
-    }
-
-    private static void AddAddressMethod(TypeDefinition type, FieldReference instance)
-    {
-        var method = new MethodDefinition("AddressInstance", MethodAttributes.Public | MethodAttributes.Static, type.Module.TypeSystem.Void);
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsflda, instance));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Pop));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
-        type.Methods.Add(method);
-    }
-
-    private static void AddDirectBootstrapCall(TypeDefinition type, MethodReference bootstrap)
-    {
-        var method = new MethodDefinition("InvokeBootstrap", MethodAttributes.Public | MethodAttributes.Static, type.Module.TypeSystem.Void);
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, bootstrap));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
-        type.Methods.Add(method);
-    }
-
-    private static void AddRegisterAttribute(ModuleDefinition module, TypeDefinition activity)
-    {
-        var androidAssembly = module.AssemblyReferences.Single(reference => reference.Name == "Mono.Android");
-        var attributeType = new TypeReference("Android.Runtime", "RegisterAttribute", module, androidAssembly, false);
-        var constructor = new MethodReference(".ctor", module.TypeSystem.Void, attributeType) { HasThis = true };
-        constructor.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
-        var attribute = new CustomAttribute(constructor);
-        attribute.ConstructorArguments.Add(
-            new CustomAttributeArgument(module.TypeSystem.String, "com/chucklefish/stardew/MainActivity"));
-        activity.CustomAttributes.Add(attribute);
-    }
-
-    private static void AddUnresolvedInteropEnumAttribute(
-        AssemblyDefinition target,
-        string contractsPath)
-    {
-        if (target.MainModule.AssemblyResolver is BaseAssemblyResolver resolver)
-        {
-            resolver.AddSearchDirectory(Path.GetDirectoryName(contractsPath)!);
-        }
-
-        using var contracts = AssemblyDefinition.ReadAssembly(contractsPath);
-        var attributeType = contracts.MainModule.GetType("Android.Runtime.UnresolvedModeAttribute");
-        var enumType = contracts.MainModule.GetType("Android.Runtime.UnresolvedMode");
-        var constructor = attributeType.Methods.Single(method => method.IsConstructor);
-        var attribute = new CustomAttribute(target.MainModule.ImportReference(constructor));
-        attribute.ConstructorArguments.Add(new CustomAttributeArgument(
-            target.MainModule.ImportReference(enumType),
-            1));
-        target.CustomAttributes.Add(attribute);
-    }
-
-    private static void WriteUnresolvedAndroidContracts(string path)
-    {
-        using var assembly = AssemblyDefinition.CreateAssembly(
-            new AssemblyNameDefinition("Missing.Android.Contracts", new Version(1, 0, 0, 0)),
-            "Missing.Android.Contracts",
-            ModuleKind.Dll);
-        var module = assembly.MainModule;
-        var enumType = new TypeDefinition(
-            "Android.Runtime",
-            "UnresolvedMode",
-            TypeAttributes.Public | TypeAttributes.Sealed,
-            module.ImportReference(typeof(Enum)));
-        enumType.Fields.Add(new FieldDefinition(
-            "value__",
-            FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName,
-            module.TypeSystem.Int32));
-        enumType.Fields.Add(new FieldDefinition(
-            "Enabled",
-            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal | FieldAttributes.HasDefault,
-            enumType)
-        {
-            Constant = 1,
-        });
-        module.Types.Add(enumType);
-
-        var attributeType = new TypeDefinition(
-            "Android.Runtime",
-            "UnresolvedModeAttribute",
-            TypeAttributes.Public | TypeAttributes.Sealed,
-            module.ImportReference(typeof(Attribute)));
-        var constructor = new MethodDefinition(
-            ".ctor",
-            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
-            module.TypeSystem.Void);
-        constructor.Parameters.Add(new ParameterDefinition("mode", ParameterAttributes.None, enumType));
-        constructor.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
-        attributeType.Methods.Add(constructor);
-        module.Types.Add(attributeType);
-        assembly.Write(path, new WriterParameters { WriteSymbols = false });
-    }
-
-    private static void AddPInvokeMethod(
-        ModuleDefinition module,
-        TypeDefinition owner,
-        string methodName,
-        string moduleName,
-        string entryPoint,
-        PInvokeAttributes attributes)
-    {
-        var method = new MethodDefinition(
-            methodName,
-            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.PInvokeImpl,
-            module.TypeSystem.Int32)
-        {
-            PInvokeInfo = new PInvokeInfo(attributes, entryPoint, GetOrAddModuleReference(module, moduleName)),
-        };
-        owner.Methods.Add(method);
-    }
-
-    private static ModuleReference GetOrAddModuleReference(ModuleDefinition module, string name)
-    {
-        var existing = module.ModuleReferences.FirstOrDefault(reference => reference.Name == name);
+        if (fullName == "StardewValley.MainActivity")
+            return mainActivity;
+        var existing = module.Types.SingleOrDefault(type => type.FullName == fullName);
         if (existing is not null)
-        {
             return existing;
-        }
-
-        var created = new ModuleReference(name);
-        module.ModuleReferences.Add(created);
+        var separator = fullName.LastIndexOf('.');
+        var created = new TypeDefinition(
+            fullName[..separator],
+            fullName[(separator + 1)..],
+            TypeAttributes.Public | TypeAttributes.Class,
+            module.TypeSystem.Object);
+        module.Types.Add(created);
         return created;
     }
 
-    private static void WriteDependency(string path)
-    {
-        var assembly = AssemblyDefinition.CreateAssembly(
-            new AssemblyNameDefinition("GameDependency", new Version(2, 0, 0, 0)),
-            "GameDependency",
-            ModuleKind.Dll);
-        using (assembly)
+    private static TypeReference ResolveType(
+        ModuleDefinition module,
+        TypeDefinition mainActivity,
+        AssemblyNameReference monoAndroid,
+        AssemblyNameReference monoGame,
+        AssemblyNameReference androidX,
+        string fullName) => fullName switch
         {
-            var module = assembly.MainModule;
-            module.Mvid = DependencyMvid;
-            var type = new TypeDefinition("Game", "NativeBridge", TypeAttributes.Public | TypeAttributes.Class, module.TypeSystem.Object);
-            module.Types.Add(type);
-            AddPInvokeMethod(
-                module,
-                type,
-                "InitializeSdl",
-                "libSDL2-2.0.so.0",
-                "SDL_Init",
-                PInvokeAttributes.CallConvCdecl | PInvokeAttributes.CharSetUnicode | PInvokeAttributes.SupportsLastError);
+            "System.Void" => module.TypeSystem.Void,
+            "System.Boolean" => module.TypeSystem.Boolean,
+            "System.Int32" => module.TypeSystem.Int32,
+            "System.String" => module.TypeSystem.String,
+            "System.Single" => module.TypeSystem.Single,
+            "System.Action" => module.ImportReference(typeof(Action)),
+            "StardewValley.MainActivity" => mainActivity,
+            _ => ExternalType(module, fullName,
+                fullName.StartsWith("Android.", StringComparison.Ordinal) ? monoAndroid :
+                fullName.StartsWith("Microsoft.Xna.", StringComparison.Ordinal) ? monoGame : androidX),
+        };
 
-            var gameAssembly = new AssemblyNameReference("StardewValley", new Version(1, 6, 15, 3));
-            module.AssemblyReferences.Add(gameAssembly);
-            var activity = new TypeReference("StardewValley", "MainActivity", module, gameAssembly, false);
-            var instance = new FieldReference("instance", activity, activity);
-            var run = new MethodReference("Run", module.TypeSystem.Void, activity) { HasThis = true };
-            var method = new MethodDefinition("RunGame", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
-            method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsfld, instance));
-            method.Body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, run));
-            method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
-            type.Methods.Add(method);
-
-            assembly.Write(path, new WriterParameters { WriteSymbols = false });
-        }
+    private static TypeReference ExternalType(ModuleDefinition module, string fullName, IMetadataScope scope)
+    {
+        var separator = fullName.LastIndexOf('.');
+        return new TypeReference(fullName[..separator], fullName[(separator + 1)..], module, scope, false);
     }
+
+    private static AssemblyNameReference AddReference(ModuleDefinition module, string name)
+    {
+        var reference = new AssemblyNameReference(name, new Version(1, 0, 0, 0));
+        module.AssemblyReferences.Add(reference);
+        return reference;
+    }
+
+    private static void EmitDefaultReturn(MethodDefinition method)
+    {
+        if (method.ReturnType.MetadataType != MetadataType.Void)
+            EmitDefaultValue(method.Body.Instructions, method.ReturnType);
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+    }
+
+    private static void EmitReturn(MethodDefinition method)
+    {
+        if (method.ReturnType.MetadataType != MetadataType.Void)
+            EmitDefaultValue(method.Body.Instructions, method.ReturnType);
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+    }
+
+    private static void EmitDefaultValue(Mono.Collections.Generic.Collection<Instruction> instructions, TypeReference type) =>
+        instructions.Add(type.MetadataType switch
+        {
+            MetadataType.Boolean or MetadataType.Int32 => Instruction.Create(OpCodes.Ldc_I4_0),
+            MetadataType.Single => Instruction.Create(OpCodes.Ldc_R4, 0f),
+            _ => Instruction.Create(OpCodes.Ldnull),
+        });
 }

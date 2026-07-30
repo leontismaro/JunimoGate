@@ -7,6 +7,7 @@ using Android.Util;
 using Android.Views;
 using Android.Widget;
 using JunimoGate.GameHost;
+using Log = JunimoGate.Android.JunimoGateLog;
 using OperationCanceledException = System.OperationCanceledException;
 
 namespace JunimoGate.App;
@@ -30,6 +31,7 @@ public sealed class MainActivity : Activity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        Log.Initialize(this, "launcher", GameLaunchSchema.BuildId);
         if (TryRouteToActiveGame())
             return;
 
@@ -90,6 +92,7 @@ public sealed class MainActivity : Activity
     protected override void OnResume()
     {
         base.OnResume();
+        Log.Info("JunimoGate.Launcher", $"activity-resumed returningFromGame={(returningFromGame ? 1 : 0)}");
         if (returningFromGame && !destroyed && lifetimeCancellation is { IsCancellationRequested: false } cancellation)
         {
             returningFromGame = false;
@@ -99,6 +102,9 @@ public sealed class MainActivity : Activity
 
     protected override void OnDestroy()
     {
+        Log.Info(
+            "JunimoGate.Launcher",
+            $"activity-destroyed finishing={(IsFinishing ? 1 : 0)} changingConfiguration={(IsChangingConfigurations ? 1 : 0)}");
         destroyed = true;
         if (launchButton is not null)
             launchButton.Click -= OnLaunchClicked;
@@ -133,11 +139,7 @@ public sealed class MainActivity : Activity
             if (handle is null || destroyed)
                 return;
 
-            var intent = new Intent(this, typeof(SmapiGameActivity));
-            intent.PutExtra(SmapiGameActivity.LaunchKeyExtra, handle.Key);
-            returningFromGame = true;
-            Log.Info("JunimoGate.Launcher", "launch-request-issued");
-            StartActivity(intent);
+            await StartWithRecoveryAsync(handle, cancellation.Token);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -145,6 +147,7 @@ public sealed class MainActivity : Activity
         }
         catch (Exception exception) when (exception is ActivityNotFoundException or InvalidOperationException)
         {
+            Log.Error("JunimoGate.Launcher", "launch-dispatch-failed", exception);
             returningFromGame = false;
             coordinator.ReportLaunchFailure();
         }
@@ -156,11 +159,39 @@ public sealed class MainActivity : Activity
             return;
         try
         {
-            await coordinator.InitializeAsync(cancellationToken);
+            var handle = await coordinator.InitializeAsync(cancellationToken);
+            if (handle is not null && !destroyed)
+                await StartWithRecoveryAsync(handle, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Activity destruction cancels pending launcher work.
+        }
+    }
+
+    private async Task StartWithRecoveryAsync(GameLaunchHandle handle, CancellationToken cancellationToken)
+    {
+        while (!destroyed && coordinator is not null)
+        {
+            try
+            {
+                var intent = new Intent(this, typeof(SmapiGameActivity));
+                intent.PutExtra(SmapiGameActivity.LaunchKeyExtra, handle.Key);
+                returningFromGame = true;
+                Log.Info("JunimoGate.Launcher", $"activity-dispatch attempt={handle.Key[..8]}");
+                StartActivity(intent);
+                return;
+            }
+            catch (Exception exception) when (exception is ActivityNotFoundException or InvalidOperationException)
+            {
+                Log.Error("JunimoGate.Launcher", "launch-dispatch-failed", exception);
+                returningFromGame = false;
+                var recovered = await coordinator
+                    .RecoverLaunchDispatchFailureAsync(handle, cancellationToken);
+                if (recovered is null)
+                    return;
+                handle = recovered;
+            }
         }
     }
 

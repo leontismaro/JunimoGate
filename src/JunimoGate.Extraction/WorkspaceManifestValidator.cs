@@ -498,11 +498,20 @@ internal static class WorkspaceManifestValidator
                 inventory.Roles.Contains(ApkSourceRoleNames.GameContent, StringComparer.Ordinal);
         }
 
-        return file.Kind == "assembly" &&
-            file.RelativePath.StartsWith("assemblies/", StringComparison.Ordinal) &&
-            AssemblyStoreApkPath.TryParse(file.SourceEntry, out var abi) &&
+        if (file.Kind != "assembly" ||
+            !file.RelativePath.StartsWith("assemblies/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var modern = AssemblyStoreApkPath.TryParse(file.SourceEntry, out var abi) &&
             abi.Equals(candidate.Installation.SelectedAbi, StringComparison.OrdinalIgnoreCase) &&
             inventory.Roles.Contains(ApkSourceRoleNames.ModernAssemblyBlob, StringComparer.Ordinal);
+        var legacy = LegacyAssemblyStoreApkPath.IsSelectedStorePath(
+                file.SourceEntry,
+                candidate.Installation.SelectedAbi) &&
+            inventory.Roles.Contains(ApkSourceRoleNames.LegacyAssemblyBlob, StringComparer.Ordinal);
+        return modern || legacy;
     }
 
     private static HashSet<string> EnumerateWorkspaceFiles(string workspacePath)

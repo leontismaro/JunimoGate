@@ -5,7 +5,7 @@ using System.Text;
 
 namespace JunimoGate.Rewriter;
 
-/// <summary>Stable Gate 2 applied-workspace validation codes.</summary>
+/// <summary>Stable applied-workspace validation codes.</summary>
 public static class GameHostAppliedWorkspaceErrorCodes
 {
     public const string ManifestInvalid = "gamehost_applied_manifest_invalid";
@@ -13,11 +13,10 @@ public static class GameHostAppliedWorkspaceErrorCodes
     public const string SourceBindingInvalid = "gamehost_applied_source_binding_invalid";
     public const string InputInvalid = "gamehost_applied_input_invalid";
     public const string MutationInvalid = "gamehost_applied_mutation_invalid";
-    public const string EntitlementNotPreserved = "gamehost_applied_entitlement_not_preserved";
     public const string OutputInvalid = "gamehost_applied_output_invalid";
     public const string PostValidationFailed = "gamehost_applied_post_validation_failed";
     public const string FileSetMismatch = "gamehost_applied_file_set_mismatch";
-    public const string RecipeNotApproved = "gamehost_applied_recipe_not_approved";
+    public const string RecipeMismatch = "gamehost_applied_recipe_mismatch";
     public const string RecoveryStateInvalid = "gamehost_applied_recovery_state_invalid";
 }
 
@@ -27,15 +26,15 @@ public static class GameHostAppliedWorkspaceContract
     public const string RewriteManifestFileName = "rewrite-manifest.json";
     public const string StateFileName = "applied-workspace-state.json";
     public const string AppliedManifestFormat = "junimogate-applied-workspace-manifest";
-    public const string AppliedManifestSchema = "v1";
+    public const string AppliedManifestSchema = "v2";
     public const string RewriteManifestFormat = "junimogate-rewrite-manifest";
-    public const string RewriteManifestSchema = "v2";
+    public const string RewriteManifestSchema = "v3";
     public const string RewriteStatusApplied = "applied";
     public const string PostValidationPassed = "passed";
     public const string StateFormat = "junimogate-applied-workspace-state";
-    public const string StateSchema = "v1";
+    public const string StateSchema = "v2";
     public const string OriginalPayloadSetSchema = "junimogate-original-payload-set/v1";
-    public const string AppliedWorkspaceKeySchema = "junimogate-applied-workspace-key/v1";
+    public const string AppliedWorkspaceKeySchema = "junimogate-applied-workspace-key/v2";
     public const string PinnedMonoCecilVersion = "0.11.6";
     public const int MaximumRewriteInputs = 64;
     public const int MaximumMutations = 4_096;
@@ -121,59 +120,41 @@ public sealed record AppliedRewriterToolIdentity(
 public sealed record AppliedRewriteInputIdentity(
     string RelativePath,
     string AssemblyIdentity,
-    string ModuleVersionId,
     long Size,
     string Sha256);
 
-public enum AppliedModuleVersionIdPolicy
-{
-    Preserve,
-    DeterministicReplace,
-}
-
-/// <summary>Entitlement behavior is never allowed to be Unknown or Bypassed.</summary>
-public enum AppliedEntitlementBehavior
-{
-    NotApplicable,
-    Preserved,
-}
-
-/// <summary>Mechanical before/after evidence for one exact guarded mutation.</summary>
+/// <summary>Local structural evidence for one semantic bridge rule.</summary>
 public sealed record AppliedRewriteMutationEvidence(
     string MutationId,
     string InputRelativePath,
     string TargetMemberSignature,
     int ExpectedMatchCount,
     int ObservedMatchCount,
-    string PreconditionSha256,
-    string PostconditionSha256,
-    AppliedEntitlementBehavior EntitlementBehavior);
+    IReadOnlyList<string> Replacements,
+    bool PostconditionPassed);
 
 /// <summary>One rewritten managed overlay file. Original M4 payloads are never overwritten.</summary>
 public sealed record AppliedRewriteOutputIdentity(
     string InputRelativePath,
     string OverlayRelativePath,
     string AssemblyIdentity,
-    string ModuleVersionId,
-    AppliedModuleVersionIdPolicy ModuleVersionIdPolicy,
     long Size,
     string Sha256);
 
 public sealed record AppliedRewritePostValidation(
     string Status,
     bool ReopenedWithIndependentReader,
-    bool InputGuardsPassed,
+    bool LocalGuardsPassed,
     bool PostconditionsPassed,
     bool AssemblyIdentityPassed,
     bool ReferenceClosurePassed);
 
-/// <summary>Rewrite manifest v2. It describes an already-produced staged overlay, not authorization to produce one.</summary>
+/// <summary>Rewrite manifest v3. It describes a staged semantic-rule result, not authorization to produce one.</summary>
 public sealed record GameHostRewriteManifestV2(
     string Format,
     string Schema,
     string AppliedWorkspaceKey,
     AppliedSourceWorkspaceBinding Source,
-    string SupportKey,
     RewriteRecipeIdentity Recipe,
     string Status,
     AppliedRewriterToolIdentity Tool,
@@ -194,7 +175,6 @@ public sealed record GameHostAppliedWorkspaceManifest(
     string Schema,
     string AppliedWorkspaceKey,
     string SourceWorkspaceKey,
-    string SupportKey,
     RewriteRecipeIdentity Recipe,
     string RewriteManifestSha256,
     string OriginalPayloadSetSha256,
@@ -215,7 +195,6 @@ public static class GameHostAppliedWorkspaceKey
 {
     public static string Create(
         AppliedSourceWorkspaceBinding source,
-        string supportKey,
         RewriteRecipeIdentity recipe,
         AppliedRewriterToolIdentity tool,
         IEnumerable<AppliedRewriteInputIdentity> inputs,
@@ -233,7 +212,6 @@ public static class GameHostAppliedWorkspaceKey
         var mutationArray = mutations.ToImmutableArray();
         var outputArray = outputs.ToImmutableArray();
         if (!GameHostAppliedWorkspaceValidator.IsValidSourceBinding(source) ||
-            !GameHostAppliedWorkspaceValidator.IsCanonicalSha256(supportKey) ||
             !GameHostAppliedWorkspaceValidator.IsCanonicalRecipe(recipe) ||
             !GameHostAppliedWorkspaceValidator.IsValidTool(tool) ||
             !GameHostAppliedWorkspaceValidator.AreValidInputs(inputArray) ||
@@ -253,7 +231,6 @@ public static class GameHostAppliedWorkspaceKey
         canonical.Add("source.payloadSetDigest", source.OriginalPayloadSet.Digest);
         canonical.Add("source.payloadCount", source.OriginalPayloadSet.FileCount.ToString(CultureInfo.InvariantCulture));
         canonical.Add("source.payloadBytes", source.OriginalPayloadSet.TotalBytes.ToString(CultureInfo.InvariantCulture));
-        canonical.Add("supportKey", supportKey);
         canonical.Add("recipe.name", recipe.Name);
         canonical.Add("recipe.version", recipe.Version);
         canonical.Add("tool.buildId", tool.BuildId);
@@ -277,7 +254,6 @@ public static class GameHostAppliedWorkspaceKey
         AppliedCanonicalHashBuilder.EncodeFields([
             ("path", input.RelativePath),
             ("identity", input.AssemblyIdentity),
-            ("mvid", input.ModuleVersionId),
             ("size", input.Size.ToString(CultureInfo.InvariantCulture)),
             ("sha256", input.Sha256),
         ]);
@@ -289,9 +265,8 @@ public static class GameHostAppliedWorkspaceKey
             ("target", mutation.TargetMemberSignature),
             ("expectedMatches", mutation.ExpectedMatchCount.ToString(CultureInfo.InvariantCulture)),
             ("observedMatches", mutation.ObservedMatchCount.ToString(CultureInfo.InvariantCulture)),
-            ("precondition", mutation.PreconditionSha256),
-            ("postcondition", mutation.PostconditionSha256),
-            ("entitlement", mutation.EntitlementBehavior.ToString()),
+            ("replacements", string.Join('\n', mutation.Replacements.Order(StringComparer.Ordinal))),
+            ("postcondition", mutation.PostconditionPassed.ToString(CultureInfo.InvariantCulture)),
         ]);
 
     private static string FormatOutput(AppliedRewriteOutputIdentity output) =>
@@ -299,14 +274,12 @@ public static class GameHostAppliedWorkspaceKey
             ("input", output.InputRelativePath),
             ("overlay", output.OverlayRelativePath),
             ("identity", output.AssemblyIdentity),
-            ("mvid", output.ModuleVersionId),
-            ("mvidPolicy", output.ModuleVersionIdPolicy.ToString()),
             ("size", output.Size.ToString(CultureInfo.InvariantCulture)),
             ("sha256", output.Sha256),
         ]);
 }
 
-/// <summary>Pure Gate 2 contract validation. It performs no file I/O, rewrite, load, rename, or activation.</summary>
+/// <summary>Pure applied-workspace contract validation. It performs no file I/O, rewrite, load, rename, or activation.</summary>
 public static class GameHostAppliedWorkspaceValidator
 {
     public static GameHostAppliedWorkspaceValidationResult ValidateShape(
@@ -366,15 +339,7 @@ public static class GameHostAppliedWorkspaceValidator
         }
 
         if (!AreValidMutations(mutations, inputs))
-        {
-            errors.Add(mutations.Any(static mutation =>
-                    mutation is not null &&
-                    mutation.TargetMemberSignature.Contains(
-                        "StardewValley.MainActivity+LicensingChecker::",
-                        StringComparison.Ordinal))
-                ? GameHostAppliedWorkspaceErrorCodes.EntitlementNotPreserved
-                : GameHostAppliedWorkspaceErrorCodes.MutationInvalid);
-        }
+            errors.Add(GameHostAppliedWorkspaceErrorCodes.MutationInvalid);
 
         if (!AreValidOutputs(outputs, inputs))
         {
@@ -387,7 +352,7 @@ public static class GameHostAppliedWorkspaceValidator
                 GameHostAppliedWorkspaceContract.PostValidationPassed,
                 StringComparison.Ordinal) ||
             !rewrite.PostValidation.ReopenedWithIndependentReader ||
-            !rewrite.PostValidation.InputGuardsPassed ||
+            !rewrite.PostValidation.LocalGuardsPassed ||
             !rewrite.PostValidation.PostconditionsPassed ||
             !rewrite.PostValidation.AssemblyIdentityPassed ||
             !rewrite.PostValidation.ReferenceClosurePassed)
@@ -402,7 +367,6 @@ public static class GameHostAppliedWorkspaceValidator
             {
                 recomputedKey = GameHostAppliedWorkspaceKey.Create(
                     rewrite.Source!,
-                    rewrite.SupportKey,
                     rewrite.Recipe!,
                     rewrite.Tool!,
                     inputs,
@@ -423,7 +387,6 @@ public static class GameHostAppliedWorkspaceValidator
             !string.Equals(rewrite.AppliedWorkspaceKey, recomputedKey, StringComparison.Ordinal) ||
             !string.Equals(applied.AppliedWorkspaceKey, rewrite.AppliedWorkspaceKey, StringComparison.Ordinal) ||
             !string.Equals(applied.SourceWorkspaceKey, rewrite.Source.WorkspaceKey, StringComparison.Ordinal) ||
-            !string.Equals(applied.SupportKey, rewrite.SupportKey, StringComparison.Ordinal) ||
             applied.Recipe != rewrite.Recipe ||
             !IsCanonicalSha256(applied.RewriteManifestSha256) ||
             !string.Equals(
@@ -481,47 +444,52 @@ public static class GameHostAppliedWorkspaceValidator
             errors.Order(StringComparer.Ordinal).ToImmutableArray());
     }
 
-    /// <summary>A structurally valid manifest is still unusable unless the frozen catalog explicitly approves it.</summary>
-    public static GameHostAppliedWorkspaceValidationResult ValidateAuthorization(
-        GameHostRewriteManifestV2 rewrite,
-        GameHostRecipeDecision decision)
+    /// <summary>Checks that the manifest contains every local rule in the selected recipe exactly once.</summary>
+    public static GameHostAppliedWorkspaceValidationResult ValidateRecipeResult(
+        GameHostRewriteManifestV2 rewrite)
     {
         ArgumentNullException.ThrowIfNull(rewrite);
-        ArgumentNullException.ThrowIfNull(decision);
-        var approvedMutations = decision.ApprovedMutations
-            .OrderBy(static mutation => mutation.MutationId, StringComparer.Ordinal)
+        var expectedRules = GameHostBridgeRecipe.Rules
+            .OrderBy(static rule => rule.RuleId, StringComparer.Ordinal)
             .ToArray();
         var suppliedMutations = rewrite.Mutations?.ToArray();
-        var authorizationShapeValid = suppliedMutations is not null &&
-            suppliedMutations.Length == approvedMutations.Length &&
-            suppliedMutations.All(static mutation =>
-                mutation is not null &&
-                mutation.ExpectedMatchCount > 0 &&
-                mutation.ObservedMatchCount == mutation.ExpectedMatchCount);
-        var actualMutations = authorizationShapeValid
-            ? suppliedMutations!
-                .Select(static mutation => new GameHostApprovedMutationContract(
-                    mutation.MutationId,
-                    mutation.InputRelativePath,
-                    mutation.TargetMemberSignature,
-                    mutation.ExpectedMatchCount,
-                    mutation.PreconditionSha256,
-                    mutation.PostconditionSha256,
-                    mutation.EntitlementBehavior))
-                .OrderBy(static mutation => mutation.MutationId, StringComparer.Ordinal)
-                .ToArray()
-            : null;
-        if (!decision.CanRewrite ||
-            decision.Recipe is null ||
-            rewrite.Recipe is null ||
-            rewrite.Recipe != decision.Recipe ||
-            !string.Equals(rewrite.SupportKey, decision.SupportKey, StringComparison.Ordinal) ||
-            actualMutations is null ||
-            !actualMutations.SequenceEqual(approvedMutations))
+        if (suppliedMutations is null || suppliedMutations.Any(static mutation => mutation is null))
         {
             return new GameHostAppliedWorkspaceValidationResult(
                 false,
-                [GameHostAppliedWorkspaceErrorCodes.RecipeNotApproved]);
+                [GameHostAppliedWorkspaceErrorCodes.RecipeMismatch]);
+        }
+
+        var actualRules = suppliedMutations
+            .OrderBy(static mutation => mutation.MutationId, StringComparer.Ordinal)
+            .ToArray();
+        var matches = rewrite.Recipe == GameHostBridgeRecipe.Identity &&
+            actualRules.Length == expectedRules.Length;
+        if (matches)
+        {
+            for (var index = 0; index < expectedRules.Length; index++)
+            {
+                var expected = expectedRules[index];
+                var actual = actualRules![index];
+                if (actual is null || actual.MutationId != expected.RuleId ||
+                    actual.InputRelativePath != expected.InputRelativePath ||
+                    actual.TargetMemberSignature != expected.TargetMemberSignature ||
+                    actual.ExpectedMatchCount != expected.ExpectedMatchCount ||
+                    actual.ObservedMatchCount != expected.ExpectedMatchCount ||
+                    !actual.PostconditionPassed ||
+                    !actual.Replacements.Order(StringComparer.Ordinal)
+                        .SequenceEqual(expected.Replacements.Order(StringComparer.Ordinal), StringComparer.Ordinal))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+        }
+        if (!matches)
+        {
+            return new GameHostAppliedWorkspaceValidationResult(
+                false,
+                [GameHostAppliedWorkspaceErrorCodes.RecipeMismatch]);
         }
 
         return new GameHostAppliedWorkspaceValidationResult(true, []);
@@ -566,7 +534,6 @@ public static class GameHostAppliedWorkspaceValidator
             IsValidManagedInputPath(input.RelativePath) &&
             !string.IsNullOrWhiteSpace(input.AssemblyIdentity) &&
             input.AssemblyIdentity.Length <= 1_024 &&
-            IsCanonicalMvid(input.ModuleVersionId) &&
             input.Size > 0 &&
             IsCanonicalSha256(input.Sha256) &&
             paths.Add(input.RelativePath));
@@ -629,15 +596,13 @@ public static class GameHostAppliedWorkspaceValidator
             inputPaths.Contains(mutation.InputRelativePath) &&
             !string.IsNullOrWhiteSpace(mutation.TargetMemberSignature) &&
             mutation.TargetMemberSignature.Length <= 4_096 &&
-            !mutation.TargetMemberSignature.Contains(
-                "StardewValley.MainActivity+LicensingChecker::",
-                StringComparison.Ordinal) &&
             mutation.ExpectedMatchCount > 0 &&
             mutation.ObservedMatchCount == mutation.ExpectedMatchCount &&
-            IsCanonicalSha256(mutation.PreconditionSha256) &&
-            IsCanonicalSha256(mutation.PostconditionSha256) &&
-            !mutation.PreconditionSha256.Equals(mutation.PostconditionSha256, StringComparison.Ordinal) &&
-            Enum.IsDefined(mutation.EntitlementBehavior)))
+            mutation.Replacements is not null &&
+            mutation.Replacements.Count == mutation.ExpectedMatchCount &&
+            mutation.Replacements.All(static replacement =>
+                !string.IsNullOrWhiteSpace(replacement) && replacement.Length <= 4_096) &&
+            mutation.PostconditionPassed))
         {
             return false;
         }
@@ -669,12 +634,6 @@ public static class GameHostAppliedWorkspaceValidator
                 !IsValidOverlayPath(output.OverlayRelativePath) ||
                 !overlayPaths.Add(output.OverlayRelativePath) ||
                 !output.AssemblyIdentity.Equals(input.AssemblyIdentity, StringComparison.Ordinal) ||
-                !IsCanonicalMvid(output.ModuleVersionId) ||
-                !Enum.IsDefined(output.ModuleVersionIdPolicy) ||
-                (output.ModuleVersionIdPolicy == AppliedModuleVersionIdPolicy.Preserve &&
-                    !output.ModuleVersionId.Equals(input.ModuleVersionId, StringComparison.Ordinal)) ||
-                (output.ModuleVersionIdPolicy == AppliedModuleVersionIdPolicy.DeterministicReplace &&
-                    output.ModuleVersionId.Equals(input.ModuleVersionId, StringComparison.Ordinal)) ||
                 output.Size <= 0 ||
                 !IsCanonicalSha256(output.Sha256))
             {
@@ -740,10 +699,6 @@ public static class GameHostAppliedWorkspaceValidator
             !segment.EndsWith(' ') &&
             !segment.EndsWith('.'));
     }
-
-    internal static bool IsCanonicalMvid(string value) =>
-        Guid.TryParseExact(value, "D", out var parsed) &&
-        parsed.ToString("D", CultureInfo.InvariantCulture).Equals(value, StringComparison.Ordinal);
 
     internal static bool IsCanonicalToken(string value) =>
         value is not null &&

@@ -41,7 +41,36 @@ public sealed class AssemblyExtractionTransaction : IDisposable, IAsyncDisposabl
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(item);
 
-        var outputName = ValidateAssemblyBaseName(item.Name);
+        return await ExtractAsync(
+            item.Name,
+            (output, token) => store.CopyAssemblyImageToAsync(item, output, token),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask<ExtractedAssemblyFile> ExtractAsync(
+        LegacyAssemblyStoreSet store,
+        LegacyAssemblyStoreItem item,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(item);
+
+        return await ExtractAsync(
+            item.Name,
+            (output, token) => store.CopyAssemblyImageToAsync(item, output, token),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<ExtractedAssemblyFile> ExtractAsync(
+        string itemName,
+        Func<Stream, CancellationToken, ValueTask> copyToAsync,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        ArgumentNullException.ThrowIfNull(copyToAsync);
+
+        var outputName = ValidateAssemblyBaseName(itemName);
         if (!reservedNames.Add(outputName))
         {
             throw new IOException($"Duplicate assembly output name '{outputName}' is not allowed.");
@@ -68,7 +97,7 @@ public sealed class AssemblyExtractionTransaction : IDisposable, IAsyncDisposabl
                 FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.WriteThrough))
             {
                 await using var hashingOutput = new HashingWriteStream(output, hash);
-                await store.CopyAssemblyImageToAsync(item, hashingOutput, cancellationToken).ConfigureAwait(false);
+                await copyToAsync(hashingOutput, cancellationToken).ConfigureAwait(false);
                 await hashingOutput.FlushAsync(cancellationToken).ConfigureAwait(false);
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                 size = hashingOutput.BytesWritten;

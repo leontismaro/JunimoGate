@@ -55,6 +55,53 @@ return TestHarness.Run(
         TestHarness.True(inventory.Contains(ApkContentRole.ModernAssemblyBlob));
         TestHarness.False(inventory.Contains(ApkContentRole.LegacyAssemblyBlob));
     }),
+    ("Synthetic legacy AssemblyStore v1 parses selected ABI and copies MZ/XALZ images", () =>
+    {
+        var stardew = "MZ-stardew-v1"u8.ToArray();
+        var monoGame = "MZ-monogame-v1"u8.ToArray();
+        var directory = CreateTestDirectory();
+        try
+        {
+            var path = WriteLegacyApk(directory, "legacy-v1.apk", stardew, monoGame, includeContent: false);
+            using var archive = ZipFile.OpenRead(path);
+            using var store = LegacyAssemblyStoreSet.Open(archive, "arm64-v8a");
+            TestHarness.Equal(2, store.Items.Count);
+            var stardewItem = store.Items.Single(item => item.Name == "StardewValley.dll");
+            var monoGameItem = store.Items.Single(item => item.Name == "MonoGame.Framework.dll");
+            using var stardewOutput = new MemoryStream();
+            using var monoGameOutput = new MemoryStream();
+            store.CopyAssemblyImageToAsync(stardewItem, stardewOutput).AsTask().GetAwaiter().GetResult();
+            store.CopyAssemblyImageToAsync(monoGameItem, monoGameOutput).AsTask().GetAwaiter().GetResult();
+            TestHarness.True(stardewOutput.ToArray().SequenceEqual(stardew));
+            TestHarness.True(monoGameOutput.ToArray().SequenceEqual(monoGame));
+            TestHarness.Equal(LegacyAssemblyStoreApkPath.BaseStorePath, stardewItem.SourceEntry);
+            TestHarness.Equal(LegacyAssemblyStoreApkPath.GetAbiStorePath("arm64-v8a"), monoGameItem.SourceEntry);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
+    ("Synthetic legacy AssemblyStore rejects an out-of-range manifest mapping", () =>
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var path = WriteLegacyApk(
+                directory,
+                "legacy-invalid.apk",
+                "MZ-stardew-v1"u8.ToArray(),
+                "MZ-monogame-v1"u8.ToArray(),
+                includeContent: false,
+                monoGameStoreIndex: 10);
+            using var archive = ZipFile.OpenRead(path);
+            TestHarness.Throws<AssemblyStoreFormatException>(() => LegacyAssemblyStoreSet.Open(archive, "arm64-v8a"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }),
     ("Synthetic ELF64 AssemblyStore v2 parses and copies MZ image", () =>
     {
         var image = "MZ-synthetic-managed-image"u8.ToArray();
@@ -822,20 +869,36 @@ return TestHarness.Run(
             Directory.Delete(directory, recursive: true);
         }
     }),
-    ("M4 rejects legacy-only stores and missing required outputs", () =>
+    ("M4 extracts legacy v1 stores and rejects malformed legacy or missing required outputs", () =>
     {
         var directory = CreateTestDirectory();
         try
         {
             var signing = TrustedSigning();
-            var legacyPath = WriteBinaryApk(directory, "legacy.apk", [
-                ("assets/Content/game.xnb", new byte[] { 1 }, (int?)null),
-                ("assemblies/game.blob", new byte[] { 2 }, (int?)null),
-            ]);
+            var legacyPath = WriteLegacyApk(
+                directory,
+                "legacy.apk",
+                "MZ-stardew"u8.ToArray(),
+                "MZ-monogame"u8.ToArray(),
+                includeContent: true);
             var legacy = MakeCandidate("1.0", signing,
                 new ApkFixture(legacyPath, "base", null, [ApkSourceRoleNames.GameContent, ApkSourceRoleNames.LegacyAssemblyBlob]));
             var legacyResult = Prepare(new GameWorkspacePreparer(new FixedCandidateRevalidator(legacy)), Path.Combine(directory, "legacy-root"), legacy);
-            TestHarness.True(HasWorkspaceCode(legacyResult, WorkspaceErrorCodes.UnsupportedAssemblyStore));
+            TestHarness.Equal(WorkspacePreparationStatus.Built, legacyResult.Status);
+            TestHarness.True(File.Exists(Path.Combine(legacyResult.WorkspacePath!, "assemblies", "StardewValley.dll")));
+            TestHarness.True(File.Exists(Path.Combine(legacyResult.WorkspacePath!, "assemblies", "MonoGame.Framework.dll")));
+
+            var malformedPath = WriteBinaryApk(directory, "legacy-malformed.apk", [
+                ("assets/Content/game.xnb", new byte[] { 1 }, (int?)null),
+                ("assemblies/game.blob", new byte[] { 2 }, (int?)null),
+            ]);
+            var malformed = MakeCandidate("1.0", signing,
+                new ApkFixture(malformedPath, "base", null, [ApkSourceRoleNames.GameContent, ApkSourceRoleNames.LegacyAssemblyBlob]));
+            var malformedResult = Prepare(
+                new GameWorkspacePreparer(new FixedCandidateRevalidator(malformed)),
+                Path.Combine(directory, "legacy-malformed-root"),
+                malformed);
+            TestHarness.True(HasWorkspaceCode(malformedResult, WorkspaceErrorCodes.UnsupportedAssemblyStore));
 
             var missingAssembly = CreateWorkspaceCandidate(
                 directory,
@@ -1451,6 +1514,53 @@ return TestHarness.Run(
             Directory.Delete(directory, recursive: true);
         }
     }));
+
+static string WriteLegacyApk(
+    string directory,
+    string fileName,
+    byte[] stardewImage,
+    byte[] monoGameImage,
+    bool includeContent,
+    uint monoGameStoreIndex = 0)
+{
+    var entries = new List<(string Name, byte[] Data, int? Attributes)>
+    {
+        (LegacyAssemblyStoreApkPath.BaseStorePath, BuildLegacyStore(0, [stardewImage]), null),
+        (LegacyAssemblyStoreApkPath.GetAbiStorePath("arm64-v8a"), BuildLegacyStore(1, [BuildXalz(monoGameImage, 1)]), null),
+        (LegacyAssemblyStoreApkPath.ManifestPath, Encoding.UTF8.GetBytes(
+            "Hash 32 Hash 64 Blob ID Blob idx Name\n" +
+            "0x00000001 0x0000000000000001 000 0000 StardewValley\n" +
+            $"0x00000002 0x0000000000000002 001 {monoGameStoreIndex:D4} MonoGame.Framework\n"), null),
+    };
+    if (includeContent)
+        entries.Add(("assets/Content/Data/game.xnb", [1], null));
+
+    return WriteBinaryApk(directory, fileName, entries);
+}
+
+static byte[] BuildLegacyStore(uint storeId, IReadOnlyList<byte[]> images)
+{
+    var metadataLength = checked(20 + (images.Count * 24));
+    var length = checked(metadataLength + images.Sum(static image => image.Length));
+    var store = new byte[length];
+    BinaryPrimitives.WriteUInt32LittleEndian(store, AssemblyStoreV2.Magic);
+    BinaryPrimitives.WriteUInt32LittleEndian(store.AsSpan(4), 1);
+    BinaryPrimitives.WriteUInt32LittleEndian(store.AsSpan(8), checked((uint)images.Count));
+    BinaryPrimitives.WriteUInt32LittleEndian(store.AsSpan(12), 0);
+    BinaryPrimitives.WriteUInt32LittleEndian(store.AsSpan(16), storeId);
+
+    var dataOffset = metadataLength;
+    for (var index = 0; index < images.Count; index++)
+    {
+        var descriptor = store.AsSpan(20 + (index * 24), 24);
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor, checked((uint)dataOffset));
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[4..], checked((uint)images[index].Length));
+        images[index].CopyTo(store.AsSpan(dataOffset));
+        dataOffset = checked(dataOffset + images[index].Length);
+    }
+
+    return store;
+}
 
 static MemoryStream BuildElfStore(
     byte[] imageData,

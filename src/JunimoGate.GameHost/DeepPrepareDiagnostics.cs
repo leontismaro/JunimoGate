@@ -2,6 +2,7 @@ using System.Text.Json;
 using Android.Content;
 using Android.Util;
 using JunimoGate.Android;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
@@ -17,9 +18,7 @@ public sealed record DeepPrepareMetrics(
     long WorkspacePayloadBytesHashed,
     string AppliedWorkspaceStatus,
     long AppliedWorkspaceDurationMilliseconds,
-    int ManagedProbeCount,
-    int NativeInventoryCount,
-    int RecipeEvaluationCount,
+    int CompatibilityAnalysisCount,
     int RewriteCount);
 
 internal sealed record DeepPrepareDiagnosticReport(
@@ -57,8 +56,7 @@ internal static class DeepPrepareDiagnostics
             $"apkFullHashes={metrics.ApkFullHashCount} apkBytesHashed={metrics.ApkBytesHashed} " +
             $"workspacePayloadHashPasses={metrics.WorkspacePayloadHashPassCount} " +
             $"workspacePayloadBytesHashed={metrics.WorkspacePayloadBytesHashed} " +
-            $"managedProbes={metrics.ManagedProbeCount} nativeInventories={metrics.NativeInventoryCount} " +
-            $"recipeEvaluations={metrics.RecipeEvaluationCount} rewrites={metrics.RewriteCount} " +
+            $"compatibilityAnalyses={metrics.CompatibilityAnalysisCount} rewrites={metrics.RewriteCount} " +
             $"sourceStatus={metrics.SourceWorkspaceStatus} appliedStatus={metrics.AppliedWorkspaceStatus}");
 
         try

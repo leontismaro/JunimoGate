@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
+using JunimoGate.Core;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
@@ -17,6 +15,8 @@ internal enum GameHostBridgeActionKind
 internal sealed record GameHostBridgeActionPlan(
     GameHostBridgeActionKind Kind,
     string SourceName,
+    string SourceReturnType,
+    ImmutableArray<string> SourceParameters,
     string BridgeName);
 
 internal sealed record GameHostBridgeMethodPlan(
@@ -26,45 +26,49 @@ internal sealed record GameHostBridgeMethodPlan(
     string ReturnType,
     ImmutableArray<string> Parameters,
     ImmutableArray<GameHostBridgeActionPlan> Actions,
-    bool RewriteFirstLocalToActivity,
+    bool RewriteActivityLocal,
+    string TargetMemberSignature);
+
+public sealed record GameHostBridgeRuleContract(
+    string RuleId,
+    string InputRelativePath,
     string TargetMemberSignature,
     int ExpectedMatchCount,
-    string PreconditionSha256,
-    string PostconditionSha256);
+    IReadOnlyList<string> Replacements);
 
-/// <summary>Exact tested Play 1.6.15.3 bridge recipe. It never changes the MainActivity.instance field type.</summary>
+/// <summary>Version-independent local rules for adapting Stardew's Android activity calls.</summary>
 public static class GameHostBridgeRecipe
 {
     public const string InputRelativePath = "assemblies/StardewValley.dll";
+    public const string FamilyId = GameCompatibilityIds.StardewAndroidMainActivityBridgeV1;
 
-    public static RewriteRecipeIdentity Identity { get; } = new("play-1.6.15.3-gamehost-bridge", "1");
+    public static RewriteRecipeIdentity Identity { get; } =
+        new("stardew-android-mainactivity-bridge", "1");
 
     internal static ImmutableArray<GameHostBridgeMethodPlan> Plans { get; } =
     [
-        Plan("directory-copy", "StardewValley.MainActivity", "DirectoryCopy", "System.Void", ["AndroidX.DocumentFile.Provider.DocumentFile", "System.String"], [Activity()], false, "static;System.Void StardewValley.MainActivity::DirectoryCopy(AndroidX.DocumentFile.Provider.DocumentFile,System.String)", 1, "e10ec7a404cb4bde583080f7cf02b414f43bf472b129106d108dae4033e6a07a", "b946c1a39e25f89c970e248a3bc96dff62347f1555320a731f55fbd525b2363b"),
-        Plan("emergency-backup-permission", "StardewValley.Game1", "emergencyBackup", "System.Void", [], [Method("get_HasPermissions", "HasPermissions")], false, "static;System.Void StardewValley.Game1::emergencyBackup()", 1, "7434dc56762cccc7807cea0639e87bb8f8a6b9fd383aa8a21ca5d4c821682d78", "36f5e9f9e3bc1abc842fd7df0bf84adaf90a93cb22394d119d2e8274173e93e4"),
-        Plan("rumble-activity", "StardewValley.Rumble", "SetVibration", "System.Boolean", ["Microsoft.Xna.Framework.PlayerIndex", "System.Single", "System.Single"], [Activity()], false, "static;System.Boolean StardewValley.Rumble::SetVibration(Microsoft.Xna.Framework.PlayerIndex,System.Single,System.Single)", 1, "67df4b8bf46073070ccb6f3badfa016f41c6cd7710837fc3ac70359d48b9f090", "544a4bd3083572b86dfb7b053e0546d203fcfa356e1c2c5f2b3a2ee8548ed893"),
-        Plan("save-load-permission", "StardewValley.SaveGame", "Load", "System.Void", ["System.String", "System.Boolean", "System.Boolean"], [Method("PromptForPermissionsIfNecessary", "PromptForPermissionsIfNecessary")], false, "static;System.Void StardewValley.SaveGame::Load(System.String,System.Boolean,System.Boolean)", 1, "ce7e05b3263d7a2ed47b362ec77241120ed72c808e9ef15f064420b8c8a38305", "026bde7b420a3d4562ef6c2c5e0d3d8e22fc2c585348c3a5a3d8572ae5d81130"),
-        Plan("save-load-permission-log", "StardewValley.SaveGame", "LoadAfterPermissionCheck", "System.Void", [], [Method("LogPermissions", "LogPermissions")], false, "static;System.Void StardewValley.SaveGame::LoadAfterPermissionCheck()", 1, "93d06b4c16ec398327717b4ac4dbbd287101598e4a40b17ea6d0e27db25405e0", "e744053c08e40697be50ac0cf2a1af62951a38bfaa781ff65aa148dab813cc0b"),
-        Plan("save-disk-dialog", "StardewValley.SaveGame", "checkForDiskFull", "System.Boolean", [], [Method("ShowDiskFullDialogue", "ShowDiskFullDialogue")], false, "static;System.Boolean StardewValley.SaveGame::checkForDiskFull()", 1, "18ae5a74cf806ce20a1a4dcefd17206b325e73c96c4d5b39373ae2400c8a2da0", "4e05a415a7241b129699f0396369d9f226952600980973965f91731f2efbaeb6"),
-        Plan("credits-browser-activity", "StardewValley.Menus.LinkCreditsBlock", "LaunchBrowser", "System.Void", ["System.String"], [Activity()], false, "static;System.Void StardewValley.Menus.LinkCreditsBlock::LaunchBrowser(System.String)", 1, "dffd03785cd088fcef16ee2dfd6db47c792b80b6a30104437d27f8836b0942bf", "800c842fe25c7014bdb87db94995d4fbc73bcfef866485c3db28a335da85724b"),
-        Plan("load-menu-permission", "StardewValley.Menus.LoadGameMenu", ".ctor", "System.Void", ["System.String"], [Method("PromptForPermissionsIfNecessary", "PromptForPermissionsIfNecessary")], false, "instance;System.Void StardewValley.Menus.LoadGameMenu::.ctor(System.String)", 1, "c0b347a8bdab783914ee6d9251665629ae5213fae04685987aa6ecd3ad40f778", "a9b8e85083edba5923427f8e1920dddd60d2c2d92097e4273216d6578ef7a3dc"),
-        Plan("startup-preferences-build", "StardewValley.Menus.OptionsPage", "SaveStartupPreferences", "System.Void", [], [Method("GetBuild", "GetBuild")], false, "static;System.Void StardewValley.Menus.OptionsPage::SaveStartupPreferences()", 1, "b369acf6656521ed91b12ae1550ab60fae51706f293ee84b86f55d42ab7d5728", "19d7e00ae0750086f63b367f568e1e9b21f8aa320c7aafc227c556b0e70dd12e"),
-        Plan("title-menu-migration", "StardewValley.Menus.TitleMenu", ".ctor", "System.Void", [], [Method("CheckStorageMigration", "CheckStorageMigration"), Field("IsDoingStorageMigration", "IsDoingStorageMigration")], false, "instance;System.Void StardewValley.Menus.TitleMenu::.ctor()", 2, "962997250f40b12e461469dbccec393e5c3a9e3d69d5bfe30232dd9018353470", "926dfc7f087d202edc2b56ea6ea93053d801c09d022d6a89ca2b9eba14e7f4a3"),
-        Plan("title-menu-permission", "StardewValley.Menus.TitleMenu", "releaseLeftClick", "System.Void", ["System.Int32", "System.Int32"], [Method("get_HasPermissions", "HasPermissions")], false, "instance;System.Void StardewValley.Menus.TitleMenu::releaseLeftClick(System.Int32,System.Int32)", 1, "7aa074f6bcd82dfddce6989f88201b95e83d216406dc17a4cc43ba085011c9a3", "1375fa8269d36def1af0180b18e31c2ecf49b0f69311fdf728d65c0fcf1b5f80"),
-        Plan("title-menu-migration-state", "StardewValley.Menus.TitleMenu", "update", "System.Void", ["Microsoft.Xna.Framework.GameTime"], [Field("IsDoingStorageMigration", "IsDoingStorageMigration")], false, "instance;System.Void StardewValley.Menus.TitleMenu::update(Microsoft.Xna.Framework.GameTime)", 1, "12cf32ab09a010894100b91f419d288e9a94fb95141b6be5455741ce122b99dd", "e6a4e7dc70747f2c639864bd1f6e41315faa97c12e6d77faf740ddd8a525b9fa"),
-        Plan("mobile-display-activity", "StardewValley.Mobile.MobileDisplay", "SetupDisplaySettings", "System.Void", [], [Activity()], true, "static;System.Void StardewValley.Mobile.MobileDisplay::SetupDisplaySettings()", 1, "fefc7af1c89148429879fbc2b457817689bb8cf249e4f4b7a4c5f2cf126bd30f", "bbd6f6ce523b113d772fc9b2e345c07c491905f57fcadb85d4b683ae331b26c0"),
+        Plan("directory-copy", "StardewValley.MainActivity", "DirectoryCopy", "System.Void", ["AndroidX.DocumentFile.Provider.DocumentFile", "System.String"], [Activity()], false),
+        Plan("emergency-backup-permission", "StardewValley.Game1", "emergencyBackup", "System.Void", [], [Method("get_HasPermissions", "System.Boolean", [], "HasPermissions")], false),
+        Plan("rumble-activity", "StardewValley.Rumble", "SetVibration", "System.Boolean", ["Microsoft.Xna.Framework.PlayerIndex", "System.Single", "System.Single"], [Activity()], false),
+        Plan("save-load-permission", "StardewValley.SaveGame", "Load", "System.Void", ["System.String", "System.Boolean", "System.Boolean"], [Method("PromptForPermissionsIfNecessary", "System.Void", ["System.Action"], "PromptForPermissionsIfNecessary")], false),
+        Plan("save-load-permission-log", "StardewValley.SaveGame", "LoadAfterPermissionCheck", "System.Void", [], [Method("LogPermissions", "System.Void", [], "LogPermissions")], false),
+        Plan("save-disk-dialog", "StardewValley.SaveGame", "checkForDiskFull", "System.Boolean", [], [Method("ShowDiskFullDialogue", "System.Void", [], "ShowDiskFullDialogue")], false),
+        Plan("credits-browser-activity", "StardewValley.Menus.LinkCreditsBlock", "LaunchBrowser", "System.Void", ["System.String"], [Activity()], false),
+        Plan("load-menu-permission", "StardewValley.Menus.LoadGameMenu", ".ctor", "System.Void", ["System.String"], [Method("PromptForPermissionsIfNecessary", "System.Void", ["System.Action"], "PromptForPermissionsIfNecessary")], false),
+        Plan("startup-preferences-build", "StardewValley.Menus.OptionsPage", "SaveStartupPreferences", "System.Void", [], [Method("GetBuild", "System.Int32", [], "GetBuild")], false),
+        Plan("title-menu-migration", "StardewValley.Menus.TitleMenu", ".ctor", "System.Void", [], [Method("CheckStorageMigration", "System.Boolean", [], "CheckStorageMigration"), Field("IsDoingStorageMigration", "System.Boolean", "IsDoingStorageMigration")], false),
+        Plan("title-menu-permission", "StardewValley.Menus.TitleMenu", "releaseLeftClick", "System.Void", ["System.Int32", "System.Int32"], [Method("get_HasPermissions", "System.Boolean", [], "HasPermissions")], false, isInstance: true),
+        Plan("title-menu-migration-state", "StardewValley.Menus.TitleMenu", "update", "System.Void", ["Microsoft.Xna.Framework.GameTime"], [Field("IsDoingStorageMigration", "System.Boolean", "IsDoingStorageMigration")], false, isInstance: true),
+        Plan("mobile-display-activity", "StardewValley.Mobile.MobileDisplay", "SetupDisplaySettings", "System.Void", [], [Activity()], true),
     ];
 
-    public static ImmutableArray<GameHostApprovedMutationContract> ApprovedMutations =>
-        Plans.Select(static plan => new GameHostApprovedMutationContract(
+    public static ImmutableArray<GameHostBridgeRuleContract> Rules =>
+        Plans.Select(static plan => new GameHostBridgeRuleContract(
             plan.Id,
             InputRelativePath,
             plan.TargetMemberSignature,
-            plan.ExpectedMatchCount,
-            plan.PreconditionSha256,
-            plan.PostconditionSha256,
-            AppliedEntitlementBehavior.Preserved)).ToImmutableArray();
+            plan.Actions.Length,
+            plan.Actions.Select(FormatReplacement).ToArray())).ToImmutableArray();
 
     private static GameHostBridgeMethodPlan Plan(
         string id,
@@ -73,193 +77,129 @@ public static class GameHostBridgeRecipe
         string returnType,
         ImmutableArray<string> parameters,
         ImmutableArray<GameHostBridgeActionPlan> actions,
-        bool rewriteFirstLocalToActivity,
-        string targetMemberSignature,
-        int expectedMatchCount,
-        string preconditionSha256,
-        string postconditionSha256) =>
-        new(id, type, name, returnType, parameters, actions, rewriteFirstLocalToActivity,
-            targetMemberSignature, expectedMatchCount, preconditionSha256, postconditionSha256);
+        bool rewriteActivityLocal,
+        bool isInstance = false)
+    {
+        var target = $"{(isInstance || name == ".ctor" ? "instance" : "static")};{returnType} {type}::{name}({string.Join(',', parameters)})";
+        return new(id, type, name, returnType, parameters, actions, rewriteActivityLocal, target);
+    }
 
     private static GameHostBridgeActionPlan Activity() =>
-        new(GameHostBridgeActionKind.Activity, "instance", "GetActivity");
+        new(GameHostBridgeActionKind.Activity, "instance", "StardewValley.MainActivity", [], "GetActivity");
 
-    private static GameHostBridgeActionPlan Method(string sourceName, string bridgeName) =>
-        new(GameHostBridgeActionKind.Method, sourceName, bridgeName);
+    private static GameHostBridgeActionPlan Method(
+        string sourceName,
+        string returnType,
+        ImmutableArray<string> parameters,
+        string bridgeName) =>
+        new(GameHostBridgeActionKind.Method, sourceName, returnType, parameters, bridgeName);
 
-    private static GameHostBridgeActionPlan Field(string sourceName, string bridgeName) =>
-        new(GameHostBridgeActionKind.Field, sourceName, bridgeName);
+    private static GameHostBridgeActionPlan Field(string sourceName, string fieldType, string bridgeName) =>
+        new(GameHostBridgeActionKind.Field, sourceName, fieldType, [], bridgeName);
+
+    internal static string FormatReplacement(GameHostBridgeActionPlan action) =>
+        action.Kind == GameHostBridgeActionKind.Activity
+            ? "StardewValley.MainActivity::instance -> JunimoGate.GameHost.GameHostBridge::GetActivity"
+            : $"StardewValley.MainActivity::{action.SourceName} -> JunimoGate.GameHost.GameHostBridge::{action.BridgeName}";
 }
 
 internal static class GameHostBridgeRecipeEngine
 {
     private const string MainActivityType = "StardewValley.MainActivity";
     private const string InstanceFieldName = "instance";
+    private const string HostAssemblyName = "JunimoGate.GameHost";
+    private const string HostBridgeType = "JunimoGate.GameHost.GameHostBridge";
 
-    private static readonly ImmutableArray<(string Method, Code OpCode)> ExpectedRemainingUses =
-    [
-        ("instance;System.Void StardewValley.MainActivity+LicensingChecker::.ctor()", Code.Ldsfld),
-        ("instance;System.Void StardewValley.MainActivity+LicensingChecker::Allow(System.String)", Code.Ldsfld),
-        ("instance;System.Void StardewValley.MainActivity+LicensingChecker::DontAllow(Android.App.PendingIntent)", Code.Ldsfld),
-        ("instance;System.Void StardewValley.MainActivity::OnCreate(Android.OS.Bundle)", Code.Stsfld),
-    ];
+    private static readonly HashSet<string> ActivityCompatibleConsumers = new(StringComparer.Ordinal)
+    {
+        "Android.App.Activity",
+        "Android.Content.Context",
+        "Android.Content.ContextWrapper",
+        "Java.Lang.Object",
+        "System.Object",
+    };
 
     internal static ImmutableArray<AppliedRewriteMutationEvidence> Apply(AssemblyDefinition assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
         var module = assembly.MainModule;
-        var hostReference = GetOrAddExactHostReference(module);
+        var hostReference = GetOrAddHostReference(module);
         var bridgeType = new TypeReference("JunimoGate.GameHost", "GameHostBridge", module, hostReference, false);
         var monoAndroid = module.AssemblyReferences.Single(reference => reference.Name == "Mono.Android");
         var activityType = new TypeReference("Android.App", "Activity", module, monoAndroid, false);
-
-        if (CountInstanceUses(module) != 18)
-        {
-            throw new InvalidDataException("The target does not contain the exact 18 guarded MainActivity.instance uses.");
-        }
 
         var evidence = ImmutableArray.CreateBuilder<AppliedRewriteMutationEvidence>(GameHostBridgeRecipe.Plans.Length);
         foreach (var plan in GameHostBridgeRecipe.Plans)
         {
             var method = FindMethod(module, plan);
-            var precondition = Fingerprint(method);
-            if (!precondition.Equals(plan.PreconditionSha256, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException($"Bridge precondition failed for mutation '{plan.Id}'.");
-            }
-
             var observed = 0;
             foreach (var action in plan.Actions)
-            {
-                observed += Apply(method, action, bridgeType, activityType);
-            }
+                observed += Apply(method, action, bridgeType, activityType, plan.RewriteActivityLocal);
 
-            if (plan.RewriteFirstLocalToActivity)
-            {
-                if (method.Body.Variables.Count == 0 ||
-                    Normalize(method.Body.Variables[0].VariableType.FullName) != MainActivityType)
-                {
-                    throw new InvalidDataException($"Bridge local-variable guard failed for mutation '{plan.Id}'.");
-                }
+            if (observed != plan.Actions.Length)
+                throw new InvalidDataException($"Bridge rule '{plan.Id}' did not match every local action exactly once.");
 
-                method.Body.Variables[0].VariableType = activityType;
-            }
-
-            if (observed != plan.ExpectedMatchCount)
-            {
-                throw new InvalidDataException(
-                    $"Bridge mutation '{plan.Id}' observed {observed} matches; expected {plan.ExpectedMatchCount}.");
-            }
-
-            var transformed = Fingerprint(method);
-            if (transformed.Equals(precondition, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException($"Bridge mutation '{plan.Id}' did not change the guarded method body.");
-            }
-
+            ValidateStack(method);
             evidence.Add(new AppliedRewriteMutationEvidence(
                 plan.Id,
                 GameHostBridgeRecipe.InputRelativePath,
                 plan.TargetMemberSignature,
-                plan.ExpectedMatchCount,
+                plan.Actions.Length,
                 observed,
-                precondition,
-                plan.PostconditionSha256,
-                AppliedEntitlementBehavior.Preserved));
+                plan.Actions.Select(GameHostBridgeRecipe.FormatReplacement).ToArray(),
+                PostconditionPassed: false));
         }
 
-        ValidateRemainingUses(module);
         return evidence.MoveToImmutable();
     }
 
-    internal static void ValidatePostconditions(AssemblyDefinition assembly)
+    internal static ImmutableArray<AppliedRewriteMutationEvidence> ValidatePostconditions(AssemblyDefinition assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
         var module = assembly.MainModule;
-        var hostReferences = module.AssemblyReferences
-            .Where(static reference => reference.Name == "JunimoGate.GameHost")
-            .ToArray();
+        var hostReferences = module.AssemblyReferences.Where(static reference => reference.Name == HostAssemblyName).ToArray();
         if (hostReferences.Length != 1 || hostReferences[0].Version != new Version(1, 0, 0, 0))
-        {
-            throw new InvalidDataException("The rewritten assembly does not contain the exact GameHost reference.");
-        }
+            throw new InvalidDataException("The rewritten assembly does not contain one compatible GameHost reference.");
 
-        var mismatches = new List<string>();
+        var evidence = ImmutableArray.CreateBuilder<AppliedRewriteMutationEvidence>(GameHostBridgeRecipe.Plans.Length);
         foreach (var plan in GameHostBridgeRecipe.Plans)
         {
             var method = FindMethod(module, plan);
-            var actualPostcondition = Fingerprint(method);
-            if (!actualPostcondition.Equals(plan.PostconditionSha256, StringComparison.Ordinal))
+            foreach (var action in plan.Actions)
             {
-                mismatches.Add($"{plan.Id}={actualPostcondition}");
+                if (CountSourceUses(method, action) != 0 || CountBridgeUses(method, action) != 1)
+                    throw new InvalidDataException($"Bridge postcondition failed for local rule '{plan.Id}'.");
             }
+
+            ValidateStack(method);
+            evidence.Add(new AppliedRewriteMutationEvidence(
+                plan.Id,
+                GameHostBridgeRecipe.InputRelativePath,
+                plan.TargetMemberSignature,
+                plan.Actions.Length,
+                plan.Actions.Length,
+                plan.Actions.Select(GameHostBridgeRecipe.FormatReplacement).ToArray(),
+                PostconditionPassed: true));
         }
 
-        if (mismatches.Count > 0)
-        {
-            throw new InvalidDataException(
-                $"Reopened bridge postconditions differ: {string.Join(',', mismatches)}.");
-        }
-
-        ValidateRemainingUses(module);
-    }
-
-    internal static string Fingerprint(MethodDefinition method)
-    {
-        var body = method.Body;
-        var index = body.Instructions
-            .Select(static (instruction, ordinal) => (instruction, ordinal))
-            .ToDictionary(static item => item.instruction, static item => item.ordinal);
-        var builder = new StringBuilder();
-        builder.AppendLine(CanonicalMethod(method));
-        builder.Append("init=").Append(body.InitLocals).Append(";max=").Append(body.MaxStackSize).AppendLine();
-        foreach (var variable in body.Variables)
-        {
-            builder.Append("V|").Append(variable.Index).Append('|').Append(Normalize(variable.VariableType.FullName)).AppendLine();
-        }
-
-        foreach (var instruction in body.Instructions)
-        {
-            builder.Append("I|").Append(index[instruction]).Append('|').Append(instruction.OpCode.Code).Append('|')
-                .Append(CanonicalOperand(instruction.Operand, index)).AppendLine();
-        }
-
-        foreach (var handler in body.ExceptionHandlers)
-        {
-            builder.Append("E|").Append(handler.HandlerType).Append('|')
-                .Append(InstructionIndex(handler.TryStart, index)).Append('|')
-                .Append(InstructionIndex(handler.TryEnd, index)).Append('|')
-                .Append(InstructionIndex(handler.HandlerStart, index)).Append('|')
-                .Append(InstructionIndex(handler.HandlerEnd, index)).Append('|')
-                .Append(InstructionIndex(handler.FilterStart, index)).Append('|')
-                .Append(handler.CatchType is null ? "-" : Normalize(handler.CatchType.FullName))
-                .AppendLine();
-        }
-
-        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
+        return evidence.MoveToImmutable();
     }
 
     private static MethodDefinition FindMethod(ModuleDefinition module, GameHostBridgeMethodPlan plan)
     {
         var types = AllTypes(module).Where(type => Normalize(type.FullName) == plan.Type).ToArray();
         if (types.Length != 1)
-        {
-            throw new InvalidDataException($"Bridge target type guard failed for mutation '{plan.Id}'.");
-        }
+            throw new InvalidDataException($"Bridge target type guard failed for rule '{plan.Id}'.");
 
         var candidates = types[0].Methods.Where(method =>
             method.Name == plan.Name &&
             Normalize(method.ReturnType.FullName) == plan.ReturnType &&
             method.Parameters.Select(parameter => Normalize(parameter.ParameterType.FullName))
                 .SequenceEqual(plan.Parameters, StringComparer.Ordinal)).ToArray();
-        if (candidates.Length != 1 || !candidates[0].HasBody)
+        if (candidates.Length != 1 || !candidates[0].HasBody ||
+            !CanonicalMethod(candidates[0]).Equals(plan.TargetMemberSignature, StringComparison.Ordinal))
         {
-            throw new InvalidDataException($"Bridge target method guard failed for mutation '{plan.Id}'.");
-        }
-
-        if (!CanonicalMethod(candidates[0]).Equals(plan.TargetMemberSignature, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException($"Bridge target signature guard failed for mutation '{plan.Id}'.");
+            throw new InvalidDataException($"Bridge target method guard failed for rule '{plan.Id}'.");
         }
 
         return candidates[0];
@@ -269,89 +209,149 @@ internal static class GameHostBridgeRecipeEngine
         MethodDefinition method,
         GameHostBridgeActionPlan action,
         TypeReference bridgeType,
-        TypeReference activityType)
+        TypeReference activityType,
+        bool rewriteActivityLocal)
     {
         var instructions = method.Body.Instructions;
         if (action.Kind == GameHostBridgeActionKind.Activity)
         {
             var loads = instructions.Where(IsInstanceLoad).ToArray();
             if (loads.Length != 1)
-            {
-                throw new InvalidDataException($"Activity load guard failed in '{CanonicalMethod(method)}'.");
-            }
+                throw new InvalidDataException($"Activity source guard failed in '{CanonicalMethod(method)}'.");
 
+            ValidateActivityConsumers(method, loads[0], activityType, rewriteActivityLocal);
             loads[0].OpCode = OpCodes.Call;
             loads[0].Operand = BridgeMethod(bridgeType, action.BridgeName, activityType, []);
             return 1;
         }
 
-        Instruction source;
-        TypeReference returnType;
-        TypeReference[] parameters;
-        if (action.Kind == GameHostBridgeActionKind.Method)
-        {
-            var calls = instructions.Where(instruction =>
-                instruction.Operand is MethodReference reference &&
-                Normalize(reference.DeclaringType.FullName) == MainActivityType &&
-                reference.Name == action.SourceName).ToArray();
-            if (calls.Length != 1)
-            {
-                throw new InvalidDataException($"Source method guard failed for '{action.SourceName}'.");
-            }
+        var sources = instructions.Where(instruction => MatchesSource(instruction, action)).ToArray();
+        if (sources.Length != 1)
+            throw new InvalidDataException($"Source member guard failed for '{action.SourceName}'.");
 
-            source = calls[0];
-            var oldMethod = (MethodReference)source.Operand;
-            returnType = oldMethod.ReturnType;
-            parameters = oldMethod.Parameters.Select(static parameter => parameter.ParameterType).ToArray();
-        }
-        else
-        {
-            var fields = instructions.Where(instruction =>
-                instruction.Operand is FieldReference reference &&
-                Normalize(reference.DeclaringType.FullName) == MainActivityType &&
-                reference.Name == action.SourceName).ToArray();
-            if (fields.Length != 1)
-            {
-                throw new InvalidDataException($"Source field guard failed for '{action.SourceName}'.");
-            }
-
-            source = fields[0];
-            returnType = ((FieldReference)source.Operand).FieldType;
-            parameters = [];
-        }
-
-        var sourceIndex = instructions.IndexOf(source);
-        var load = instructions.Take(sourceIndex).LastOrDefault(IsInstanceLoad) ??
-            throw new InvalidDataException($"No guarded instance load precedes '{action.SourceName}'.");
-        var loadIndex = instructions.IndexOf(load);
-        if (instructions.Skip(loadIndex + 1).Take(sourceIndex - loadIndex - 1).Any(IsInstanceLoad))
-        {
-            throw new InvalidDataException($"Ambiguous instance load precedes '{action.SourceName}'.");
-        }
-
-        load.OpCode = OpCodes.Nop;
-        load.Operand = null;
+        var source = sources[0];
+        var receiver = FindReceiverLoad(method, source, action.SourceParameters.Length);
+        receiver.OpCode = OpCodes.Nop;
+        receiver.Operand = null;
         source.OpCode = OpCodes.Call;
-        source.Operand = BridgeMethod(bridgeType, action.BridgeName, returnType, parameters);
+        source.Operand = BridgeMethod(
+            bridgeType,
+            action.BridgeName,
+            action.Kind == GameHostBridgeActionKind.Field
+                ? ((FieldReference)source.Operand).FieldType
+                : ((MethodReference)source.Operand).ReturnType,
+            action.Kind == GameHostBridgeActionKind.Field
+                ? []
+                : ((MethodReference)source.Operand).Parameters.Select(static parameter => parameter.ParameterType));
         return 1;
     }
 
-    private static AssemblyNameReference GetOrAddExactHostReference(ModuleDefinition module)
+    private static bool MatchesSource(Instruction instruction, GameHostBridgeActionPlan action)
     {
-        var existing = module.AssemblyReferences
-            .Where(static reference => reference.Name == "JunimoGate.GameHost")
-            .ToArray();
+        if (action.Kind == GameHostBridgeActionKind.Method)
+        {
+            return instruction.OpCode.Code is Code.Call or Code.Callvirt &&
+                instruction.Operand is MethodReference method &&
+                Normalize(method.DeclaringType.FullName) == MainActivityType &&
+                method.Name == action.SourceName &&
+                Normalize(method.ReturnType.FullName) == action.SourceReturnType &&
+                method.Parameters.Select(parameter => Normalize(parameter.ParameterType.FullName))
+                    .SequenceEqual(action.SourceParameters, StringComparer.Ordinal);
+        }
+
+        return instruction.OpCode.Code == Code.Ldfld &&
+            instruction.Operand is FieldReference field &&
+            Normalize(field.DeclaringType.FullName) == MainActivityType &&
+            field.Name == action.SourceName &&
+            Normalize(field.FieldType.FullName) == action.SourceReturnType;
+    }
+
+    private static Instruction FindReceiverLoad(MethodDefinition method, Instruction source, int explicitArgumentCount)
+    {
+        var incoming = TraceStackOrigins(method);
+        if (!incoming.TryGetValue(source, out var stack) || stack.Count < explicitArgumentCount + 1)
+            throw new InvalidDataException($"The MainActivity receiver for '{CanonicalMethod(method)}' is missing or ambiguous.");
+        var receiverOrigins = stack[stack.Count - explicitArgumentCount - 1];
+        if (receiverOrigins.Count != 1 || !IsInstanceLoad(receiverOrigins.Single()))
+            throw new InvalidDataException($"The MainActivity receiver for '{CanonicalMethod(method)}' is missing or ambiguous.");
+        return receiverOrigins.Single();
+    }
+
+    private static void ValidateActivityConsumers(
+        MethodDefinition method,
+        Instruction load,
+        TypeReference activityType,
+        bool rewriteActivityLocal)
+    {
+        var instructions = method.Body.Instructions;
+        var next = NextNonNop(instructions, instructions.IndexOf(load) + 1);
+        if (next is not null && TryGetStoredVariable(method.Body, next, out var variable))
+        {
+            if (!rewriteActivityLocal || Normalize(variable.VariableType.FullName) != MainActivityType)
+                throw new InvalidDataException($"Activity local guard failed in '{CanonicalMethod(method)}'.");
+            variable.VariableType = activityType;
+            var loads = instructions.Where(instruction => LoadsVariable(instruction, variable)).ToArray();
+            if (loads.Length == 0 || loads.Any(localLoad => !HasCompatibleActivityConsumer(method, localLoad)))
+                throw new InvalidDataException($"Activity local consumer guard failed in '{CanonicalMethod(method)}'.");
+            return;
+        }
+
+        if (rewriteActivityLocal || !HasCompatibleActivityConsumer(method, load))
+            throw new InvalidDataException($"Activity consumer guard failed in '{CanonicalMethod(method)}'.");
+    }
+
+    private static bool HasCompatibleActivityConsumer(MethodDefinition method, Instruction producer)
+    {
+        var instructions = method.Body.Instructions;
+        var depth = 1;
+        for (var index = instructions.IndexOf(producer) + 1; index < instructions.Count; index++)
+        {
+            var instruction = instructions[index];
+            if (IsControlFlowBoundary(instruction))
+                return false;
+            var (pop, push) = StackEffect(method, instruction);
+            if (pop >= depth)
+            {
+                if (instruction.Operand is not MethodReference methodReference)
+                    return false;
+                var inputs = new List<TypeReference>();
+                if (methodReference.HasThis)
+                    inputs.Add(methodReference.DeclaringType);
+                inputs.AddRange(methodReference.Parameters.Select(static parameter => parameter.ParameterType));
+                var targetInput = inputs.Count - depth;
+                return targetInput >= 0 && targetInput < inputs.Count &&
+                    ActivityCompatibleConsumers.Contains(Normalize(inputs[targetInput].FullName));
+            }
+            depth = depth - pop + push;
+        }
+        return false;
+    }
+
+    private static int CountSourceUses(MethodDefinition method, GameHostBridgeActionPlan action) =>
+        action.Kind == GameHostBridgeActionKind.Activity
+            ? method.Body.Instructions.Count(IsInstanceLoad)
+            : method.Body.Instructions.Count(instruction => MatchesSource(instruction, action));
+
+    private static int CountBridgeUses(MethodDefinition method, GameHostBridgeActionPlan action) =>
+        method.Body.Instructions.Count(instruction =>
+            instruction.OpCode.Code == Code.Call &&
+            instruction.Operand is MethodReference called &&
+            Normalize(called.DeclaringType.FullName) == HostBridgeType &&
+            called.Name == action.BridgeName &&
+            Normalize(called.ReturnType.FullName) == (action.Kind == GameHostBridgeActionKind.Activity
+                ? "Android.App.Activity"
+                : action.SourceReturnType) &&
+            called.Parameters.Select(parameter => Normalize(parameter.ParameterType.FullName))
+                .SequenceEqual(action.SourceParameters, StringComparer.Ordinal));
+
+    private static AssemblyNameReference GetOrAddHostReference(ModuleDefinition module)
+    {
+        var existing = module.AssemblyReferences.Where(static reference => reference.Name == HostAssemblyName).ToArray();
         if (existing.Length > 1 || (existing.Length == 1 && existing[0].Version != new Version(1, 0, 0, 0)))
-        {
-            throw new InvalidDataException("The target contains an unexpected GameHost assembly reference.");
-        }
-
+            throw new InvalidDataException("The target contains a conflicting GameHost assembly reference.");
         if (existing.Length == 1)
-        {
             return existing[0];
-        }
-
-        var reference = new AssemblyNameReference("JunimoGate.GameHost", new Version(1, 0, 0, 0));
+        var reference = new AssemblyNameReference(HostAssemblyName, new Version(1, 0, 0, 0));
         module.AssemblyReferences.Add(reference);
         return reference;
     }
@@ -369,47 +369,226 @@ internal static class GameHostBridgeRecipeEngine
             CallingConvention = MethodCallingConvention.Default,
         };
         foreach (var parameter in parameters)
-        {
             method.Parameters.Add(new ParameterDefinition(parameter));
-        }
-
         return method;
     }
 
-    private static void ValidateRemainingUses(ModuleDefinition module)
+    private static void ValidateStack(MethodDefinition method)
     {
-        var actual = InstanceUses(module)
-            .Select(static use => (CanonicalMethod(use.Method), use.Instruction.OpCode.Code))
-            .OrderBy(static use => use.Item1, StringComparer.Ordinal)
-            .ThenBy(static use => use.Code)
-            .ToImmutableArray();
-        var expected = ExpectedRemainingUses
-            .OrderBy(static use => use.Method, StringComparer.Ordinal)
-            .ThenBy(static use => use.OpCode)
-            .ToImmutableArray();
-        if (!actual.SequenceEqual(expected))
+        var instructions = method.Body.Instructions;
+        if (instructions.Count == 0)
+            throw new InvalidDataException($"Method '{CanonicalMethod(method)}' has no body.");
+        var incoming = new Dictionary<Instruction, int>();
+        var pending = new Queue<(Instruction Instruction, int Depth)>();
+        pending.Enqueue((instructions[0], 0));
+        foreach (var handler in method.Body.ExceptionHandlers)
         {
-            throw new InvalidDataException("The rewritten MainActivity.instance use set is not the exact protected four-use set.");
+            if (handler.FilterStart is not null)
+                pending.Enqueue((handler.FilterStart, 1));
+            if (handler.HandlerStart is not null)
+                pending.Enqueue((handler.HandlerStart, handler.HandlerType is ExceptionHandlerType.Catch or ExceptionHandlerType.Filter ? 1 : 0));
+        }
+
+        while (pending.TryDequeue(out var state))
+        {
+            if (incoming.TryGetValue(state.Instruction, out var known))
+            {
+                if (known != state.Depth)
+                    throw new InvalidDataException($"Stack merge mismatch in '{CanonicalMethod(method)}'.");
+                continue;
+            }
+            incoming.Add(state.Instruction, state.Depth);
+            var (pop, push) = StackEffect(method, state.Instruction);
+            if (pop > state.Depth)
+                throw new InvalidDataException(
+                    $"Stack underflow at '{state.Instruction}' with depth {state.Depth} and pop {pop} in '{CanonicalMethod(method)}'.");
+            var outgoing = state.Instruction.OpCode.Code is Code.Leave or Code.Leave_S
+                ? 0
+                : state.Depth - pop + push;
+            foreach (var successor in Successors(instructions, state.Instruction))
+                pending.Enqueue((successor, outgoing));
         }
     }
+
+    private static IReadOnlyDictionary<Instruction, List<HashSet<Instruction>>> TraceStackOrigins(
+        MethodDefinition method)
+    {
+        var instructions = method.Body.Instructions;
+        var incoming = new Dictionary<Instruction, List<HashSet<Instruction>>>();
+        var pending = new Queue<Instruction>();
+        Merge(instructions[0], []);
+        foreach (var handler in method.Body.ExceptionHandlers)
+        {
+            if (handler.FilterStart is not null)
+                Merge(handler.FilterStart, [new HashSet<Instruction>()]);
+            if (handler.HandlerStart is not null)
+            {
+                Merge(
+                    handler.HandlerStart,
+                    handler.HandlerType is ExceptionHandlerType.Catch or ExceptionHandlerType.Filter
+                        ? new List<HashSet<Instruction>> { new() }
+                        : new List<HashSet<Instruction>>());
+            }
+        }
+
+        while (pending.TryDequeue(out var instruction))
+        {
+            var stack = Clone(incoming[instruction]);
+            if (instruction.OpCode.Code == Code.Dup)
+            {
+                if (stack.Count == 0)
+                    throw new InvalidDataException($"Stack underflow in '{CanonicalMethod(method)}'.");
+                stack.Add(new HashSet<Instruction>(stack[^1]));
+            }
+            else
+            {
+                var (pop, push) = StackEffect(method, instruction);
+                if (pop > stack.Count)
+                    throw new InvalidDataException($"Stack underflow in '{CanonicalMethod(method)}'.");
+                if (pop > 0)
+                    stack.RemoveRange(stack.Count - pop, pop);
+                for (var index = 0; index < push; index++)
+                    stack.Add(new HashSet<Instruction> { instruction });
+            }
+            if (instruction.OpCode.Code is Code.Leave or Code.Leave_S)
+                stack.Clear();
+            foreach (var successor in Successors(instructions, instruction))
+                Merge(successor, stack);
+        }
+
+        return incoming;
+
+        void Merge(Instruction instruction, List<HashSet<Instruction>> stack)
+        {
+            if (!incoming.TryGetValue(instruction, out var existing))
+            {
+                incoming.Add(instruction, Clone(stack));
+                pending.Enqueue(instruction);
+                return;
+            }
+            if (existing.Count != stack.Count)
+                throw new InvalidDataException($"Stack merge mismatch in '{CanonicalMethod(method)}'.");
+            var changed = false;
+            for (var index = 0; index < existing.Count; index++)
+            {
+                var before = existing[index].Count;
+                existing[index].UnionWith(stack[index]);
+                changed |= existing[index].Count != before;
+            }
+            if (changed)
+                pending.Enqueue(instruction);
+        }
+
+        static List<HashSet<Instruction>> Clone(IEnumerable<HashSet<Instruction>> stack) =>
+            stack.Select(static origins => new HashSet<Instruction>(origins)).ToList();
+    }
+
+    private static IEnumerable<Instruction> Successors(Mono.Collections.Generic.Collection<Instruction> instructions, Instruction instruction)
+    {
+        var code = instruction.OpCode.Code;
+        if (instruction.Operand is Instruction target)
+            yield return target;
+        else if (instruction.Operand is Instruction[] targets)
+        {
+            foreach (var item in targets)
+                yield return item;
+        }
+        if (code is Code.Br or Code.Br_S or Code.Leave or Code.Leave_S or Code.Ret or Code.Throw or Code.Rethrow or
+            Code.Endfinally or Code.Endfilter or Code.Jmp)
+            yield break;
+        var index = instructions.IndexOf(instruction);
+        if (index + 1 < instructions.Count)
+            yield return instructions[index + 1];
+    }
+
+    private static (int Pop, int Push) StackEffect(MethodDefinition owner, Instruction instruction)
+    {
+        var pop = instruction.OpCode.StackBehaviourPop switch
+        {
+            StackBehaviour.Pop0 => 0,
+            StackBehaviour.Pop1 or StackBehaviour.Popi or StackBehaviour.Popref => 1,
+            StackBehaviour.Pop1_pop1 or StackBehaviour.Popi_pop1 or StackBehaviour.Popi_popi or
+                StackBehaviour.Popi_popi8 or StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
+                StackBehaviour.Popref_pop1 or StackBehaviour.Popref_popi => 2,
+            StackBehaviour.Popi_popi_popi or StackBehaviour.Popref_popi_popi or
+                StackBehaviour.Popref_popi_popi8 or StackBehaviour.Popref_popi_popr4 or
+                StackBehaviour.Popref_popi_popr8 or StackBehaviour.Popref_popi_popref => 3,
+            // leave clears the evaluation stack; the control-flow pass sets its outgoing depth to zero.
+            StackBehaviour.PopAll => 0,
+            StackBehaviour.Varpop => VariablePop(owner, instruction),
+            _ => throw new InvalidDataException($"Unsupported stack pop behavior in '{CanonicalMethod(owner)}'."),
+        };
+        var push = instruction.OpCode.StackBehaviourPush switch
+        {
+            StackBehaviour.Push0 => 0,
+            StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushi8 or
+                StackBehaviour.Pushr4 or StackBehaviour.Pushr8 or StackBehaviour.Pushref => 1,
+            StackBehaviour.Push1_push1 => 2,
+            StackBehaviour.Varpush => VariablePush(instruction),
+            _ => throw new InvalidDataException($"Unsupported stack push behavior in '{CanonicalMethod(owner)}'."),
+        };
+        return (pop, push);
+    }
+
+    private static int VariablePop(MethodDefinition owner, Instruction instruction)
+    {
+        if (instruction.OpCode.Code == Code.Ret)
+            return Normalize(owner.ReturnType.FullName) == "System.Void" ? 0 : 1;
+        if (instruction.Operand is MethodReference method)
+            return method.Parameters.Count + (instruction.OpCode.Code == Code.Newobj ? 0 : method.HasThis ? 1 : 0) +
+                (instruction.OpCode.Code == Code.Calli ? 1 : 0);
+        throw new InvalidDataException($"Unsupported variable stack pop in '{CanonicalMethod(owner)}'.");
+    }
+
+    private static int VariablePush(Instruction instruction) =>
+        instruction.Operand is MethodReference method &&
+        (instruction.OpCode.Code == Code.Newobj || Normalize(method.ReturnType.FullName) != "System.Void") ? 1 : 0;
+
+    private static bool IsControlFlowBoundary(Instruction instruction) =>
+        instruction.OpCode.FlowControl is FlowControl.Branch or FlowControl.Cond_Branch or FlowControl.Return or FlowControl.Throw;
+
+    private static Instruction? NextNonNop(Mono.Collections.Generic.Collection<Instruction> instructions, int start)
+    {
+        for (var index = start; index < instructions.Count; index++)
+            if (instructions[index].OpCode.Code != Code.Nop) return instructions[index];
+        return null;
+    }
+
+    private static bool TryGetStoredVariable(MethodBody body, Instruction instruction, out VariableDefinition variable)
+    {
+        variable = null!;
+        var index = instruction.OpCode.Code switch
+        {
+            Code.Stloc_0 => 0,
+            Code.Stloc_1 => 1,
+            Code.Stloc_2 => 2,
+            Code.Stloc_3 => 3,
+            Code.Stloc or Code.Stloc_S when instruction.Operand is VariableDefinition stored => stored.Index,
+            _ => -1,
+        };
+        if (index < 0 || index >= body.Variables.Count)
+            return false;
+        variable = body.Variables[index];
+        return true;
+    }
+
+    private static bool LoadsVariable(Instruction instruction, VariableDefinition variable) =>
+        instruction.OpCode.Code switch
+        {
+            Code.Ldloc_0 => variable.Index == 0,
+            Code.Ldloc_1 => variable.Index == 1,
+            Code.Ldloc_2 => variable.Index == 2,
+            Code.Ldloc_3 => variable.Index == 3,
+            Code.Ldloc or Code.Ldloc_S => ReferenceEquals(instruction.Operand, variable),
+            _ => false,
+        };
 
     private static bool IsInstanceLoad(Instruction instruction) =>
         instruction.OpCode.Code == Code.Ldsfld &&
         instruction.Operand is FieldReference field &&
         Normalize(field.DeclaringType.FullName) == MainActivityType &&
-        field.Name == InstanceFieldName;
-
-    private static int CountInstanceUses(ModuleDefinition module) => InstanceUses(module).Count();
-
-    private static IEnumerable<(MethodDefinition Method, Instruction Instruction)> InstanceUses(ModuleDefinition module) =>
-        AllTypes(module)
-            .SelectMany(static type => type.Methods)
-            .Where(static method => method.HasBody)
-            .SelectMany(method => method.Body.Instructions
-                .Where(instruction => instruction.Operand is FieldReference field &&
-                    Normalize(field.DeclaringType.FullName) == MainActivityType &&
-                    field.Name == InstanceFieldName)
-                .Select(instruction => (method, instruction)));
+        field.Name == InstanceFieldName &&
+        Normalize(field.FieldType.FullName) == MainActivityType;
 
     private static IEnumerable<TypeDefinition> AllTypes(ModuleDefinition module) =>
         module.Types.SelectMany(Flatten);
@@ -418,34 +597,13 @@ internal static class GameHostBridgeRecipeEngine
     {
         yield return type;
         foreach (var nested in type.NestedTypes.SelectMany(Flatten))
-        {
             yield return nested;
-        }
     }
 
-    private static string CanonicalMethod(MethodReference method) =>
+    internal static string CanonicalMethod(MethodReference method) =>
         $"{(method.HasThis ? "instance" : "static")};{Normalize(method.ReturnType.FullName)} " +
         $"{Normalize(method.DeclaringType.FullName)}::{method.Name}(" +
         $"{string.Join(',', method.Parameters.Select(parameter => Normalize(parameter.ParameterType.FullName)))})";
-
-    private static string CanonicalOperand(object? operand, IReadOnlyDictionary<Instruction, int> index) =>
-        operand switch
-        {
-            null => "-",
-            Instruction instruction => $"I{index[instruction]}",
-            Instruction[] instructions => string.Join(',', instructions.Select(instruction => $"I{index[instruction]}")),
-            MethodReference method => $"M:{CanonicalMethod(method)}",
-            FieldReference field => $"F:{Normalize(field.FieldType.FullName)} {Normalize(field.DeclaringType.FullName)}::{field.Name}",
-            TypeReference type => $"T:{Normalize(type.FullName)}",
-            ParameterDefinition parameter => $"P:{parameter.Index}",
-            VariableDefinition variable => $"V:{variable.Index}",
-            string text => $"S:{Convert.ToBase64String(Encoding.UTF8.GetBytes(text))}",
-            IFormattable formattable => $"N:{formattable.ToString(null, CultureInfo.InvariantCulture)}",
-            _ => $"O:{operand}",
-        };
-
-    private static int InstructionIndex(Instruction? instruction, IReadOnlyDictionary<Instruction, int> index) =>
-        instruction is null ? -1 : index[instruction];
 
     private static string Normalize(string value) => value.Replace('/', '+');
 }
