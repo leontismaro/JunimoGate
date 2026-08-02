@@ -30,7 +30,7 @@ internal sealed class PreparedRuntimeFiles
         foreach (var directory in new[]
                  {
                      snapshot.SourceWorkspacePath, snapshot.AppliedWorkspacePath,
-                     snapshot.InternalDirectory, snapshot.ConfigDirectory, snapshot.LogDirectory,
+                     snapshot.ConfigDirectory, snapshot.LogDirectory,
                      snapshot.SaveDirectory, snapshot.BackupDirectory,
                  })
         {
@@ -51,10 +51,13 @@ internal sealed class PreparedRuntimeFiles
             StringComparer.Ordinal,
             "Content",
             requiredPrefix: "Content/");
-        var expectedBundleRoot = Path.GetFullPath(Path.GetDirectoryName(snapshot.InternalDirectory)
-            ?? throw new InvalidDataException("The SMAPI bundle root is invalid."));
-        if (!Path.GetFullPath(smapiBundle.RootPath).Equals(expectedBundleRoot, StringComparison.Ordinal))
-            throw new InvalidDataException("The prepared SMAPI bundle root does not match the launch snapshot.");
+        var expectedBundleRoot = Path.GetFullPath(smapiBundle.RootPath);
+        var expectedInternalDirectory = Path.GetFullPath(Path.Combine(expectedBundleRoot, "smapi-internal"));
+        if (!Path.GetFullPath(smapiBundle.InternalDirectory).Equals(expectedInternalDirectory, StringComparison.Ordinal) ||
+            !Directory.Exists(expectedInternalDirectory))
+        {
+            throw new InvalidDataException("The prepared SMAPI bundle internal directory is invalid.");
+        }
         var smapiFiles = PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
             expectedBundleRoot,
             smapiBundle.Files.Select(static entry =>

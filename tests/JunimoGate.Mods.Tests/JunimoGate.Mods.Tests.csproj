@@ -19,6 +19,12 @@
              Link="SMAPI/AndroidBackgroundTaskTracker.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidMainThreadTaskQueue.cs"
              Link="SMAPI/AndroidMainThreadTaskQueue.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/SMAPIAndroidBuild.cs"
+             Link="SMAPI/SMAPIAndroidBuild.cs" />
+    <Compile Include="../../src/JunimoGate.GameHost/GameLaunchSchemas.cs"
+             Link="GameHost/GameLaunchSchemas.cs" />
+    <Compile Include="../../src/JunimoGate.GameHost/PreparedGameSnapshot.cs"
+             Link="GameHost/PreparedGameSnapshot.cs" />
     <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../../src/JunimoGate.Mods/JunimoGate.Mods.csproj" />
   </ItemGroup>

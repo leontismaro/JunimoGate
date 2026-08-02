@@ -120,7 +120,13 @@ return TestHarness.Run(
     ("SMAPI Android Mod entry queue pumps one task in FIFO order", () =>
         AndroidMainThreadTaskQueueTests.RunsOneQueuedTaskPerPumpInFifoOrder()),
     ("SMAPI Android Mod entry queue preserves task failures", () =>
-        AndroidMainThreadTaskQueueTests.PreservesTaskFailureForTheWaitingProducer()));
+        AndroidMainThreadTaskQueueTests.PreservesTaskFailureForTheWaitingProducer()),
+    ("GameHost reads v7 snapshots without binding the SMAPI bundle", () =>
+        GameLaunchSchemaTests.ReadsLegacySnapshotWithoutBundleIdentity()),
+    ("GameHost rejects unsupported snapshot schemas", () =>
+        GameLaunchSchemaTests.RejectsUnknownSnapshotSchemas()),
+    ("GameHost snapshots omit the SMAPI bundle identity", () =>
+        GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

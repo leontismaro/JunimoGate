@@ -37,7 +37,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
-        Log.Initialize(this, "game", GameLaunchSchema.BuildId);
+        Log.Initialize(this, "game", GameHostRuntimeIdentity.BuildId);
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
             RegisterBackInvokedCallback();
         status = new TextView(this) { Text = "JunimoGate SMAPI\n\nStarting prepared session…", TextSize = 16 };
@@ -60,22 +60,21 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             stage = GameStartupStage.SmapiBundle;
             var smapiBundle = await BundledSmapiAssets.ProvisionAndValidateAsync(
                 this,
-                snapshot.InternalDirectory,
                 CancellationToken.None);
             stage = GameStartupStage.RuntimeInventory;
             var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot, smapiBundle);
             stage = GameStartupStage.LoaderInstallation;
-            loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles, launch.ModsDirectory);
+            loader = new SmapiDefaultAssemblyLoader(runtimeFiles, smapiBundle.RootPath, launch.ModsDirectory);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
             stage = GameStartupStage.GameAssembly;
             _ = loader.LoadGameAssembly();
-            Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameLaunchSchema.BuildId}:smapi=4.5.2");
+            Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameHostRuntimeIdentity.BuildId}:smapi=4.5.2");
             stage = GameStartupStage.SmapiSession;
             var startupCompletion = new TaskCompletionSource<SmapiFailure?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
-            CreateAndRunSession(snapshot, launch, loader, startupCompletion);
+            CreateAndRunSession(snapshot, launch, smapiBundle, loader, startupCompletion);
             var reportedFailure = await startupCompletion.Task;
             if (reportedFailure is not null)
             {
@@ -130,6 +129,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private void CreateAndRunSession(
         PreparedGameSnapshot snapshot,
         ConsumedGameLaunch launch,
+        PreparedSmapiBundle smapiBundle,
         SmapiDefaultAssemblyLoader assemblyLoader,
         TaskCompletionSource<SmapiFailure?> startupCompletion)
     {
@@ -139,7 +139,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             GameAssemblyDirectory = snapshot.SourceWorkspacePath,
             ContentDirectory = Path.Combine(snapshot.SourceWorkspacePath, "Content"),
             ModsDirectory = launch.ModsDirectory,
-            InternalDirectory = snapshot.InternalDirectory,
+            InternalDirectory = smapiBundle.InternalDirectory,
             ConfigDirectory = snapshot.ConfigDirectory,
             LogDirectory = snapshot.LogDirectory,
             SaveDirectory = snapshot.SaveDirectory,

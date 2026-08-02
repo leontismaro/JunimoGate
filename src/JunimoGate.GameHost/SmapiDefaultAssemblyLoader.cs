@@ -14,7 +14,6 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         "JunimoGate.App", "JunimoGate.GameHost", "JunimoGate.Android", "JunimoGate.Core", "JunimoGate.Extraction", "JunimoGate.Mods", "JunimoGate.Rewriter",
         "MonoGame.Framework", "0Harmony",
     };
-    private readonly PreparedGameSnapshot snapshot;
     private readonly string modsRoot;
     private readonly Dictionary<string, string> gamePaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RegisteredModAssembly> modAssemblies = new(StringComparer.OrdinalIgnoreCase);
@@ -23,13 +22,12 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
     private bool installed;
 
     public SmapiDefaultAssemblyLoader(
-        PreparedGameSnapshot snapshot,
         PreparedRuntimeFiles runtimeFiles,
+        string smapiBundleRoot,
         string modsRoot)
     {
-        this.snapshot = snapshot;
         this.modsRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(modsRoot));
-        rewriteCache = Path.Combine(Path.GetDirectoryName(snapshot.InternalDirectory)!, "mod-rewrite-cache");
+        rewriteCache = Path.Combine(Path.GetFullPath(smapiBundleRoot), "mod-rewrite-cache");
         Directory.CreateDirectory(rewriteCache);
         foreach (var entry in runtimeFiles.ManagedAssemblyPaths)
             gamePaths.Add(entry.Key, entry.Value);

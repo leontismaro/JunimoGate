@@ -32,7 +32,7 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 
 2026-07-30 已真机执行 237 -> 239 -> 245 的版本更新链。每次点击都先检测 `PackageChanged`，随后只执行一次 Deep Prepare，新建 source/applied workspace、运行一次局部兼容分析和一次 rewrite，并在同一次点击继续启动；下一次启动恢复 Fast Launch。新版本达到 Running 后，Launcher 自动删除上一版 source/applied cache，最终私有目录只保留一套 active workspace 和一份 snapshot。
 
-2026-08-02 的 `.73` -> `.74` SMAPI-only 更新暴露了仍待收敛的启动成本：`GameLaunchSchema.BuildId` 同时参与 snapshot、game workspace 和 SMAPI bundle 身份，导致 source/applied workspace 均为 CacheHit 时仍进入约 6.95 秒的 Deep Prepare，并重复读取约 420 MB APK 与约 378 MB workspace。后续需拆分 snapshot schema、game workspace/rewrite 和 SMAPI bundle deployment 三类身份；纯 SMAPI 实现更新应只部署 bundle 并复用已准备的游戏 workspace。
+2026-08-02 的 `.73` -> `.74` SMAPI-only 更新曾暴露约 6.95 秒的错误 Deep Prepare：`GameLaunchSchema.BuildId` 同时参与 snapshot 与 SMAPI bundle 身份，使已有 source/applied workspace 虽然 CacheHit，仍重复读取约 420 MB APK 与约 378 MB workspace。随后 snapshot schema、game workspace/rewrite 和 SMAPI bundle deployment 身份已拆分；新版本继续读取旧 `v7` snapshot，纯 SMAPI 实现更新只部署当前 bundle 并复用已准备的游戏 workspace。该修复仍需以一次保留应用数据的真机覆盖升级确认。
 
 ## SMAPI and Mod compatibility
 

@@ -12,46 +12,11 @@ using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
-public static class GameLaunchSchema
-{
-    public const string Snapshot = "junimogate-prepared-game-snapshot/v7";
-    public const string Descriptor = "junimogate-game-launch-descriptor/v4";
-    public const string Activation = "junimogate-game-activation/v1";
-    public const string Outcome = "junimogate-game-launch-outcome/v1";
-    public const string BuildId = "smapi-4.5.2-junimogate.74";
-}
-
-public sealed record PreparedManagedAssembly(string SimpleName, string RelativePath, long Size);
-
-public sealed record PreparedContentFile(string RelativePath, long Size);
-
-public sealed record PreparedGameSnapshot(
-    string Schema,
-    string BuildId,
-    string CompatibilityRuleId,
-    string PackageName,
-    string VersionName,
-    long VersionCode,
-    string Abi,
-    string PackageMarker,
-    string SourceWorkspaceKey,
-    string SourceWorkspacePath,
-    string AppliedWorkspaceKey,
-    string AppliedWorkspacePath,
-    string OverlayAssemblyPath,
-    long OverlayAssemblySize,
-    string InternalDirectory,
-    string ConfigDirectory,
-    string LogDirectory,
-    string SaveDirectory,
-    string BackupDirectory,
-    IReadOnlyList<PreparedManagedAssembly> ManagedAssemblies,
-    IReadOnlyList<PreparedContentFile> ContentFiles,
-    DateTimeOffset PreparedAtUtc)
+public sealed partial record PreparedGameSnapshot
 {
     public void ValidateEnvelope(Context context)
     {
-        if (Schema != GameLaunchSchema.Snapshot || BuildId != GameLaunchSchema.BuildId ||
+        if (!GameLaunchSchema.IsSupportedSnapshot(Schema) ||
             CompatibilityRuleId != GameCompatibilityIds.StardewAndroidMainActivityBridgeV1 ||
             string.IsNullOrWhiteSpace(PackageName) || VersionCode <= 0 ||
             !Sha256Digest.TryParse(PackageMarker, out _) ||
@@ -68,7 +33,6 @@ public sealed record PreparedGameSnapshot(
         var runtimeRoot = Path.GetFullPath(AndroidPrivateStorage.GetRuntimeRoot(safeContext));
         var userDataRoot = Path.GetFullPath(AndroidPrivateStorage.GetUserDataRoot(safeContext));
         var gameSaveRoot = Path.GetFullPath(AndroidPrivateStorage.GetGameSaveRoot(safeContext));
-        var expectedInternalDirectory = Path.GetFullPath(BundledSmapiAssets.GetInternalDirectory(runtimeRoot));
         var expectedSourceWorkspace = Path.GetFullPath(Path.Combine(runtimeRoot, "workspaces", SourceWorkspaceKey));
         var expectedAppliedWorkspace = Path.GetFullPath(Path.Combine(
             runtimeRoot,
@@ -77,7 +41,7 @@ public sealed record PreparedGameSnapshot(
             AppliedWorkspaceKey));
         foreach (var path in new[]
                  {
-                     SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath, InternalDirectory,
+                     SourceWorkspacePath, AppliedWorkspacePath, OverlayAssemblyPath,
                  })
         {
             if (!Path.IsPathFullyQualified(path) || !IsContained(path, runtimeRoot))
@@ -90,8 +54,6 @@ public sealed record PreparedGameSnapshot(
                 throw new InvalidDataException("A prepared SMAPI user-data path is not host-owned.");
         }
 
-        if (!Path.GetFullPath(InternalDirectory).Equals(expectedInternalDirectory, StringComparison.Ordinal))
-            throw new InvalidDataException("A prepared SMAPI bundle path does not match this JunimoGate build.");
         if (!Path.GetFullPath(SourceWorkspacePath).Equals(expectedSourceWorkspace, StringComparison.Ordinal) ||
             !Path.GetFullPath(AppliedWorkspacePath).Equals(expectedAppliedWorkspace, StringComparison.Ordinal))
         {
@@ -479,11 +441,9 @@ public static class GameDeepPrepareCoordinator
             .Where(static item => item.Kind == "content")
             .Select(item => new PreparedContentFile(item.RelativePath, item.Size))
             .ToArray();
-        var runtimeRoot = AndroidPrivateStorage.GetRuntimeRoot(context);
         var userDataRoot = AndroidPrivateStorage.GetUserDataRoot(context);
         var snapshot = new PreparedGameSnapshot(
             GameLaunchSchema.Snapshot,
-            GameLaunchSchema.BuildId,
             GameCompatibilityIds.StardewAndroidMainActivityBridgeV1,
             source.PackageName,
             source.VersionName,
@@ -496,7 +456,6 @@ public static class GameDeepPrepareCoordinator
             capability.AppliedExecutionPlan.AppliedWorkspacePath,
             capability.AppliedExecutionPlan.OverlayAssemblyPath,
             capability.AppliedExecutionPlan.OverlayAssemblySize,
-            BundledSmapiAssets.GetInternalDirectory(runtimeRoot),
             Path.Combine(userDataRoot, "config"),
             Path.Combine(userDataRoot, "logs"),
             AndroidPrivateStorage.GetGameSaveRoot(context),

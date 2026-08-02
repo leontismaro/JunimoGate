@@ -34,7 +34,7 @@ public sealed class MainActivity : Activity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
-        Log.Initialize(this, "launcher", GameLaunchSchema.BuildId);
+        Log.Initialize(this, "launcher", GameHostRuntimeIdentity.BuildId);
         if (TryRouteToActiveGame())
             return;
 

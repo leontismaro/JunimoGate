@@ -8,7 +8,10 @@ namespace JunimoGate.GameHost;
 
 internal sealed record PreparedSmapiBundleFile(string RelativePath, long Size);
 
-internal sealed record PreparedSmapiBundle(string RootPath, IReadOnlyList<PreparedSmapiBundleFile> Files);
+internal sealed record PreparedSmapiBundle(
+    string RootPath,
+    string InternalDirectory,
+    IReadOnlyList<PreparedSmapiBundleFile> Files);
 
 internal static class BundledSmapiAssets
 {
@@ -24,7 +27,7 @@ internal static class BundledSmapiAssets
         runtimeRoot,
         "smapi",
         "bundles",
-        GameLaunchSchema.BuildId,
+        GameHostRuntimeIdentity.BuildId,
         "smapi-internal");
 
     public static void DiscardCurrentBundle(Context context)
@@ -47,7 +50,7 @@ internal static class BundledSmapiAssets
         var removed = 0;
         foreach (var directory in Directory.EnumerateDirectories(bundlesRoot, "*", SearchOption.TopDirectoryOnly))
         {
-            if (Path.GetFileName(directory).Equals(GameLaunchSchema.BuildId, StringComparison.Ordinal))
+            if (Path.GetFileName(directory).Equals(GameHostRuntimeIdentity.BuildId, StringComparison.Ordinal))
                 continue;
             reclaimedBytes += GetDirectoryBytes(directory);
             MoveAndDeleteDirectory(directory);
@@ -58,15 +61,11 @@ internal static class BundledSmapiAssets
 
     public static async Task<PreparedSmapiBundle> ProvisionAndValidateAsync(
         Context context,
-        string internalDirectory,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         var safe = context.ApplicationContext ?? context;
         var expectedInternal = Path.GetFullPath(GetInternalDirectory(AndroidPrivateStorage.GetRuntimeRoot(safe)));
-        if (!Path.GetFullPath(internalDirectory).Equals(expectedInternal, StringComparison.Ordinal))
-            throw new InvalidDataException("The SMAPI bundle path does not match this JunimoGate build.");
-
         var bundleRoot = Path.GetDirectoryName(expectedInternal)
             ?? throw new InvalidDataException("The SMAPI bundle path is invalid.");
         var assets = GetExpectedAssets(safe);
@@ -104,7 +103,7 @@ internal static class BundledSmapiAssets
                 entries.Add(new BundledAssetEntry(asset.RelativePath, output.Length));
             }
 
-            var manifest = new BundledAssetManifest(ManifestSchema, GameLaunchSchema.BuildId, entries);
+            var manifest = new BundledAssetManifest(ManifestSchema, GameHostRuntimeIdentity.BuildId, entries);
             await WriteManifestAsync(Path.Combine(staging, ManifestFileName), manifest, cancellationToken)
                 .ConfigureAwait(false);
             CommitDirectory(staging, bundleRoot);
@@ -175,7 +174,7 @@ internal static class BundledSmapiAssets
                 File.ReadAllText(manifestPath),
                 JsonOptions);
             if (manifest is null || manifest.Schema != ManifestSchema ||
-                manifest.BundleId != GameLaunchSchema.BuildId || manifest.Files is null ||
+                manifest.BundleId != GameHostRuntimeIdentity.BuildId || manifest.Files is null ||
                 manifest.Files.Count != expected.Count)
             {
                 return false;
@@ -196,6 +195,7 @@ internal static class BundledSmapiAssets
 
             bundle = new PreparedSmapiBundle(
                 Path.GetFullPath(bundleRoot),
+                Path.GetFullPath(Path.Combine(bundleRoot, "smapi-internal")),
                 manifest.Files.Select(static entry => new PreparedSmapiBundleFile(entry.RelativePath, entry.Size)).ToArray());
             return true;
         }
