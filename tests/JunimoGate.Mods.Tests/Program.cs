@@ -116,7 +116,11 @@ return TestHarness.Run(
     ("SMAPI Android background tracker follows blocked work", () =>
         AndroidBackgroundTaskTrackerTests.TracksBlockedWorkUntilCompletion()),
     ("SMAPI Android background tracker releases failed work", () =>
-        AndroidBackgroundTaskTrackerTests.ReleasesFailedWork()));
+        AndroidBackgroundTaskTrackerTests.ReleasesFailedWork()),
+    ("SMAPI Android Mod entry queue pumps one task in FIFO order", () =>
+        AndroidMainThreadTaskQueueTests.RunsOneQueuedTaskPerPumpInFifoOrder()),
+    ("SMAPI Android Mod entry queue preserves task failures", () =>
+        AndroidMainThreadTaskQueueTests.PreservesTaskFailureForTheWaitingProducer()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

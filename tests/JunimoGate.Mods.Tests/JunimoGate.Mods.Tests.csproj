@@ -17,6 +17,8 @@
              Link="SMAPI/AndroidLoadingLogBuffer.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidBackgroundTaskTracker.cs"
              Link="SMAPI/AndroidBackgroundTaskTracker.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidMainThreadTaskQueue.cs"
+             Link="SMAPI/AndroidMainThreadTaskQueue.cs" />
     <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../../src/JunimoGate.Mods/JunimoGate.Mods.csproj" />
   </ItemGroup>
