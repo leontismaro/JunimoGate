@@ -32,7 +32,7 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 
 2026-07-30 已真机执行 237 -> 239 -> 245 的版本更新链。每次点击都先检测 `PackageChanged`，随后只执行一次 Deep Prepare，新建 source/applied workspace、运行一次局部兼容分析和一次 rewrite，并在同一次点击继续启动；下一次启动恢复 Fast Launch。新版本达到 Running 后，Launcher 自动删除上一版 source/applied cache，最终私有目录只保留一套 active workspace 和一份 snapshot。
 
-2026-08-02 的 `.73` -> `.74` SMAPI-only 更新曾暴露约 6.95 秒的错误 Deep Prepare：`GameLaunchSchema.BuildId` 同时参与 snapshot 与 SMAPI bundle 身份，使已有 source/applied workspace 虽然 CacheHit，仍重复读取约 420 MB APK 与约 378 MB workspace。随后 snapshot schema、game workspace/rewrite 和 SMAPI bundle deployment 身份已拆分；新版本继续读取旧 `v7` snapshot，纯 SMAPI 实现更新只部署当前 bundle 并复用已准备的游戏 workspace。该修复仍需以一次保留应用数据的真机覆盖升级确认。
+2026-08-02 的 `.73` -> `.74` SMAPI-only 更新曾暴露约 6.95 秒的错误 Deep Prepare：`GameLaunchSchema.BuildId` 同时参与 snapshot 与 SMAPI bundle 身份，使已有 source/applied workspace 虽然 CacheHit，仍重复读取约 420 MB APK 与约 378 MB workspace。随后 snapshot schema、game workspace/rewrite 和 SMAPI bundle deployment 身份已拆分；新版本继续读取旧 `v7` snapshot，纯 SMAPI 实现更新只部署当前 bundle 并复用已准备的游戏 workspace。保留数据覆盖安装最终 bundle `.30` 后，Launcher 在约 38 ms 内从 Checking 到 `fast_launch_ready`，该次干净日志没有 `JunimoGate.DeepPrepare`；点击到 `titleScreenGameMode (0)` 约 8.8 秒，确认 SMAPI-only 更新不再重准备游戏 workspace。
 
 ## SMAPI and Mod compatibility
 
@@ -49,6 +49,7 @@ V1 必须保持上游 SMAPI：
 JunimoGate GameHost 直接创建并持有 SMAPI runtime/session，注入 Activity、Game/Content/Mods/internal/config/log/save 路径、主线程调度和统一程序集加载服务。Android-specific adaptation 集中在 fork 的平台层和有范围的 compatibility patch 中，不能为每个游戏 patch version 复制整套 GameHost recipe。
 
 首个闭环要求游戏、SMAPI、SMAPI依赖和Mods在独立游戏进程的统一加载环境中共享类型身份；模组加载不得继续分散调用会创建不同加载环境的 `Assembly.Load(byte[])`、`LoadFrom` 和 `UnsafeLoadFrom`。
+
 
 
 
