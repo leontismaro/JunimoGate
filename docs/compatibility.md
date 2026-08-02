@@ -32,6 +32,8 @@ JunimoGate 的兼容目标是适应游戏小版本更新和未来 Android SMAPI�
 
 2026-07-30 已真机执行 237 -> 239 -> 245 的版本更新链。每次点击都先检测 `PackageChanged`，随后只执行一次 Deep Prepare，新建 source/applied workspace、运行一次局部兼容分析和一次 rewrite，并在同一次点击继续启动；下一次启动恢复 Fast Launch。新版本达到 Running 后，Launcher 自动删除上一版 source/applied cache，最终私有目录只保留一套 active workspace 和一份 snapshot。
 
+2026-08-02 的 `.73` -> `.74` SMAPI-only 更新暴露了仍待收敛的启动成本：`GameLaunchSchema.BuildId` 同时参与 snapshot、game workspace 和 SMAPI bundle 身份，导致 source/applied workspace 均为 CacheHit 时仍进入约 6.95 秒的 Deep Prepare，并重复读取约 420 MB APK 与约 378 MB workspace。后续需拆分 snapshot schema、game workspace/rewrite 和 SMAPI bundle deployment 三类身份；纯 SMAPI 实现更新应只部署 bundle 并复用已准备的游戏 workspace。
+
 ## SMAPI and Mod compatibility
 
 当前主线以 Android fork 4.3.2.5 commit `6a34bbeb6e891536cdd948594094482ba0d8d264` 作为首个可运行移植基线，必要 Android patch series 已迁移到上游 SMAPI 4.5.2 commit `821167e5c511bf3a2d98f604e5e838561c469219`。JunimoGate 将它作为 solution 内部源码项目构建，保留独立的 `StardewModdingAPI` 程序集身份，但产品路径不依赖 `Program.Main`、SMAPILoader 或反射启动。
@@ -47,6 +49,8 @@ V1 必须保持上游 SMAPI：
 JunimoGate GameHost 直接创建并持有 SMAPI runtime/session，注入 Activity、Game/Content/Mods/internal/config/log/save 路径、主线程调度和统一程序集加载服务。Android-specific adaptation 集中在 fork 的平台层和有范围的 compatibility patch 中，不能为每个游戏 patch version 复制整套 GameHost recipe。
 
 首个闭环要求游戏、SMAPI、SMAPI依赖和Mods在独立游戏进程的统一加载环境中共享类型身份；模组加载不得继续分散调用会创建不同加载环境的 `Assembly.Load(byte[])`、`LoadFrom` 和 `UnsafeLoadFrom`。
+
+
 
 
 
