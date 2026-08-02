@@ -106,7 +106,13 @@ return TestHarness.Run(
     ("SMAPI platform mapping rewrites nested custom-attribute type scopes", () =>
         CustomAttributeTypeScopeRewriterTests.RewritesNestedTypeArguments()),
     ("SMAPI platform mapping includes publicly visible nested types", () =>
-        CustomAttributeTypeScopeRewriterTests.IncludesOnlyPubliclyVisibleNestedTypes()));
+        CustomAttributeTypeScopeRewriterTests.IncludesOnlyPubliclyVisibleNestedTypes()),
+    ("SMAPI Android loading log keeps the newest bounded lines", () =>
+        AndroidLoadingLogBufferTests.KeepsNewestLinesInDisplayOrder()),
+    ("SMAPI Android loading log preserves platform newline semantics", () =>
+        AndroidLoadingLogBufferTests.SplitsPlatformNewlinesWithoutLosingEmptyLines()),
+    ("SMAPI Android loading log limits snapshots and clears state", () =>
+        AndroidLoadingLogBufferTests.LimitsSnapshotsAndClearsState()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

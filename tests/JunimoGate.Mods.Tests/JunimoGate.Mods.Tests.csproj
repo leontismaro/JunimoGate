@@ -11,6 +11,10 @@
              Link="SMAPI/CustomAttributeTypeScopeRewriter.cs" />
     <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/TypeDefinitionVisibility.cs"
              Link="SMAPI/TypeDefinitionVisibility.cs" />
+    <Compile Include="../../smapi/src/SMAPI.Internal/ConsoleWriting/ConsoleLogLevel.cs"
+             Link="SMAPI/ConsoleLogLevel.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidLoadingLogBuffer.cs"
+             Link="SMAPI/AndroidLoadingLogBuffer.cs" />
     <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../../src/JunimoGate.Mods/JunimoGate.Mods.csproj" />
   </ItemGroup>
