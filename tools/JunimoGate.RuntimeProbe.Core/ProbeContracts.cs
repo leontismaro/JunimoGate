@@ -33,9 +33,9 @@ public static class RuntimeProbeCaseIds
 
 public static class RuntimeProbeConclusions
 {
-    public const string Passed = "stock-runtime-passed";
-    public const string PassedWithHarmonyMonoModFix = "stock-runtime-passed-with-harmony-monomod-fix";
-    public const string Failed = "stock-runtime-failed-needs-investigation";
+    public const string Passed = "application-local-mono-passed";
+    public const string PassedWithHarmonyMonoModFix = "application-local-mono-with-harmony-monomod-fix";
+    public const string Failed = "application-local-mono-failed-needs-investigation";
 
     public static string Evaluate(IEnumerable<ProbeCaseResult> cases)
     {

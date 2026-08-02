@@ -1,6 +1,6 @@
 # Harmony Android patch 维护手册
 
-本文是 `Lib.Harmony 2.4.2-junimogate.11` 下游补丁的操作与维护手册。它回答：为什么采用 patch、如何构建和验证、如何处理上游升级与冲突、脚本失败时如何定位，以及什么条件下可以缩小或删除补丁。
+本文是 `Lib.Harmony 2.4.2-junimogate.11` 下游补丁的操作与维护手册。Mono 访问策略补丁另由 `build/build-mono-android.sh` 处理：它只在构建阶段从本地 .NET runtime pack 生成应用副本，不属于 Harmony patch，也不进入启动热路径。
 
 权威证据与边界见 [`runtime-probe-result.md`](runtime-probe-result.md)；通用 Android 工具链见 [`build-environment.md`](build-environment.md)。
 
@@ -61,9 +61,9 @@ Lib.Harmony/Lib.Harmony.csproj
 - 保持许可证与 provenance 清晰；
 - 从固定输入重建相同包。
 
-### 2.3 修 library，不修改 stock runtime
+### 2.3 Harmony 修 library，Mono 只生成应用副本
 
-M2 的最终结论是：stock .NET 9 Android Mono JIT 足够，但 Harmony/MonoMod 需要 Android library fix。当前不维护 custom `libmonosgen-2.0.so`，也不修改全局 .NET runtime pack。
+Harmony/MonoMod 继续只维护 Android library fix。普通 Mod 的跨程序集非公开成员访问由应用内 Mono 副本统一处理；该副本来自 `.toolchains/dotnet/packs/Microsoft.NETCore.App.Runtime.Mono.android-arm64`，只改写 `mono_method_can_access_field` 和 `mono_method_can_access_method` 的 ARM64 函数入口。不会修改全局 runtime pack，也不维护完整 Mono 源码 fork。
 
 ### 2.4 版本不可变
 
@@ -176,7 +176,7 @@ adb devices -l
 必须同时通过 Debug 和 Release。权威成功结论为：
 
 ```text
-stock-runtime-passed-with-harmony-monomod-fix
+application-local-mono-with-harmony-monomod-fix
 ```
 
 原始报告位于 ignored `artifacts/runtime-probe/`。最终 `.11` 成功报告和哈希见 [`runtime-probe-result.md`](runtime-probe-result.md)。
@@ -391,7 +391,7 @@ patch apply/check
 - native crash 或内存损坏；
 - hard case 行为不再可观察；
 - Release trimming only failure 未解释；
-- 需要修改 stock Mono runtime 才能继续；
+- 需要修改完整 Mono runtime 源码或复制游戏 runtime 才能继续；
 - 上游许可证、分发或 provenance 不清楚。
 
 ## 9. 常见脚本错误与排查
@@ -599,7 +599,7 @@ patch SHA-256: cfee9e3088008a2f434ae2b01a9f695668ba05c7df61a4ed5cba796aff5f95f6
 
 只有候选上游包在不应用本地 Android patch 时满足以下条件，才可删除 patch：
 
-1. stock Mono JIT/no-interpreter/no-AOT；
+1. application-local Mono JIT/no-interpreter/no-AOT；
 2. RuntimeProbe Debug/Release 全部hard cases；
 3. Android ARM64 cache维护有经过自测的等价实现；
 4. bionic、page-size、tagged-pointer和Mono JIT entry均由上游覆盖；

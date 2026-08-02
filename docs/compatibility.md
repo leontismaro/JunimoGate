@@ -64,12 +64,12 @@ JunimoGate GameHost 直接创建并持有 SMAPI runtime/session，注入 Activit
 
 Phase 0 RuntimeProbe 的十个 hard cases 已在 ARM64 test device Android 16/API36 的 ARM64 Debug/Release 通过。当前运行方向仍是：
 
-- stock .NET Android Mono；
+- application-local copy derived from the project-local .NET Android Mono pack；
 - JIT；
 - interpreter disabled；
 - game AOT disabled；
 - `Lib.Harmony 2.4.2-junimogate.11`；
-- 不维护 custom Mono runtime。
+- 不维护完整 Mono fork；只在构建阶段改写应用副本中的两个访问判定函数。
 
 RuntimeProbe 是 runtime 能力证据，不要求在每次开发或产品启动时重复运行。
 

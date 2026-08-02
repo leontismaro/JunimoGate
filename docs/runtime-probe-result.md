@@ -4,15 +4,15 @@
 
 Phase 0 selected the second permitted outcome:
 
-> **The stock .NET 9 Android Mono runtime passes after a pinned Harmony/MonoMod library fix. JunimoGate does not maintain a custom Mono runtime.**
+> **The .NET 9 Android Mono runtime is used as an input and a small application-local access-policy patch is applied. JunimoGate does not maintain a separate Mono source tree or full runtime fork.**
 
 The validated report conclusion is:
 
 ```text
-stock-runtime-passed-with-harmony-monomod-fix
+application-local-mono-with-harmony-monomod-fix
 ```
 
-This is not a claim that unmodified upstream Harmony 2.4.2 works on Android. It means the stock `libmonosgen-2.0.so` supplied by .NET for Android is sufficient when JunimoGate uses its reproducible `Lib.Harmony 2.4.2-junimogate.11` package and ARM64 instruction-cache helper.
+This is not a claim that unmodified upstream Harmony 2.4.2 works on Android. The build starts from the `libmonosgen-2.0.so` supplied by the local .NET Android runtime pack, patches the two Mono access-decision functions by ELF symbol location, and packages that copy with the App and RuntimeProbe. The SDK pack is not changed. JunimoGate also uses its reproducible `Lib.Harmony 2.4.2-junimogate.11` package and ARM64 instruction-cache helper.
 
 ## Validation environment
 
@@ -23,7 +23,8 @@ This is not a claim that unmodified upstream Harmony 2.4.2 works on Android. It 
 | Android | 16 / API 36 |
 | Device ABI | `arm64-v8a` |
 | Probe RID | `android-arm64` |
-| Runtime | `.NET 9.0.17` stock Android Mono |
+| Runtime input | `.NET 9.0.17` Android ARM64 runtime pack |
+| Runtime in APK | Application-local Mono copy with two access-policy functions patched |
 | Execution mode | JIT, interpreter disabled, AOT disabled |
 | Harmony assembly version | `2.4.2.0` |
 | Harmony informational version | `2.4.2.0-junimogate.11` |
@@ -58,7 +59,7 @@ Both reports contain the same ten passing hard cases:
 
 1. runtime dynamic-code generation and execution;
 2. patched Harmony/MonoMod Android platform initialization;
-3. stock Mono managed JIT entry-point validation;
+3. managed Mono JIT entry-point validation;
 4. native ARM64 instruction-cache helper self-test;
 5. cross-assembly private method Prefix/Postfix;
 6. cross-assembly private field by-ref injection and write-back;

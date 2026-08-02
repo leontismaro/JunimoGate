@@ -188,7 +188,7 @@ snapshot 自动失效、package update marker、session router、Fast Launch 单
 - staging 后原子提交；
 - 调用方不能提供任意 workspace/assembly/Content 路径；
 - licensing callbacks 不属于改写目标；这一点已由 M5-PoC 验证，后续启动和兼容流程不再扫描、hash 或重复验证这些方法；
-- 使用 stock .NET Android Mono、JIT、no interpreter、no game AOT/runtime copy；
+- 使用应用内 .NET Android Mono 副本、JIT、no interpreter、no game AOT/runtime copy；
 - 保留 `StardewModdingAPI` 程序集身份和 LGPL 源码/notice 义务；
 - 不复制 GPLv3 SMAPILoader 实现。
 

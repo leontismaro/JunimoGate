@@ -26,7 +26,7 @@ public sealed class MainActivity : Activity
 
         _output = new TextView(this)
         {
-            Text = "JunimoGate stock runtime probe\n",
+            Text = "JunimoGate Mono runtime probe\n",
         };
         _output.SetTextIsSelectable(true);
         _output.SetPadding(24, 24, 24, 24);

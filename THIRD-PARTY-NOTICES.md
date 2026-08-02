@@ -2,6 +2,10 @@
 
 JunimoGate's project-wide license has not yet been selected. The notices below apply only to the identified third-party material and dependencies; they do **not** place the whole JunimoGate repository under the MIT License.
 
+## .NET Android Mono runtime input
+
+The application-local `libmonosgen-2.0.so` is derived at build time from the project-local .NET Android ARM64 runtime pack. JunimoGate changes only the two Mono access-decision function bodies in that copy; the SDK/runtime pack is never modified in place. The .NET runtime license and attribution shipped with the selected SDK/runtime distribution remain authoritative.
+
 ## .NET for Android AssemblyStore format reference
 
 The AssemblyStore v1/v2 format semantics and naming used by `src/JunimoGate.Extraction/LegacyAssemblyStoreV1.cs` and `src/JunimoGate.Extraction/AssemblyStoreV2.cs` were adapted from the official `dotnet/android` `assembly-store-reader-mk2` source:

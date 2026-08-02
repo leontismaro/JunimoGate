@@ -26,12 +26,13 @@
   </ItemGroup>
   <Target Name="ValidateRuntimeProbeExecutionMode" BeforeTargets="Build">
     <Error Condition="'$(UseInterpreter)' != 'false'"
-           Text="RuntimeProbe must run with UseInterpreter=false so Harmony is tested against stock Mono JIT." />
+           Text="RuntimeProbe must run with UseInterpreter=false so Harmony is tested against the application-local Mono JIT." />
     <Error Condition="'$(AndroidUseInterpreter)' != 'false'"
-           Text="RuntimeProbe must run with AndroidUseInterpreter=false so Harmony is tested against stock Mono JIT." />
+           Text="RuntimeProbe must run with AndroidUseInterpreter=false so Harmony is tested against the application-local Mono JIT." />
     <Error Condition="'$(RunAOTCompilation)' != 'false'"
-           Text="RuntimeProbe must run with RunAOTCompilation=false so Harmony is tested against stock Mono JIT." />
+           Text="RuntimeProbe must run with RunAOTCompilation=false so Harmony is tested against the application-local Mono JIT." />
     <Error Condition="!Exists('../../artifacts/native-cacheflush/libjunimogate-cacheflush.so')"
            Text="Missing ARM64 cache helper. Run build/build-cacheflush.sh first." />
   </Target>
+  <Import Project="../../build/JunimoGate.MonoRuntime.targets" />
 </Project>

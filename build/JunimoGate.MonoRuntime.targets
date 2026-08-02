@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <JunimoGatePatchedMonoRuntime Condition="'$(JunimoGatePatchedMonoRuntime)' == ''">$(MSBuildThisFileDirectory)..\artifacts\mono-runtime\android-arm64\libmonosgen-2.0.so</JunimoGatePatchedMonoRuntime>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'android-arm64'">
+    <AndroidNativeLibrary Include="$(JunimoGatePatchedMonoRuntime)">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+  <Target Name="UseJunimoGateMonoRuntime" AfterTargets="_IncludeNativeSystemLibraries">
+    <Error Condition="!Exists('$(JunimoGatePatchedMonoRuntime)')"
+           Text="Missing application-local Android Mono runtime. Run build/build-mono-android.sh first." />
+    <ItemGroup>
+      <FrameworkNativeLibrary Remove="@(FrameworkNativeLibrary)"
+                              Condition="'%(FrameworkNativeLibrary.Filename)%(FrameworkNativeLibrary.Extension)' == 'libmonosgen-2.0.so'" />
+    </ItemGroup>
+  </Target>
+</Project>

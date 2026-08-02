@@ -235,11 +235,20 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
     )
 
     with zipfile.ZipFile(path) as archive:
+        archive_names = archive.namelist()
         native_entries = [
             entry
             for entry in archive.infolist()
             if entry.filename.startswith("lib/") and not entry.is_dir()
         ]
+        mono_runtime_entries = [
+            name
+            for name in archive_names
+            if pathlib.PurePosixPath(name).name.casefold() == "libmonosgen-2.0.so"
+        ]
+        patched_mono_runtime = None
+        if mono_runtime_entries == ["lib/arm64-v8a/libmonosgen-2.0.so"]:
+            patched_mono_runtime = archive.read(mono_runtime_entries[0])
         native_abis = sorted(
             {
                 parts[1]
@@ -247,7 +256,6 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
                 if len(parts := entry.filename.split("/")) >= 3
             }
         )
-        archive_names = archive.namelist()
         game_aot_markers = [
             name
             for name in archive_names
@@ -336,6 +344,9 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "debuggable": debuggable == expected.debuggable,
         "extractNativeLibs": extract_native_libs == expected.extract_native_libs,
         "nativeLibrariesStored": native_libraries_stored == expected.native_libraries_stored,
+        "singleApplicationMonoRuntime": mono_runtime_entries == ["lib/arm64-v8a/libmonosgen-2.0.so"],
+        "monoAccessPolicyPatched": patched_mono_runtime is not None
+        and patched_mono_runtime.count(b"\x20\x00\x80\x52\xc0\x03\x5f\xd6") >= 2,
         "signatureV2": v2,
         "signatureV3": v3,
         "manifestPermissionsAgreeWithBadging": sorted(manifest.permissions) == sorted(badging_permissions),
@@ -380,8 +391,11 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "nativeAbis": native_abis,
         "nativeEntryCount": len(native_entries),
         "nativeLibrariesStored": native_libraries_stored,
+        "singleApplicationMonoRuntime": mono_runtime_entries == ["lib/arm64-v8a/libmonosgen-2.0.so"],
+        "monoAccessPolicyPatched": patched_mono_runtime is not None
+        and patched_mono_runtime.count(b"\x20\x00\x80\x52\xc0\x03\x5f\xd6") >= 2,
         "compressedNativeEntries": compressed_native_entries,
-            "publicRuntimeProviders": {
+        "publicRuntimeProviders": {
             "monoGameEntry": mono_game_entries[0] if len(mono_game_entries) == 1 else None,
             "monoGamePayloadSha256": public_monogame_payload_sha256,
             "openAlEntry": openal_entries[0] if len(openal_entries) == 1 else None,

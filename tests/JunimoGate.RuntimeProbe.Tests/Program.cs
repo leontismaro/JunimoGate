@@ -41,7 +41,7 @@ return TestHarness.Run(
         TestHarness.True(RuntimeProbeCaseIds.All.SequenceEqual(report.Cases.Select(result => result.Id)));
         TestHarness.Equal(RuntimeProbeCaseIds.All.Count, report.Cases.Select(result => result.Id).Distinct(StringComparer.Ordinal).Count());
     }),
-    ("passing hard cases produce the stock runtime passed conclusion", () =>
+    ("passing hard cases produce the application-local Mono passed conclusion", () =>
     {
         TestHarness.Equal(RuntimeProbeConclusions.Passed, report.Conclusion);
         TestHarness.Equal("host-coreclr", report.PlatformMetadata["probePlatform"]);

@@ -53,9 +53,9 @@
   </Target>
   <Target Name="ValidateGameHostExecutionMode" BeforeTargets="Build">
     <Error Condition="'$(UseInterpreter)' != 'false'"
-           Text="JunimoGate App must use stock Mono JIT with UseInterpreter=false for GameHost." />
+           Text="JunimoGate App must use the application-local Mono JIT with UseInterpreter=false for GameHost." />
     <Error Condition="'$(AndroidUseInterpreter)' != 'false'"
-           Text="JunimoGate App must use stock Mono JIT with AndroidUseInterpreter=false for GameHost." />
+           Text="JunimoGate App must use the application-local Mono JIT with AndroidUseInterpreter=false for GameHost." />
     <Error Condition="'$(RunAOTCompilation)' != 'false'"
            Text="JunimoGate App must not AOT-compile the dynamically supplied game workspace." />
     <Error Condition="'$(AndroidUseAssemblyStore)' != 'false'"
@@ -65,4 +65,5 @@
     <Error Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' != 'false'"
            Text="JunimoGate App Release must remain untrimmed while dynamically loaded game assemblies have no complete trimmer dependency descriptor." />
   </Target>
+  <Import Project="../../build/JunimoGate.MonoRuntime.targets" />
 </Project>

@@ -1,6 +1,6 @@
 # RuntimeProbe
 
-`JunimoGate.RuntimeProbe` is the Phase 0 Android executable used to decide whether the stock .NET 9 Android Mono runtime can support representative Harmony and MonoMod behavior. The gate is complete: final ARM64 Debug and Release reports passed all ten hard cases using the stock runtime plus the reproducible JunimoGate Harmony/MonoMod library fix.
+`JunimoGate.RuntimeProbe` is the Android executable used to exercise representative Harmony and MonoMod behavior with the same application-local Mono runtime as GameHost. The runtime is derived from the project-local .NET 9 Android ARM64 runtime pack during the build; the SDK pack itself is never modified.
 
 A successful host run proves that the probe implementation works on CoreCLR. The Android conclusion comes from the physical-device reports indexed in [`../../docs/runtime-probe-result.md`](../../docs/runtime-probe-result.md).
 
@@ -13,7 +13,7 @@ A successful host run proves that the probe implementation works on CoreCLR. The
 
 ## Execution mode
 
-The project enforces the GameHost-relevant stock Mono JIT configuration:
+The project enforces the GameHost-relevant Mono JIT configuration:
 
 ```text
 UseInterpreter=false
@@ -21,7 +21,7 @@ AndroidUseInterpreter=false
 RunAOTCompilation=false
 ```
 
-This is explicit because .NET for Android Debug otherwise defaults to interpreter mode. The probe build fails if these requested properties are changed.
+This is explicit because .NET for Android Debug otherwise defaults to interpreter mode. The probe build fails if these requested properties are changed. `build/build-mono-android.sh` supplies the application-local runtime before the APK is built.
 
 ## Hard cases
 
@@ -42,18 +42,19 @@ Reflection is used to locate targets and inspect generated metadata, but reflect
 
 ## Conclusion
 
-The final Android conclusion is:
+The runtime selection is:
 
 ```text
-stock-runtime-passed-with-harmony-monomod-fix
+application-local-mono-with-harmony-monomod-fix
 ```
 
 This means:
 
-- keep the stock .NET for Android `libmonosgen-2.0.so`;
+- start from the .NET for Android `libmonosgen-2.0.so` in the local runtime pack;
+- patch only `mono_method_can_access_field` and `mono_method_can_access_method` in the application copy;
 - use generated `Lib.Harmony 2.4.2-junimogate.11`;
 - package `libjunimogate-cacheflush.so` for ARM64;
-- do not maintain a custom Mono runtime.
+- do not modify or redistribute the complete SDK/runtime pack.
 
 It does not mean unmodified upstream Harmony 2.4.2 works on Android, and it does not prove full game or Mod compatibility.
 

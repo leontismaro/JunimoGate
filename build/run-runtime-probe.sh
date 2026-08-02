@@ -87,7 +87,7 @@ PY
 printf 'RuntimeProbe conclusion: %s\nReport: %s\nLogcat: %s\n' "$conclusion" "$report" "$log"
 
 case "$conclusion" in
-  stock-runtime-passed|stock-runtime-passed-with-harmony-monomod-fix)
+  application-local-mono-passed|application-local-mono-with-harmony-monomod-fix)
     exit 0
     ;;
   *)

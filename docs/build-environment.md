@@ -158,11 +158,11 @@ adb devices -l
 ./build/verify-runtime-probe.sh
 ```
 
-The script builds, installs, clears old app state, launches each configuration, waits for app-private JSON, collects it through `adb run-as`, captures logcat, and accepts either a direct stock-runtime pass or the validated stock-runtime-plus-library-fix conclusion.
+The script builds, installs, clears old probe-app state, launches each configuration, waits for app-private JSON, collects it through `adb run-as`, captures logcat, and accepts either a direct application-local Mono pass or the application-local Mono plus Harmony/MonoMod fix conclusion.
 
 Set `ANDROID_SERIAL` when multiple devices are attached. Output is stored under ignored `artifacts/runtime-probe/`.
 
-M1 and M2 are complete. A ARM64 test device running Android 16/API 36 installed and launched the probe, and final Debug and Release reports passed all ten hard cases in explicit stock Mono JIT/no-interpreter/no-AOT mode. The decision is `stock-runtime-passed-with-harmony-monomod-fix`: keep the stock runtime, require the pinned Harmony/MonoMod library patch and cache helper, and do not maintain a custom runtime. See [`runtime-probe-result.md`](runtime-probe-result.md) for report hashes and scope.
+M1 and M2 are complete. A ARM64 test device running Android 16/API 36 installed and launched the probe, and final Debug and Release reports passed all ten hard cases in explicit application-local Mono JIT/no-interpreter/no-AOT mode. The runtime input is the project-local .NET Android pack; only the two Mono access-decision functions are patched in the ignored APK copy. The pinned Harmony/MonoMod library patch and cache helper remain separate required inputs. See [`runtime-probe-result.md`](runtime-probe-result.md) for report hashes and scope.
 
 ## Local game inspection
 
@@ -180,6 +180,6 @@ Never write or copy APKs, game assets, DLLs, native libraries, decompiled source
 
 ## Runtime boundary
 
-M2 explicitly selected the stock .NET Android Mono runtime plus a pinned Harmony/MonoMod library fix. No custom runtime pack is selected or justified. If later device/game evidence reopens that decision, any custom pack must be project/CI supplied, reproducible, provenance-recorded, and selected through resolved runtime-pack inputs. Do not alter global .NET runtime packs, and do not copy the original game's AOT images into the Launcher.
+M2 uses the project-local .NET Android Mono runtime pack as an input, then creates an ignored application-local ARM64 copy with only the two Mono access-decision functions patched. `build/build-mono-android.sh` performs this once before an APK build; it does not alter the global pack and does not copy the original game's AOT images. Harmony/MonoMod remains a separate pinned library patch.
 
 External baseline: [`../../ARCHITECTURE_PLAN.md`](../../ARCHITECTURE_PLAN.md) and [`../../TECHNICAL_FINDINGS.md`](../../TECHNICAL_FINDINGS.md).
