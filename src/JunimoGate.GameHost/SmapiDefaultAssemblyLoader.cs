@@ -9,7 +9,8 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
 {
     private static readonly HashSet<string> ProtectedNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "StardewValley", "StardewModdingAPI", "StardewModdingAPI.Toolkit", "StardewModdingAPI.Toolkit.CoreInterfaces",
+        "StardewValley", "StardewModdingAPI", "SMAPI.Toolkit", "SMAPI.Toolkit.CoreInterfaces",
+        "StardewModdingAPI.Toolkit", "StardewModdingAPI.Toolkit.CoreInterfaces",
         "JunimoGate.App", "JunimoGate.GameHost", "JunimoGate.Android", "JunimoGate.Core", "JunimoGate.Extraction", "JunimoGate.Mods", "JunimoGate.Rewriter",
         "MonoGame.Framework", "0Harmony",
     };

@@ -102,7 +102,11 @@ return TestHarness.Run(
     ("SMAPI HighestCompatible preserves assembly scope in ABI signatures", () =>
         AssemblyBindingPlannerTests.HighestCompatiblePreservesTypeAssemblyScope()),
     ("SMAPI HighestCompatible resolves inherited ABI members", () =>
-        AssemblyBindingPlannerTests.HighestCompatibleResolvesInheritedMembers()));
+        AssemblyBindingPlannerTests.HighestCompatibleResolvesInheritedMembers()),
+    ("SMAPI platform mapping rewrites nested custom-attribute type scopes", () =>
+        CustomAttributeTypeScopeRewriterTests.RewritesNestedTypeArguments()),
+    ("SMAPI platform mapping includes publicly visible nested types", () =>
+        CustomAttributeTypeScopeRewriterTests.IncludesOnlyPubliclyVisibleNestedTypes()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

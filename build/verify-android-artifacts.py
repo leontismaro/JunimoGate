@@ -317,8 +317,38 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         ]
         smapi_managed_payloads = {
             "lib/arm64-v8a/lib_StardewModdingAPI.dll.so",
+            "lib/arm64-v8a/lib_SMAPI.Toolkit.dll.so",
+            "lib/arm64-v8a/lib_SMAPI.Toolkit.CoreInterfaces.dll.so",
+        }
+        smapi_cecil_assets = {
+            "assets/smapi-managed/0Harmony.dll",
+            "assets/smapi-managed/DeepCloner.dll",
+            "assets/smapi-managed/HtmlAgilityPack.dll",
+            "assets/smapi-managed/Markdig.dll",
+            "assets/smapi-managed/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+            "assets/smapi-managed/Mono.Cecil.dll",
+            "assets/smapi-managed/Mono.Cecil.Mdb.dll",
+            "assets/smapi-managed/Mono.Cecil.Pdb.dll",
+            "assets/smapi-managed/Mono.Cecil.Rocks.dll",
+            "assets/smapi-managed/NVorbis.dll",
+            "assets/smapi-managed/Newtonsoft.Json.dll",
+            "assets/smapi-managed/Newtonsoft.Json.Bson.dll",
+            "assets/smapi-managed/Pathoschild.Http.Client.dll",
+            "assets/smapi-managed/Pintail.dll",
+            "assets/smapi-managed/SMAPI.Toolkit.dll",
+            "assets/smapi-managed/SMAPI.Toolkit.CoreInterfaces.dll",
+            "assets/smapi-managed/SkiaSharp.dll",
+            "assets/smapi-managed/StardewModdingAPI.dll",
+            "assets/smapi-managed/StbImageWriteSharp.dll",
+            "assets/smapi-managed/System.Net.Http.Formatting.dll",
+            "assets/smapi-managed/TMXTile.dll",
+            "assets/smapi-managed/TextCopy.dll",
+        }
+        legacy_smapi_toolkit_payloads = {
             "lib/arm64-v8a/lib_StardewModdingAPI.Toolkit.dll.so",
             "lib/arm64-v8a/lib_StardewModdingAPI.Toolkit.CoreInterfaces.dll.so",
+            "assets/smapi-managed/StardewModdingAPI.Toolkit.dll",
+            "assets/smapi-managed/StardewModdingAPI.Toolkit.CoreInterfaces.dll",
         }
         smapi_internal_assets = {
             "assets/smapi-internal/config.json",
@@ -326,7 +356,12 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             "assets/smapi-internal/blacklist.json",
             "assets/smapi-internal/i18n/default.json",
         }
-        smapi_payload_complete = smapi_managed_payloads.issubset(archive_names) and smapi_internal_assets.issubset(archive_names)
+        smapi_payload_complete = (
+            smapi_managed_payloads.issubset(archive_names)
+            and smapi_cecil_assets.issubset(archive_names)
+            and smapi_internal_assets.issubset(archive_names)
+            and legacy_smapi_toolkit_payloads.isdisjoint(archive_names)
+        )
 
     smapi_activity = manifest.activities.get("org.junimogate.gamehost.SmapiGameActivity")
 

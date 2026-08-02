@@ -19,9 +19,12 @@ internal sealed class PreparedRuntimeFiles
     public IReadOnlyDictionary<string, string> ManagedAssemblyPaths { get; }
     public IReadOnlyDictionary<string, string> ContentPaths { get; }
 
-    public static PreparedRuntimeFiles BuildAndValidate(PreparedGameSnapshot snapshot)
+    public static PreparedRuntimeFiles BuildAndValidate(
+        PreparedGameSnapshot snapshot,
+        PreparedSmapiBundle smapiBundle)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(smapiBundle);
         var stopwatch = Stopwatch.StartNew();
 
         foreach (var directory in new[]
@@ -48,6 +51,16 @@ internal sealed class PreparedRuntimeFiles
             StringComparer.Ordinal,
             "Content",
             requiredPrefix: "Content/");
+        var expectedBundleRoot = Path.GetFullPath(Path.GetDirectoryName(snapshot.InternalDirectory)
+            ?? throw new InvalidDataException("The SMAPI bundle root is invalid."));
+        if (!Path.GetFullPath(smapiBundle.RootPath).Equals(expectedBundleRoot, StringComparison.Ordinal))
+            throw new InvalidDataException("The prepared SMAPI bundle root does not match the launch snapshot.");
+        var smapiFiles = PreparedRuntimeFileInventoryBuilder.BuildAndValidate(
+            expectedBundleRoot,
+            smapiBundle.Files.Select(static entry =>
+                new PreparedRuntimeFileSpec(entry.RelativePath, entry.RelativePath, entry.Size)),
+            StringComparer.Ordinal,
+            "SMAPI bundle");
 
         var appliedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(snapshot.AppliedWorkspacePath));
         var overlay = Path.GetFullPath(snapshot.OverlayAssemblyPath);
@@ -66,7 +79,8 @@ internal sealed class PreparedRuntimeFiles
 
         Log.Info(
             "JunimoGate.LaunchTrace",
-            $"game packageSnapshots=0 runtimeInventoryPasses=1 assemblies={managed.Count} content={content.Count} " +
+            $"game packageSnapshots=0 runtimeInventoryPasses=1 assemblies={managed.Count} " +
+            $"smapiBundleFiles={smapiFiles.Count} content={content.Count} " +
             $"durationMs={Math.Max(1, stopwatch.ElapsedMilliseconds)}");
         return new PreparedRuntimeFiles(
             new ReadOnlyDictionary<string, string>(managed),

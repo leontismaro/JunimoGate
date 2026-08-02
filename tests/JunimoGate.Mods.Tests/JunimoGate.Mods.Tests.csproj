@@ -7,6 +7,10 @@
     <Compile Include="../Shared/TestHarness.cs" Link="TestHarness.cs" />
     <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/ModAssemblyBindingPlanner.cs"
              Link="SMAPI/ModAssemblyBindingPlanner.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/CustomAttributeTypeScopeRewriter.cs"
+             Link="SMAPI/CustomAttributeTypeScopeRewriter.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/TypeDefinitionVisibility.cs"
+             Link="SMAPI/TypeDefinitionVisibility.cs" />
     <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../../src/JunimoGate.Mods/JunimoGate.Mods.csproj" />
   </ItemGroup>

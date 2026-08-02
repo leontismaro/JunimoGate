@@ -48,6 +48,7 @@ JunimoGate GameHost 直接创建并持有 SMAPI runtime/session，注入 Activit
 
 首个闭环要求游戏、SMAPI、SMAPI依赖和Mods在独立游戏进程的统一加载环境中共享类型身份；模组加载不得继续分散调用会创建不同加载环境的 `Assembly.Load(byte[])`、`LoadFrom` 和 `UnsafeLoadFrom`。
 
+
 计划兼容状态：
 
 - Compatible

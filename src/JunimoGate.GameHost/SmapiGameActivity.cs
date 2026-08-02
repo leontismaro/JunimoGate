@@ -58,9 +58,12 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             var launch = await GameLaunchRegistry.ConsumeAsync(this, key, CancellationToken.None);
             var snapshot = launch.Snapshot;
             stage = GameStartupStage.SmapiBundle;
-            await BundledSmapiAssets.ProvisionAndValidateAsync(this, snapshot.InternalDirectory, CancellationToken.None);
+            var smapiBundle = await BundledSmapiAssets.ProvisionAndValidateAsync(
+                this,
+                snapshot.InternalDirectory,
+                CancellationToken.None);
             stage = GameStartupStage.RuntimeInventory;
-            var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot);
+            var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot, smapiBundle);
             stage = GameStartupStage.LoaderInstallation;
             loader = new SmapiDefaultAssemblyLoader(snapshot, runtimeFiles, launch.ModsDirectory);
             loader.Install();

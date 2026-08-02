@@ -6,6 +6,10 @@ using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
+internal sealed record PreparedSmapiBundleFile(string RelativePath, long Size);
+
+internal sealed record PreparedSmapiBundle(string RootPath, IReadOnlyList<PreparedSmapiBundleFile> Files);
+
 internal static class BundledSmapiAssets
 {
     private const string ManifestSchema = "junimogate-smapi-bundle/v1";
@@ -52,7 +56,7 @@ internal static class BundledSmapiAssets
         return removed;
     }
 
-    public static async Task ProvisionAndValidateAsync(
+    public static async Task<PreparedSmapiBundle> ProvisionAndValidateAsync(
         Context context,
         string internalDirectory,
         CancellationToken cancellationToken)
@@ -66,10 +70,10 @@ internal static class BundledSmapiAssets
         var bundleRoot = Path.GetDirectoryName(expectedInternal)
             ?? throw new InvalidDataException("The SMAPI bundle path is invalid.");
         var assets = GetExpectedAssets(safe);
-        if (TryValidateCurrentBundle(bundleRoot, assets))
+        if (TryReadCurrentBundle(bundleRoot, assets, validateFiles: false, out var current))
         {
             Log.Info("JunimoGate.LaunchTrace", $"game smapiBundle=cache-hit files={assets.Count}");
-            return;
+            return current;
         }
 
         var parent = Path.GetDirectoryName(bundleRoot)
@@ -111,8 +115,9 @@ internal static class BundledSmapiAssets
             TryDeleteDirectory(staging);
         }
 
-        if (!TryValidateCurrentBundle(bundleRoot, assets))
+        if (!TryReadCurrentBundle(bundleRoot, assets, validateFiles: true, out current))
             throw new InvalidDataException("The bundled SMAPI asset deployment did not validate.");
+        return current;
     }
 
     private static IReadOnlyList<BundledAssetSpec> GetExpectedAssets(Context context)
@@ -122,10 +127,25 @@ internal static class BundledSmapiAssets
             new("smapi-internal/config.json", "smapi-internal/config.json"),
             new("smapi-internal/metadata.json", "smapi-internal/metadata.json"),
             new("smapi-internal/blacklist.json", "smapi-internal/blacklist.json"),
-            new("smapi-managed/StardewModdingAPI.dll", "managed/StardewModdingAPI.dll"),
-            new("smapi-managed/StardewModdingAPI.Toolkit.dll", "managed/StardewModdingAPI.Toolkit.dll"),
-            new("smapi-managed/StardewModdingAPI.Toolkit.CoreInterfaces.dll", "managed/StardewModdingAPI.Toolkit.CoreInterfaces.dll"),
         };
+        var managedNames = context.Assets?.List("smapi-managed") ?? [];
+        var uniqueManagedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in managedNames.Order(StringComparer.Ordinal))
+        {
+            if (Path.GetFileName(name) != name || !name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+                !uniqueManagedNames.Add(name))
+            {
+                throw new InvalidDataException("A bundled SMAPI managed asset name is invalid.");
+            }
+            result.Add(new BundledAssetSpec($"smapi-managed/{name}", $"managed/{name}"));
+        }
+        if (!uniqueManagedNames.Contains("StardewModdingAPI.dll") ||
+            !uniqueManagedNames.Contains("SMAPI.Toolkit.dll") ||
+            !uniqueManagedNames.Contains("SMAPI.Toolkit.CoreInterfaces.dll"))
+        {
+            throw new InvalidDataException("The bundled SMAPI managed asset set is incomplete.");
+        }
+
         foreach (var name in (context.Assets?.List("smapi-internal/i18n") ?? []).Order(StringComparer.Ordinal))
         {
             if (Path.GetFileName(name) != name || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
@@ -138,10 +158,13 @@ internal static class BundledSmapiAssets
         return result;
     }
 
-    private static bool TryValidateCurrentBundle(
+    private static bool TryReadCurrentBundle(
         string bundleRoot,
-        IReadOnlyList<BundledAssetSpec> expected)
+        IReadOnlyList<BundledAssetSpec> expected,
+        bool validateFiles,
+        out PreparedSmapiBundle bundle)
     {
+        bundle = null!;
         try
         {
             var manifestPath = Path.Combine(bundleRoot, ManifestFileName);
@@ -161,13 +184,19 @@ internal static class BundledSmapiAssets
             for (var index = 0; index < expected.Count; index++)
             {
                 var entry = manifest.Files[index];
-                if (entry.RelativePath != expected[index].RelativePath || entry.Size <= 0)
+                if (entry is null || entry.RelativePath != expected[index].RelativePath || entry.Size <= 0)
                     return false;
-                var info = new FileInfo(ResolveTarget(bundleRoot, entry.RelativePath));
-                if (!info.Exists || info.Length != entry.Size)
-                    return false;
+                if (validateFiles)
+                {
+                    var info = new FileInfo(ResolveTarget(bundleRoot, entry.RelativePath));
+                    if (!info.Exists || info.Length != entry.Size)
+                        return false;
+                }
             }
 
+            bundle = new PreparedSmapiBundle(
+                Path.GetFullPath(bundleRoot),
+                manifest.Files.Select(static entry => new PreparedSmapiBundleFile(entry.RelativePath, entry.Size)).ToArray());
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
