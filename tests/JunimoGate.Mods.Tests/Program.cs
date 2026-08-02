@@ -112,7 +112,11 @@ return TestHarness.Run(
     ("SMAPI Android loading log preserves platform newline semantics", () =>
         AndroidLoadingLogBufferTests.SplitsPlatformNewlinesWithoutLosingEmptyLines()),
     ("SMAPI Android loading log limits snapshots and clears state", () =>
-        AndroidLoadingLogBufferTests.LimitsSnapshotsAndClearsState()));
+        AndroidLoadingLogBufferTests.LimitsSnapshotsAndClearsState()),
+    ("SMAPI Android background tracker follows blocked work", () =>
+        AndroidBackgroundTaskTrackerTests.TracksBlockedWorkUntilCompletion()),
+    ("SMAPI Android background tracker releases failed work", () =>
+        AndroidBackgroundTaskTrackerTests.ReleasesFailedWork()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {
