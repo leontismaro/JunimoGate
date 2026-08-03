@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 
 const string FieldAccessSymbol = "mono_method_can_access_field";
 const string MethodAccessSymbol = "mono_method_can_access_method";
+const string GuidFormatterSymbol = "mono_guid_to_string_minimal";
 ReadOnlySpan<byte> allowAccess = [
     0x20, 0x00, 0x80, 0x52, // mov w0, #1
     0xc0, 0x03, 0x5f, 0xd6, // ret
@@ -33,6 +34,8 @@ foreach (string symbolName in new[] { FieldAccessSymbol, MethodAccessSymbol })
     Console.WriteLine($"Patched {symbolName} at ELF file offset 0x{fileOffset:x}.");
 }
 
+PatchNullGuidFormatting(image, elf, GuidFormatterSymbol);
+
 string? destinationDirectory = Path.GetDirectoryName(destinationPath);
 if (string.IsNullOrEmpty(destinationDirectory))
     throw new InvalidOperationException("The destination must have a parent directory.");
@@ -52,6 +55,143 @@ finally
 
 Console.WriteLine($"Wrote application-local Mono runtime: {destinationPath}");
 return 0;
+
+static void PatchNullGuidFormatting(byte[] image, Elf64Arm64Image elf, string symbolName)
+{
+    // Android requests a Mono thread dump when the UI thread crosses the ANR timeout.
+    // Reflection.Emit assemblies have no metadata GUID heap, but Mono's stack-frame
+    // formatter passes that null pointer to this function. Keep the formatter's normal
+    // output unchanged and substitute a zero GUID only for that diagnostic-only case.
+    ElfSymbol symbol = elf.FindFunction(symbolName);
+    const int FunctionSize = 0x88;
+    if (symbol.Size != FunctionSize)
+    {
+        throw new InvalidDataException(
+            $"ELF symbol '{symbolName}' has unsupported size 0x{symbol.Size:x}; expected 0x{FunctionSize:x}. " +
+            "Review the Mono runtime update before changing the patch recipe.");
+    }
+
+    int fileOffset = elf.MapVirtualAddressToFileOffset(symbol.VirtualAddress, FunctionSize);
+    Span<byte> function = image.AsSpan(fileOffset, FunctionSize);
+    uint[] original = ReadInstructions(function);
+    ValidateGuidFormatterRecipe(original, symbolName);
+
+    long printfTarget = DecodeBranchTarget(original[30], checked((long)symbol.VirtualAddress + 30 * 4));
+    uint[] patched =
+    [
+        0xd101c3ff, // sub sp, sp, #0x70
+        0xa9067bfd, // stp x29, x30, [sp, #0x60]
+        0x910183fd, // add x29, sp, #0x60
+        0xb5000060, // cbnz x0, +0xc
+        0xa9057fff, // stp xzr, xzr, [sp, #0x50]
+        0x910143e0, // add x0, sp, #0x50
+        original[3],
+        original[4],
+        original[5],
+        original[6],
+        original[7],
+        original[8],
+        original[9],
+        original[10],
+        original[11],
+        original[12],
+        original[13],
+        original[14],
+        original[15],
+        original[16],
+        original[17],
+        original[18],
+        original[19], // original ADRP for the GUID format string; same 4K code page
+        original[20], // original ADD for the GUID format string
+        0xa90027e8, // stp x8, x9, [sp]
+        0xa9012fea, // stp x10, x11, [sp, #0x10]
+        0xa90237ec, // stp x12, x13, [sp, #0x20]
+        0xa9033fee, // stp x14, x15, [sp, #0x30]
+        0xf90023f0, // str x16, [sp, #0x40]
+        EncodeBranchLink(checked((long)symbol.VirtualAddress + 29 * 4), printfTarget),
+        0xa9467bfd, // ldp x29, x30, [sp, #0x60]
+        0x9101c3ff, // add sp, sp, #0x70
+        0xd65f03c0, // ret
+        0xd503201f, // nop
+    ];
+
+    WriteInstructions(function, patched);
+    if (!ReadInstructions(function).SequenceEqual(patched))
+        throw new InvalidDataException($"ELF symbol '{symbolName}' did not retain the expected patched body.");
+
+    Console.WriteLine($"Patched {symbolName} null-GUID handling at ELF file offset 0x{fileOffset:x}.");
+}
+
+static void ValidateGuidFormatterRecipe(IReadOnlyList<uint> instructions, string symbolName)
+{
+    uint[] expected =
+    [
+        0xd10183ff, 0xa9057bfd, 0x910143fd,
+        0x39400c01, 0x39400802, 0x39400403, 0x39400004,
+        0x39401405, 0x39401006, 0x39401c07, 0x39401808,
+        0x39402009, 0x3940240a, 0x3940280b, 0x39402c0c,
+        0x3940300d, 0x3940340e, 0x3940380f, 0x39403c10,
+        0, 0,
+        0xb9003bef, 0xb90043f0, 0xb90033ee, 0xb9002bed,
+        0xb90023ec, 0xb9001beb, 0xb90013ea, 0xb9000be9, 0xb90003e8,
+        0, 0xa9457bfd, 0x910183ff, 0xd65f03c0,
+    ];
+
+    if (instructions.Count != expected.Length)
+        throw new InvalidDataException($"ELF symbol '{symbolName}' has an unsupported instruction count.");
+
+    for (int index = 0; index < expected.Length; index++)
+    {
+        uint instruction = instructions[index];
+        bool matches = index switch
+        {
+            19 => (instruction & 0x9f00001f) == 0x90000000, // adrp x0, format-page
+            20 => (instruction & 0xffc003ff) == 0x91000000, // add x0, x0, format-offset
+            30 => (instruction & 0xfc000000) == 0x94000000, // bl g_strdup_printf
+            _ => instruction == expected[index],
+        };
+        if (!matches)
+        {
+            throw new InvalidDataException(
+                $"ELF symbol '{symbolName}' no longer matches the supported Mono recipe at instruction {index} " +
+                $"(0x{instruction:x8}). Review the runtime update before patching it.");
+        }
+    }
+}
+
+static uint[] ReadInstructions(ReadOnlySpan<byte> bytes)
+{
+    if (bytes.Length % 4 != 0)
+        throw new InvalidDataException("AArch64 function size is not instruction-aligned.");
+    var instructions = new uint[bytes.Length / 4];
+    for (int index = 0; index < instructions.Length; index++)
+        instructions[index] = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(index * 4, 4));
+    return instructions;
+}
+
+static void WriteInstructions(Span<byte> destination, IReadOnlyList<uint> instructions)
+{
+    if (destination.Length != instructions.Count * 4)
+        throw new InvalidDataException("Patched AArch64 function size changed unexpectedly.");
+    for (int index = 0; index < instructions.Count; index++)
+        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(index * 4, 4), instructions[index]);
+}
+
+static long DecodeBranchTarget(uint instruction, long instructionAddress)
+{
+    long immediate = instruction & 0x03ff_ffff;
+    if ((immediate & (1L << 25)) != 0)
+        immediate -= 1L << 26;
+    return checked(instructionAddress + immediate * 4);
+}
+
+static uint EncodeBranchLink(long instructionAddress, long targetAddress)
+{
+    long delta = checked(targetAddress - instructionAddress);
+    if ((delta & 3) != 0 || delta < -(1L << 27) || delta >= (1L << 27))
+        throw new InvalidDataException("AArch64 branch target is outside the encodable BL range.");
+    return 0x9400_0000u | ((uint)(delta / 4) & 0x03ff_ffffu);
+}
 
 internal readonly record struct ElfSection(uint Type, ulong Offset, ulong Size, uint Link, ulong EntrySize);
 internal readonly record struct ElfProgramHeader(uint Type, ulong Offset, ulong VirtualAddress, ulong FileSize);

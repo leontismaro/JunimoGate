@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
@@ -12,6 +13,12 @@ namespace JunimoGate.RuntimeProbe.Core;
 
 public static class RuntimeProbeRunner
 {
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate IntPtr MonoGuidToStringMinimal(IntPtr guid);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void MonoFree(IntPtr pointer);
+
     private sealed record CaseDefinition(string Id, Func<CaseObservation> Execute);
 
     private sealed record CaseObservation(string Summary, Dictionary<string, string> Details);
@@ -19,6 +26,7 @@ public static class RuntimeProbeRunner
     private static readonly IReadOnlyList<CaseDefinition> CaseDefinitions =
     [
         new(RuntimeProbeCaseIds.DynamicCodeCapability, ProbeDynamicCodeCapability),
+        new(RuntimeProbeCaseIds.DynamicAssemblyThreadDump, ProbeDynamicAssemblyThreadDump),
         new(RuntimeProbeCaseIds.HarmonyMonoModAndroidSupport, ProbeHarmonyMonoModAndroidSupport),
         new(RuntimeProbeCaseIds.MonoManagedEntryPoint, ProbeMonoManagedEntryPoint),
         new(RuntimeProbeCaseIds.NativeCacheFlush, ProbeNativeCacheFlush),
@@ -126,6 +134,139 @@ public static class RuntimeProbeRunner
             ("isDynamicCodeCompiled", RuntimeFeature.IsDynamicCodeCompiled),
             ("dynamicMethodResult", result));
     }
+
+    [DynamicDependency(nameof(WaitInsideDynamicAssembly), typeof(RuntimeProbeRunner))]
+    private static CaseObservation ProbeDynamicAssemblyThreadDump()
+    {
+        if (!OperatingSystem.IsAndroid())
+        {
+            return Observation(
+                "The SIGQUIT dynamic-assembly thread-dump regression is Android-specific.",
+                ("diagnosticRequired", false));
+        }
+
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        string nullGuidResult = InvokeMonoNullGuidFormatter();
+        Require(
+            string.Equals(nullGuidResult, new string('0', 32), StringComparison.Ordinal),
+            $"Mono null GUID formatter returned '{nullGuidResult}'; expected 32 zeroes.");
+        _dynamicThreadDumpEntered = entered;
+        _dynamicThreadDumpRelease = release;
+        try
+        {
+            var assembly = AssemblyBuilder.DefineDynamicAssembly(
+                new AssemblyName($"JunimoGate.RuntimeProbe.ThreadDump.{Guid.NewGuid():N}"),
+                AssemblyBuilderAccess.Run);
+            var module = assembly.DefineDynamicModule("ThreadDumpModule");
+            var type = module.DefineType(
+                "JunimoGate.RuntimeProbe.Generated.ThreadDumpTarget",
+                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract);
+            var method = type.DefineMethod(
+                "WaitForSignal",
+                MethodAttributes.Public | MethodAttributes.Static,
+                typeof(void),
+                Type.EmptyTypes);
+            var waitMethod = typeof(RuntimeProbeRunner).GetMethod(
+                nameof(WaitInsideDynamicAssembly),
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new MissingMethodException(typeof(RuntimeProbeRunner).FullName, nameof(WaitInsideDynamicAssembly));
+            var il = method.GetILGenerator();
+            il.Emit(OpCodes.Call, waitMethod);
+            il.Emit(OpCodes.Ret);
+            var generatedType = type.CreateType()
+                ?? throw new InvalidOperationException("Reflection.Emit did not create the thread-dump target type.");
+            var generatedMethod = generatedType.GetMethod("WaitForSignal", BindingFlags.Public | BindingFlags.Static)
+                ?? throw new MissingMethodException(generatedType.FullName, "WaitForSignal");
+            var invoke = generatedMethod.CreateDelegate<Action>();
+
+            var signalTask = Task.Run(() =>
+            {
+                Require(entered.Wait(TimeSpan.FromSeconds(5)), "Dynamic assembly method did not enter its wait point.");
+                int result = SendSignal(Environment.ProcessId, 3); // SIGQUIT: request Mono/ART thread dumps.
+                int error = Marshal.GetLastPInvokeError();
+                Thread.Sleep(TimeSpan.FromSeconds(3));
+                release.Set();
+                return (Result: result, Error: error);
+            });
+
+            invoke();
+            var signal = signalTask.GetAwaiter().GetResult();
+            Require(signal.Result == 0, $"kill(SIGQUIT) returned {signal.Result}; errno={signal.Error}.");
+
+            return Observation(
+                "Mono completed a SIGQUIT thread dump while a Reflection.Emit method was active.",
+                ("diagnosticRequired", true),
+                ("signal", "SIGQUIT"),
+                ("dynamicAssembly", assembly.FullName),
+                ("dynamicMethod", generatedMethod.ToString()),
+                ("nullGuidResult", nullGuidResult),
+                ("signalResult", signal.Result));
+        }
+        finally
+        {
+            release.Set();
+            _dynamicThreadDumpEntered = null;
+            _dynamicThreadDumpRelease = null;
+        }
+    }
+
+    private static string InvokeMonoNullGuidFormatter()
+    {
+        string[] libraryNames = ["libmonosgen-2.0.so", "monosgen-2.0", "libmonosgen-2.0"];
+        IntPtr library = IntPtr.Zero;
+        foreach (string name in libraryNames)
+        {
+            if (NativeLibrary.TryLoad(name, out library))
+                break;
+        }
+
+        if (library == IntPtr.Zero)
+            throw new DllNotFoundException($"Could not load Mono runtime using: {string.Join(", ", libraryNames)}.");
+
+        IntPtr formatted = IntPtr.Zero;
+        try
+        {
+            var format = Marshal.GetDelegateForFunctionPointer<MonoGuidToStringMinimal>(
+                NativeLibrary.GetExport(library, "mono_guid_to_string_minimal"));
+            var free = Marshal.GetDelegateForFunctionPointer<MonoFree>(
+                NativeLibrary.GetExport(library, "mono_free"));
+            formatted = format(IntPtr.Zero);
+            if (formatted == IntPtr.Zero)
+                throw new InvalidOperationException("mono_guid_to_string_minimal(null) returned null.");
+            string result = Marshal.PtrToStringUTF8(formatted)
+                ?? throw new InvalidOperationException("Mono null GUID result was not valid UTF-8.");
+            free(formatted);
+            formatted = IntPtr.Zero;
+            return result;
+        }
+        finally
+        {
+            if (formatted != IntPtr.Zero)
+            {
+                var free = Marshal.GetDelegateForFunctionPointer<MonoFree>(
+                    NativeLibrary.GetExport(library, "mono_free"));
+                free(formatted);
+            }
+            NativeLibrary.Free(library);
+        }
+    }
+
+    private static ManualResetEventSlim? _dynamicThreadDumpEntered;
+    private static ManualResetEventSlim? _dynamicThreadDumpRelease;
+
+    private static void WaitInsideDynamicAssembly()
+    {
+        var entered = _dynamicThreadDumpEntered
+            ?? throw new InvalidOperationException("Dynamic thread-dump entry signal is unavailable.");
+        var release = _dynamicThreadDumpRelease
+            ?? throw new InvalidOperationException("Dynamic thread-dump release signal is unavailable.");
+        entered.Set();
+        Require(release.Wait(TimeSpan.FromSeconds(10)), "Timed out waiting for the SIGQUIT thread dump to finish.");
+    }
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int SendSignal(int processId, int signal);
 
     private static CaseObservation ProbeHarmonyMonoModAndroidSupport()
     {

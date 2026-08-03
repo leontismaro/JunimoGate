@@ -6,6 +6,7 @@ namespace JunimoGate.RuntimeProbe.Core;
 public static class RuntimeProbeCaseIds
 {
     public const string DynamicCodeCapability = "runtime-dynamic-code-capability";
+    public const string DynamicAssemblyThreadDump = "mono-dynamic-assembly-thread-dump";
     public const string HarmonyMonoModAndroidSupport = "harmony-monomod-android-platform-support";
     public const string MonoManagedEntryPoint = "mono-managed-entry-point-diagnostic";
     public const string NativeCacheFlush = "native-arm64-cache-flush-diagnostic";
@@ -19,6 +20,7 @@ public static class RuntimeProbeCaseIds
     public static IReadOnlyList<string> All { get; } =
     [
         DynamicCodeCapability,
+        DynamicAssemblyThreadDump,
         HarmonyMonoModAndroidSupport,
         MonoManagedEntryPoint,
         NativeCacheFlush,
