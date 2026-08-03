@@ -53,6 +53,7 @@ JunimoGate GameHost 直接创建并持有 SMAPI runtime/session，注入 Activit
 
 
 
+2026-08-03 的 mobile runtime cleanup 移除了 Android fork 中按具体 Mod 选择的全局 rewrite、render、菜单和 Entry 后修复层。当前所有 Mod 统一经过标准 `AssemblyLoader`、通用依赖绑定与 rewrite cache，并在 Android 主线程队列中执行 `Mod.Entry`；启动器不再根据 Mod ID、精确版本或程序集名称改写 SpaceCore、Unlockable Bundles 等第三方 Mod。具体 Mod 的 Android 缺陷不再进入启动器核心，而应在通用 runtime/SMAPI 边界或 Mod 自身源码中解决。
 
 
 计划兼容状态：
