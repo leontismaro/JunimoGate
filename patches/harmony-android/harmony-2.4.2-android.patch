@@ -7,7 +7,7 @@ index 4fd1656..998e80a 100644
  	<PropertyGroup Label="Harmony Defines">
  		<HarmonyVersion>2.4.2.0</HarmonyVersion>
 -		<HarmonyPrerelease></HarmonyPrerelease>
-+		<HarmonyPrerelease>-junimogate.11</HarmonyPrerelease>
++		<HarmonyPrerelease>-junimogate.63</HarmonyPrerelease>
  
 -		<!-- set empty to build from local LocalMonoMod submodule -->
 -		<MonoModCoreVersion>1.3.3</MonoModCoreVersion>
@@ -195,20 +195,22 @@ index f72c399..b3b36cc 100644
  using System.Threading;
  
  namespace MonoMod.Core.Platforms.Runtimes
-@@ -342,20 +343,35 @@ namespace MonoMod.Core.Platforms.Runtimes
+@@ -342,20 +343,37 @@ namespace MonoMod.Core.Platforms.Runtimes
              return pinnedHandles.TryGetValue(GetMethodHandle(method), out var pin) ? pin.Pin.Method : method;
          }
  
 +        [DllImport("libmonosgen-2.0.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "mono_compile_method")]
 +        private static extern IntPtr MonoCompileMethod(IntPtr method);
 +
-+        private static IntPtr GetCompiledMethodEntryPoint(RuntimeMethodHandle handle)
++        private static IntPtr GetCompiledMethodEntryPoint(RuntimeMethodHandle handle, string methodName)
 +        {
 +            if (PlatformDetection.OS == OSKind.Android)
 +            {
++                _ = handle.GetFunctionPointer();
 +                var compiled = MonoCompileMethod(handle.Value);
 +                if (compiled == IntPtr.Zero)
-+                    throw new InvalidOperationException("mono_compile_method returned null for a managed method.");
++                    throw new InvalidOperationException(
++                        $"mono_compile_method returned null for managed method '{methodName}'.");
 +                return compiled;
 +            }
 +
@@ -220,18 +222,18 @@ index f72c399..b3b36cc 100644
              if (pinnedMethods.TryGetValue(method, out var pmp))
              {
 -                return pmp.Pin.Handle.GetFunctionPointer();
-+                return GetCompiledMethodEntryPoint(pmp.Pin.Handle);
++                return GetCompiledMethodEntryPoint(pmp.Pin.Handle, pmp.Pin.Method.Name);
              }
              var handle = GetMethodHandle(method);
 -            return handle.GetFunctionPointer();
-+            return GetCompiledMethodEntryPoint(handle);
++            return GetCompiledMethodEntryPoint(handle, method.Name);
          }
  
          public void Compile(MethodBase method)
          {
 -            // GetFunctionPointer forces the method to be compiled on Mono
 -            _ = GetMethodHandle(method).GetFunctionPointer();
-+            _ = GetCompiledMethodEntryPoint(GetMethodHandle(method));
++            _ = GetCompiledMethodEntryPoint(GetMethodHandle(method), method.Name);
          }
      }
  }

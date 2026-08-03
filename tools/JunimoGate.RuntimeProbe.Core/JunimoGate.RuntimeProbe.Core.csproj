@@ -3,7 +3,7 @@
     <TargetFramework>net9.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.11" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.63" />
     <PackageReference Include="MonoMod.Utils" Version="25.0.9" />
     <ProjectReference Include="../JunimoGate.RuntimeProbe.Target/JunimoGate.RuntimeProbe.Target.csproj" />
   </ItemGroup>
