@@ -89,6 +89,8 @@ return TestHarness.Run(
         AssemblyBindingPlannerTests.IgnoresUnreferencedFiles()),
     ("SMAPI binding planner ignores non-local framework references", () =>
         AssemblyBindingPlannerTests.IgnoresNonLocalFrameworkReferences()),
+    ("SMAPI binding planner retains analyzed assembly bytes", () =>
+        AssemblyBindingPlannerTests.RetainsTheAnalyzedSourceSnapshot()),
     ("SMAPI binding planner isolates a malformed referenced dependency", () =>
         AssemblyBindingPlannerTests.IsolatesMalformedDependencies()),
     ("SMAPI Strict binding shares identical bytes and rejects different bytes", () =>
@@ -103,6 +105,16 @@ return TestHarness.Run(
         AssemblyBindingPlannerTests.HighestCompatiblePreservesTypeAssemblyScope()),
     ("SMAPI HighestCompatible resolves inherited ABI members", () =>
         AssemblyBindingPlannerTests.HighestCompatibleResolvesInheritedMembers()),
+    ("SMAPI Mod rewrite cache keys source and rewrite context", () =>
+        ModRewriteCacheTests.HitsOnlyForTheSameSourceAndContext()),
+    ("SMAPI Mod rewrite cache stores warning-free unchanged results", () =>
+        ModRewriteCacheTests.StoresAnUnchangedAnalysisResult()),
+    ("SMAPI Mod rewrite cache keys PDB bytes and replays safe warnings", () =>
+        ModRewriteCacheTests.KeysExternalSymbolsAndReplaysWarnings()),
+    ("SMAPI Mod rewrite cache rejects malformed entries safely", () =>
+        ModRewriteCacheTests.RejectsMalformedEntriesAsSafeMisses()),
+    ("SMAPI Mod rewrite cache does not publish warning results", () =>
+        ModRewriteCacheTests.DoesNotPublishNonCacheableResults()),
     ("SMAPI platform mapping rewrites nested custom-attribute type scopes", () =>
         CustomAttributeTypeScopeRewriterTests.RewritesNestedTypeArguments()),
     ("SMAPI platform mapping includes publicly visible nested types", () =>
@@ -121,6 +133,10 @@ return TestHarness.Run(
         AndroidMainThreadTaskQueueTests.RunsOneQueuedTaskPerPumpInFifoOrder()),
     ("SMAPI Android Mod entry queue preserves task failures", () =>
         AndroidMainThreadTaskQueueTests.PreservesTaskFailureForTheWaitingProducer()),
+    ("SMAPI Android main-thread queue executes reentrant work inline", () =>
+        AndroidMainThreadTaskQueueTests.ExecutesInlineWhenAlreadyOnTheGameThread()),
+    ("SMAPI Android main-thread queue releases pending work on reset", () =>
+        AndroidMainThreadTaskQueueTests.ResetFaultsPendingProducers()),
     ("GameHost reads v7 snapshots without binding the SMAPI bundle", () =>
         GameLaunchSchemaTests.ReadsLegacySnapshotWithoutBundleIdentity()),
     ("GameHost rejects unsupported snapshot schemas", () =>

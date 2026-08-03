@@ -7,10 +7,14 @@
     <Compile Include="../Shared/TestHarness.cs" Link="TestHarness.cs" />
     <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/ModAssemblyBindingPlanner.cs"
              Link="SMAPI/ModAssemblyBindingPlanner.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/ModRewriteCache.cs"
+             Link="SMAPI/ModRewriteCache.cs" />
     <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/CustomAttributeTypeScopeRewriter.cs"
              Link="SMAPI/CustomAttributeTypeScopeRewriter.cs" />
     <Compile Include="../../smapi/src/SMAPI/Framework/ModLoading/TypeDefinitionVisibility.cs"
              Link="SMAPI/TypeDefinitionVisibility.cs" />
+    <Compile Include="../../smapi/src/SMAPI.Toolkit/Framework/ModData/ModWarning.cs"
+             Link="SMAPI/ModWarning.cs" />
     <Compile Include="../../smapi/src/SMAPI.Internal/ConsoleWriting/ConsoleLogLevel.cs"
              Link="SMAPI/ConsoleLogLevel.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidLoadingLogBuffer.cs"

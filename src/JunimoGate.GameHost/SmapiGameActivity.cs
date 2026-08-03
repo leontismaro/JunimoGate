@@ -64,7 +64,11 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             stage = GameStartupStage.RuntimeInventory;
             var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot, smapiBundle);
             stage = GameStartupStage.LoaderInstallation;
-            loader = new SmapiDefaultAssemblyLoader(runtimeFiles, smapiBundle.RootPath, launch.ModsDirectory);
+            var runtimeRoot = JunimoGate.Android.AndroidPrivateStorage.GetRuntimeRoot(ApplicationContext ?? this);
+            loader = new SmapiDefaultAssemblyLoader(
+                runtimeFiles,
+                Path.Combine(runtimeRoot, "smapi", "assembly-load-cache-v1", GameHostRuntimeIdentity.BuildId),
+                launch.ModsDirectory);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
@@ -144,6 +148,16 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             LogDirectory = snapshot.LogDirectory,
             SaveDirectory = snapshot.SaveDirectory,
             BackupDirectory = snapshot.BackupDirectory,
+            ModRewriteCacheDirectory = Path.Combine(
+                JunimoGate.Android.AndroidPrivateStorage.GetRuntimeRoot(ApplicationContext ?? this),
+                "smapi",
+                "mod-rewrite-cache-v2",
+                GameHostRuntimeIdentity.BuildId),
+            ModRewriteCacheIdentity = string.Join(
+                '|',
+                GameHostRuntimeIdentity.BuildId,
+                snapshot.SourceWorkspaceKey,
+                snapshot.AppliedWorkspaceKey),
             MainThread = new ActivityDispatcher(this),
             AssemblyLoader = assemblyLoader,
             AssemblyBindingPolicy = launch.Profile.AssemblyBindingPolicy switch

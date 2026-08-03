@@ -40,6 +40,15 @@ internal static class BundledSmapiAssets
         MoveAndDeleteDirectory(bundleRoot);
     }
 
+    public static void DiscardCurrentRuntimeCaches(Context context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var safe = context.ApplicationContext ?? context;
+        string smapiRoot = Path.Combine(AndroidPrivateStorage.GetRuntimeRoot(safe), "smapi");
+        foreach (string cache in new[] { "assembly-load-cache-v1", "mod-rewrite-cache-v2" })
+            MoveAndDeleteDirectory(Path.Combine(smapiRoot, cache, GameHostRuntimeIdentity.BuildId));
+    }
+
     public static int PruneOldBundles(Context context, ref long reclaimedBytes)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -55,6 +64,29 @@ internal static class BundledSmapiAssets
             reclaimedBytes += GetDirectoryBytes(directory);
             MoveAndDeleteDirectory(directory);
             removed++;
+        }
+        return removed;
+    }
+
+    public static int PruneOldRuntimeCaches(Context context, ref long reclaimedBytes)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var safe = context.ApplicationContext ?? context;
+        string smapiRoot = Path.Combine(AndroidPrivateStorage.GetRuntimeRoot(safe), "smapi");
+        int removed = 0;
+        foreach (string cache in new[] { "assembly-load-cache-v1", "mod-rewrite-cache-v2" })
+        {
+            string root = Path.Combine(smapiRoot, cache);
+            if (!Directory.Exists(root))
+                continue;
+            foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (Path.GetFileName(directory).Equals(GameHostRuntimeIdentity.BuildId, StringComparison.Ordinal))
+                    continue;
+                reclaimedBytes += GetDirectoryBytes(directory);
+                MoveAndDeleteDirectory(directory);
+                removed++;
+            }
         }
         return removed;
     }

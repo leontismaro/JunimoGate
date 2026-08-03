@@ -8,6 +8,23 @@ using StardewModdingAPI.Framework.ModLoading;
 
 internal static class AssemblyBindingPlannerTests
 {
+    public static void RetainsTheAnalyzedSourceSnapshot()
+    {
+        using var fixture = new BindingFixture();
+        string commonName = fixture.UniqueName("SnapshotCommon");
+        var mod = fixture.CreateMod("snapshot.mod", commonName, "Used");
+        string library = fixture.WriteLibrary(
+            Path.Combine(mod.DirectoryPath, $"{commonName}.dll"), commonName, new Version(1, 0), ["Used"]);
+        byte[] analyzedBytes = File.ReadAllBytes(library);
+
+        var plan = fixture.Build(ModAssemblyBindingPolicy.HighestCompatible, mod);
+        File.WriteAllBytes(library, [0x4d, 0x5a, 0, 0]);
+
+        TestHarness.True(plan.TryGetSource(library, out ModAssemblySourceSnapshot snapshot));
+        TestHarness.True(snapshot.Bytes.Span.SequenceEqual(analyzedBytes));
+        TestHarness.True(snapshot.FullIdentity.StartsWith(commonName + ",", StringComparison.Ordinal));
+    }
+
     public static void IgnoresUnreferencedFiles()
     {
         using var fixture = new BindingFixture();

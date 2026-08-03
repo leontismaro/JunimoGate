@@ -18,17 +18,17 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
     private readonly Dictionary<string, string> gamePaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RegisteredModAssembly> modAssemblies = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RegisteredModAssembly> modAssembliesBySource = new(StringComparer.Ordinal);
-    private readonly string rewriteCache;
+    private readonly string loadCache;
     private bool installed;
 
     public SmapiDefaultAssemblyLoader(
         PreparedRuntimeFiles runtimeFiles,
-        string smapiBundleRoot,
+        string loadCache,
         string modsRoot)
     {
         this.modsRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(modsRoot));
-        rewriteCache = Path.Combine(Path.GetFullPath(smapiBundleRoot), "mod-rewrite-cache");
-        Directory.CreateDirectory(rewriteCache);
+        this.loadCache = Path.GetFullPath(loadCache);
+        Directory.CreateDirectory(this.loadCache);
         foreach (var entry in runtimeFiles.ManagedAssemblyPaths)
             gamePaths.Add(entry.Key, entry.Value);
     }
@@ -50,23 +50,26 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         return LoadRegistered(entry);
     }
 
-    public Assembly LoadRewritten(string sourcePath, ReadOnlyMemory<byte> assemblyBytes, ReadOnlyMemory<byte>? symbols)
+    public Assembly LoadFromBytes(string sourcePath, ReadOnlyMemory<byte> assemblyBytes, ReadOnlyMemory<byte>? symbols)
     {
         var source = RequireContained(sourcePath, modsRoot);
-        var sourceEntry = RegisterSource(source);
-        var digest = Convert.ToHexStringLower(SHA256.HashData(assemblyBytes.Span));
-        var path = Path.Combine(rewriteCache, digest + ".dll");
-        if (!File.Exists(path))
-        {
-            var tmp = path + $".{Guid.NewGuid():N}.tmp";
-            File.WriteAllBytes(tmp, assemblyBytes.ToArray());
-            File.Move(tmp, path, overwrite: false);
-        }
-        if (symbols is { } pdb && !pdb.IsEmpty)
-        {
-            var pdbPath = Path.ChangeExtension(path, ".pdb");
-            if (!File.Exists(pdbPath)) File.WriteAllBytes(pdbPath, pdb.ToArray());
-        }
+        string loadPath = Materialize(assemblyBytes, symbols);
+        var entry = RegisterSource(source, loadPath) with { LoadPath = loadPath };
+        modAssemblies[entry.SimpleName] = entry;
+        modAssembliesBySource[source] = entry;
+        return LoadRegistered(entry);
+    }
+
+    public Assembly LoadRewritten(
+        string sourcePath,
+        ReadOnlyMemory<byte> sourceBytes,
+        ReadOnlyMemory<byte> assemblyBytes,
+        ReadOnlyMemory<byte>? symbols)
+    {
+        var source = RequireContained(sourcePath, modsRoot);
+        string sourceMaterialized = Materialize(sourceBytes, symbols: null);
+        var sourceEntry = RegisterSource(source, sourceMaterialized);
+        string path = Materialize(assemblyBytes, symbols);
         var rewrittenIdentity = AssemblyName.GetAssemblyName(path);
         if (!sourceEntry.Identity.FullName.Equals(rewrittenIdentity.FullName, StringComparison.Ordinal))
             throw new FileLoadException("A rewritten Mod assembly changed its assembly identity.", DisplayPath(source));
@@ -74,6 +77,38 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         modAssemblies[sourceEntry.SimpleName] = rewritten;
         modAssembliesBySource[source] = rewritten;
         return LoadRegistered(rewritten);
+    }
+
+    private string Materialize(ReadOnlyMemory<byte> assemblyBytes, ReadOnlyMemory<byte>? symbols)
+    {
+        var digest = Convert.ToHexStringLower(SHA256.HashData(assemblyBytes.Span));
+        var path = Path.Combine(loadCache, digest + ".dll");
+        WriteOnce(path, assemblyBytes);
+        if (symbols is { } pdb && !pdb.IsEmpty)
+            WriteOnce(Path.ChangeExtension(path, ".pdb"), pdb);
+        return path;
+    }
+
+    private static void WriteOnce(string path, ReadOnlyMemory<byte> bytes)
+    {
+        if (File.Exists(path))
+            return;
+        var tmp = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllBytes(tmp, bytes.ToArray());
+            try
+            {
+                File.Move(tmp, path, overwrite: false);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+            }
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
     }
 
     private Assembly? Resolve(AssemblyLoadContext context, AssemblyName requested)
@@ -100,12 +135,12 @@ internal sealed class SmapiDefaultAssemblyLoader : IManagedAssemblyLoader, IDisp
         return AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
     }
 
-    private RegisteredModAssembly RegisterSource(string sourcePath)
+    private RegisteredModAssembly RegisterSource(string sourcePath, string? identityPath = null)
     {
         if (modAssembliesBySource.TryGetValue(sourcePath, out var registered))
             return registered;
 
-        var identity = AssemblyName.GetAssemblyName(sourcePath);
+        var identity = AssemblyName.GetAssemblyName(identityPath ?? sourcePath);
         var name = identity.Name;
         if (string.IsNullOrWhiteSpace(name))
             throw new FileLoadException("A Mod assembly has no simple name.", DisplayPath(sourcePath));

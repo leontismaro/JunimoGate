@@ -28,6 +28,7 @@ internal static class RuntimeCacheMaintenance
             throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
 
         BundledSmapiAssets.DiscardCurrentBundle(context);
+        BundledSmapiAssets.DiscardCurrentRuntimeCaches(context);
         await RemoveAppliedAsync(context, failed.AppliedWorkspaceKey, cancellationToken).ConfigureAwait(false);
         if (recoveryLevel == 2)
         {
@@ -78,6 +79,7 @@ internal static class RuntimeCacheMaintenance
             foreach (var legacyCacheName in new[] { "managed", "mod-rewrite-cache", "runtime", "smapi-internal" })
                 removed += PruneLegacyRuntimeTree(Path.Combine(legacySmapiRoot, legacyCacheName), ref reclaimed);
             removed += BundledSmapiAssets.PruneOldBundles(context, ref reclaimed);
+            removed += BundledSmapiAssets.PruneOldRuntimeCaches(context, ref reclaimed);
 
             Log.Info("JunimoGate.Cache", $"pruned entries={removed} reclaimedBytes={reclaimed}");
         }
