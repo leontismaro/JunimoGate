@@ -137,6 +137,14 @@ return TestHarness.Run(
         AndroidMainThreadTaskQueueTests.ExecutesInlineWhenAlreadyOnTheGameThread()),
     ("SMAPI Android main-thread queue releases pending work on reset", () =>
         AndroidMainThreadTaskQueueTests.ResetFaultsPendingProducers()),
+    ("SMAPI Android save serializer uses the native fallback", () =>
+        AndroidSaveSerializerRegistryTests.UsesTheNativeSerializerUntilOverridden()),
+    ("SMAPI Android save serializer publishes overrides", () =>
+        AndroidSaveSerializerRegistryTests.PublishesOverridesThroughTheGameLookup()),
+    ("SMAPI Android save serializer rolls back rejected overrides", () =>
+        AndroidSaveSerializerRegistryTests.RollsBackAnUnobservableOverride()),
+    ("SMAPI Android save serializer rejects ambiguous caches", () =>
+        AndroidSaveSerializerRegistryTests.RejectsAnAmbiguousCacheShape()),
     ("GameHost reads v7 snapshots without binding the SMAPI bundle", () =>
         GameLaunchSchemaTests.ReadsLegacySnapshotWithoutBundleIdentity()),
     ("GameHost rejects unsupported snapshot schemas", () =>
