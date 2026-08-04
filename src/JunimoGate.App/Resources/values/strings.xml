@@ -41,6 +41,7 @@
     <string name="environment_status_unrecognized">Signing identity is not recognized</string>
     <string name="environment_smapi_value">SMAPI %1$s\nImplementation: %2$s\nBuild: %3$s\nBundle: %4$s (%5$d files)\nSMAPI updates together with JunimoGate.</string>
     <string name="environment_refresh">Refresh</string>
+    <string name="environment_prepare_launch">Prepare and launch</string>
     <string name="environment_read_failed">Package information could not be read.</string>
     <string name="environment_build_label">Build</string>
     <string name="environment_files_label">files</string>

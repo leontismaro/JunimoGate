@@ -214,7 +214,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
                 return;
             currentState = state;
             launcherStateChanged?.Invoke(state);
-            if (state.Status is LauncherStatus.GameNotInstalled or LauncherStatus.Unsupported)
+            if (state.Status is LauncherStatus.NeedsPreparation or LauncherStatus.GameNotInstalled or LauncherStatus.Unsupported)
                 OpenEnvironment();
         });
     }

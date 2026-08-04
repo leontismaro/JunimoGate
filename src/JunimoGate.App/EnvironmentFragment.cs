@@ -22,7 +22,9 @@ public sealed class EnvironmentFragment : Fragment
     private TextView? smapi;
     private CircularProgressIndicator? progress;
     private MaterialButton? refresh;
+    private MaterialButton? launch;
     private CancellationTokenSource? cancellation;
+    private ILauncherUiHost? host;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_environment, container, false)
@@ -37,12 +39,16 @@ public sealed class EnvironmentFragment : Fragment
         smapi = view.FindViewById<TextView>(Resource.Id.environment_smapi);
         progress = view.FindViewById<CircularProgressIndicator>(Resource.Id.environment_progress);
         refresh = view.FindViewById<MaterialButton>(Resource.Id.environment_refresh);
+        launch = view.FindViewById<MaterialButton>(Resource.Id.environment_launch);
         refresh!.Click += OnRefreshClicked;
+        launch!.Click += OnLaunchClicked;
     }
 
     public override void OnStart()
     {
         base.OnStart();
+        host = Activity as ILauncherUiHost
+            ?? throw new InvalidOperationException("The environment screen requires a launcher host.");
         Refresh();
     }
 
@@ -51,6 +57,7 @@ public sealed class EnvironmentFragment : Fragment
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = null;
+        host = null;
         base.OnStop();
     }
 
@@ -58,16 +65,21 @@ public sealed class EnvironmentFragment : Fragment
     {
         if (refresh is not null)
             refresh.Click -= OnRefreshClicked;
+        if (launch is not null)
+            launch.Click -= OnLaunchClicked;
         appVersion = null;
         playGame = null;
         samsungGame = null;
         smapi = null;
         progress = null;
         refresh = null;
+        launch = null;
         base.OnDestroyView();
     }
 
     private void OnRefreshClicked(object? sender, EventArgs eventArgs) => Refresh();
+
+    private void OnLaunchClicked(object? sender, EventArgs eventArgs) => host?.RequestLaunch();
 
     private void Refresh()
     {
@@ -83,6 +95,8 @@ public sealed class EnvironmentFragment : Fragment
             progress.Visibility = ViewStates.Visible;
         if (refresh is not null)
             refresh.Enabled = false;
+        if (launch is not null)
+            launch.Enabled = false;
         try
         {
             var info = await new ProductInformationService(RequireContext())
@@ -137,6 +151,8 @@ public sealed class EnvironmentFragment : Fragment
             new JString(info.Smapi.BuildId),
             new JString(info.Smapi.BundleId),
             JInteger.ValueOf(info.Smapi.BundleFileCount));
+        if (launch is not null)
+            launch.Enabled = info.Games.Any(static game => game.IsSelectable);
     }
 
     private string FormatGame(InstalledGameDisplayInfo game)

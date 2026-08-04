@@ -79,6 +79,13 @@
             android:indeterminate="true" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/environment_launch"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="20dp"
+            android:text="@string/environment_prepare_launch" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/environment_refresh"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="match_parent"
