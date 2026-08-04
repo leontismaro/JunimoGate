@@ -27,7 +27,7 @@ internal static class BundledSmapiAssets
         runtimeRoot,
         "smapi",
         "bundles",
-        GameHostRuntimeIdentity.BuildId,
+        GameHostRuntimeIdentity.SmapiBundleId,
         "smapi-internal");
 
     public static void DiscardCurrentBundle(Context context)
@@ -59,7 +59,7 @@ internal static class BundledSmapiAssets
         var removed = 0;
         foreach (var directory in Directory.EnumerateDirectories(bundlesRoot, "*", SearchOption.TopDirectoryOnly))
         {
-            if (Path.GetFileName(directory).Equals(GameHostRuntimeIdentity.BuildId, StringComparison.Ordinal))
+            if (Path.GetFileName(directory).Equals(GameHostRuntimeIdentity.SmapiBundleId, StringComparison.Ordinal))
                 continue;
             reclaimedBytes += GetDirectoryBytes(directory);
             MoveAndDeleteDirectory(directory);
@@ -103,7 +103,9 @@ internal static class BundledSmapiAssets
         var assets = GetExpectedAssets(safe);
         if (TryReadCurrentBundle(bundleRoot, assets, validateFiles: false, out var current))
         {
-            Log.Info("JunimoGate.LaunchTrace", $"game smapiBundle=cache-hit files={assets.Count}");
+            Log.Info(
+                "JunimoGate.LaunchTrace",
+                $"game smapiBundle=cache-hit id={GameHostRuntimeIdentity.SmapiBundleId} files={assets.Count}");
             return current;
         }
 
@@ -135,11 +137,13 @@ internal static class BundledSmapiAssets
                 entries.Add(new BundledAssetEntry(asset.RelativePath, output.Length));
             }
 
-            var manifest = new BundledAssetManifest(ManifestSchema, GameHostRuntimeIdentity.BuildId, entries);
+            var manifest = new BundledAssetManifest(ManifestSchema, GameHostRuntimeIdentity.SmapiBundleId, entries);
             await WriteManifestAsync(Path.Combine(staging, ManifestFileName), manifest, cancellationToken)
                 .ConfigureAwait(false);
             CommitDirectory(staging, bundleRoot);
-            Log.Info("JunimoGate.LaunchTrace", $"game smapiBundle=deployed files={assets.Count}");
+            Log.Info(
+                "JunimoGate.LaunchTrace",
+                $"game smapiBundle=deployed id={GameHostRuntimeIdentity.SmapiBundleId} files={assets.Count}");
         }
         finally
         {
@@ -206,7 +210,7 @@ internal static class BundledSmapiAssets
                 File.ReadAllText(manifestPath),
                 JsonOptions);
             if (manifest is null || manifest.Schema != ManifestSchema ||
-                manifest.BundleId != GameHostRuntimeIdentity.BuildId || manifest.Files is null ||
+                manifest.BundleId != GameHostRuntimeIdentity.SmapiBundleId || manifest.Files is null ||
                 manifest.Files.Count != expected.Count)
             {
                 return false;

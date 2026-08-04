@@ -42,6 +42,17 @@ internal static class GameLaunchSchemaTests
         TestHarness.False(json.ContainsKey("internalDirectory"));
     }
 
+    public static void SeparatesRuntimeAndBundleIdentity()
+    {
+        TestHarness.True(GameHostRuntimeIdentity.SmapiBundleId.StartsWith(
+            GameHostRuntimeIdentity.BuildId + "-bundle.",
+            StringComparison.Ordinal));
+        TestHarness.False(string.Equals(
+            GameHostRuntimeIdentity.BuildId,
+            GameHostRuntimeIdentity.SmapiBundleId,
+            StringComparison.Ordinal));
+    }
+
     private static PreparedGameSnapshot CreateSnapshot(string schema) => new(
         schema,
         "stardew-android-mainactivity-bridge/v1",
