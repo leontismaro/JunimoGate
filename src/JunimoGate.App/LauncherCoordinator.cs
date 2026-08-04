@@ -56,12 +56,14 @@ internal sealed class LauncherCoordinator : IDisposable
     private readonly ModProfileV2Repository profilesV2;
     private readonly ActiveModProfileSelectionRepository activeProfiles;
     private readonly ModLibraryRepository library;
+    private readonly LauncherSettingsRepository launcherSettings;
     private readonly string profilesRoot;
     private readonly SemaphoreSlim operationLock = new(1, 1);
     private ProfileId profileId = ProfileId.Parse("default");
     private PreparedGameHandle? preparedGame;
     private PendingGameLaunchOutcome? pendingRecovery;
     private ModProfile? profile;
+    private LauncherSettings? settings;
     private bool disposed;
 
     public LauncherCoordinator(Context context)
@@ -74,6 +76,7 @@ internal sealed class LauncherCoordinator : IDisposable
         profilesV2 = new ModProfileV2Repository(profilesRoot);
         activeProfiles = new ActiveModProfileSelectionRepository(profilesRoot);
         library = new ModLibraryRepository(Path.Combine(userData, "mods"));
+        launcherSettings = new LauncherSettingsRepository(Path.Combine(userData, "settings"));
         CurrentState = new LauncherState(
             LauncherStatus.Checking,
             LauncherMessageKey.CheckingInstalledGame,
@@ -292,10 +295,9 @@ internal sealed class LauncherCoordinator : IDisposable
         {
             if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null || profile is null)
                 return;
-            profile = await profiles.UpdateBindingPolicyAsync(
-                    ProfileId.Parse("default"),
-                    profile.Revision,
-                    policy,
+            settings = await launcherSettings.UpdateAsync(
+                    settings?.Revision ?? throw new InvalidOperationException("The Launcher settings are unavailable."),
+                    value => value with { DefaultAssemblyBindingPolicy = policy },
                     cancellationToken)
                 .ConfigureAwait(false);
             Publish(ReadyState(preparedGame));
@@ -449,6 +451,27 @@ internal sealed class LauncherCoordinator : IDisposable
         profile = await profiles
             .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
             .ConfigureAwait(false);
+        try
+        {
+            _ = await profilesV2
+                .ReadAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            _ = await new LegacyModProfileMigrator(profilesRoot, library, profilesV2)
+                .MigrateAsync(ProfileId.Parse("default"), "Default", cancellationToken)
+                .ConfigureAwait(false);
+            profile = await profiles
+                .ReadAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        settings = await LauncherSettingsMigration.MigrateLegacyDefaultPolicyAsync(
+                launcherSettings,
+                profilesV2,
+                profile.AssemblyBindingPolicy,
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async ValueTask<ModLaunchSelectionSnapshot?> BuildCurrentModSelectionAsync(
@@ -471,6 +494,12 @@ internal sealed class LauncherCoordinator : IDisposable
                         .ConfigureAwait(false);
                     selectedProfile = migration.Profile;
                     profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
+                    settings = await LauncherSettingsMigration.MigrateLegacyDefaultPolicyAsync(
+                            launcherSettings,
+                            profilesV2,
+                            profile.AssemblyBindingPolicy,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                                   InvalidDataException or InvalidOperationException)
@@ -481,7 +510,7 @@ internal sealed class LauncherCoordinator : IDisposable
             }
 
             var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
-            var globalBindingPolicy = profile?.AssemblyBindingPolicy
+            var globalBindingPolicy = settings?.DefaultAssemblyBindingPolicy
                 ?? throw new InvalidOperationException("The global Mod settings are unavailable.");
             return ModLaunchSelectionBuilder.Build(
                 selectedProfile,
@@ -509,8 +538,8 @@ internal sealed class LauncherCoordinator : IDisposable
     {
         if (disposed || CurrentState == state)
             return;
-        if (profile is not null)
-            state = state with { AssemblyBindingPolicy = profile.AssemblyBindingPolicy };
+        if (settings is not null)
+            state = state with { AssemblyBindingPolicy = settings.DefaultAssemblyBindingPolicy };
         CurrentState = state;
         Log.Info("JunimoGate.Launcher", $"state:{state.Status}");
         StateChanged?.Invoke(state);
@@ -555,16 +584,16 @@ internal sealed class LauncherCoordinator : IDisposable
         ShowProgress: false,
         CanLaunch: true,
         Detail: handle.VersionName,
-        AssemblyBindingPolicy: profile?.AssemblyBindingPolicy ?? ModAssemblyBindingPolicy.HighestCompatible,
-        CanConfigureProfile: profileId.Value != ModProfileV2.NoModsId);
+        AssemblyBindingPolicy: settings?.DefaultAssemblyBindingPolicy ?? ModAssemblyBindingPolicy.HighestCompatible,
+        CanConfigureProfile: true);
 
     private LauncherState ModConfigurationInvalidState() => new(
         LauncherStatus.ModConfigurationInvalid,
         LauncherMessageKey.ModConfigurationInvalid,
         ShowProgress: false,
         CanLaunch: false,
-        AssemblyBindingPolicy: profile?.AssemblyBindingPolicy ?? ModAssemblyBindingPolicy.HighestCompatible,
-        CanConfigureProfile: profileId.Value != ModProfileV2.NoModsId);
+        AssemblyBindingPolicy: settings?.DefaultAssemblyBindingPolicy ?? ModAssemblyBindingPolicy.HighestCompatible,
+        CanConfigureProfile: true);
 
     private void PublishLaunching() => Publish(new LauncherState(
         LauncherStatus.Launching,

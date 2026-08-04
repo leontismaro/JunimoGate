@@ -90,6 +90,14 @@ return TestHarness.Run(
         TestHarness.Throws<InvalidDataException>(() =>
             fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
     }),
+    ("Launcher settings create versioned defaults and update atomically", () =>
+        LauncherSettingsTests.CreatesDefaultsAndUpdatesAtomically()),
+    ("Launcher settings persist the manual update-check time", () =>
+        LauncherSettingsTests.PersistsUpdateCheckTime()),
+    ("Launcher settings reject malformed JSON", () =>
+        LauncherSettingsTests.RejectsMalformedJson()),
+    ("Launcher settings migrate the legacy default policy once", () =>
+        LauncherSettingsTests.MigratesAndClearsTheDefaultProfileOverrideOnce()),
     ("Profile v2 repository preserves legacy profiles and creates groups", () =>
         ModProfileV2Tests.CreatesSystemAndUserProfiles()),
     ("Profile v2 repository updates members atomically", () =>

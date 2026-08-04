@@ -1448,6 +1448,9 @@ public static class GameLaunchRegistry
     private static string GetModsRoot(Context context) =>
         Path.Combine(AndroidPrivateStorage.GetUserDataRoot(context.ApplicationContext ?? context), "mods");
 
+    private static string GetSettingsRoot(Context context) =>
+        Path.Combine(AndroidPrivateStorage.GetUserDataRoot(context.ApplicationContext ?? context), "settings");
+
     private static string GetModSelectionRoot(Context context) =>
         Path.Combine(
             AndroidPrivateStorage.GetRuntimeRoot(context.ApplicationContext ?? context),
@@ -1505,10 +1508,13 @@ public static class GameLaunchRegistry
             var library = await new ModLibraryRepository(GetModsRoot(context))
                 .ReadAsync(cancellationToken)
                 .ConfigureAwait(false);
-            var globalSettings = await new ModProfileRepository(GetProfilesRoot(context))
+            var legacyDefault = await new ModProfileRepository(GetProfilesRoot(context))
                 .ReadAsync(ProfileId.Parse("default"), cancellationToken)
                 .ConfigureAwait(false);
-            return selection.Matches(profile, library, globalSettings.AssemblyBindingPolicy);
+            var globalSettings = await new LauncherSettingsRepository(GetSettingsRoot(context))
+                .OpenOrCreateAsync(legacyDefault.AssemblyBindingPolicy, cancellationToken)
+                .ConfigureAwait(false);
+            return selection.Matches(profile, library, globalSettings.DefaultAssemblyBindingPolicy);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
