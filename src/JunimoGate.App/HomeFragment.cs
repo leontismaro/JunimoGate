@@ -93,7 +93,7 @@ public sealed class HomeFragment : Fragment
                 Activity?.RunOnUiThread(() =>
                 {
                     if (playTimeText is not null)
-                        playTimeText.Text = GetString(Resource.String.play_time_empty);
+                        playTimeText.Text = FormatPlayTime(summary.TotalPlayTime);
                     if (lastSaveText is not null)
                     {
                         lastSaveText.Text = summary.LatestSaveTimeUtc is null
@@ -151,6 +151,20 @@ public sealed class HomeFragment : Fragment
     private string FormatQuantity(int resourceId, int quantity) =>
         Resources?.GetQuantityString(resourceId, quantity, [JInteger.ValueOf(quantity)])
         ?? throw new InvalidOperationException("The home quantity resource is unavailable.");
+
+    private string FormatPlayTime(TimeSpan duration)
+    {
+        var totalMinutes = Math.Max(0, (int)Math.Floor(duration.TotalMinutes));
+        if (totalMinutes < 60)
+            return FormatQuantity(Resource.Plurals.play_time_minutes, totalMinutes);
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        return Resources?.GetQuantityString(
+            Resource.Plurals.play_time_hours,
+            hours,
+            [JInteger.ValueOf(hours), JInteger.ValueOf(minutes)])
+            ?? throw new InvalidOperationException("The play-time resource is unavailable.");
+    }
 
     private string FormatString(int resourceId, params JObject[] arguments) =>
         Resources?.GetString(resourceId, arguments)

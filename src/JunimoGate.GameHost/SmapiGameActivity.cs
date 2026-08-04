@@ -9,7 +9,9 @@ using Android.Widget;
 using Android.Window;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI.AndroidHost;
+using JunimoGate.Mods;
 using Log = JunimoGate.Android.JunimoGateLog;
+using OperationCanceledException = System.OperationCanceledException;
 
 namespace JunimoGate.GameHost;
 
@@ -32,7 +34,13 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private BackInvokedCallback? backInvokedCallback;
     private long lastBackHandledUptime;
     private bool destroyed;
+    private bool activityResumed;
+    private bool playSessionRunning;
     private string? lastSmapiFailureCode;
+    private GamePlaySessionRepository? playSessions;
+    private string? playSessionId;
+    private CancellationTokenSource? checkpointCancellation;
+    private Task? checkpointTask;
 
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
@@ -61,6 +69,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             var smapiBundle = await BundledSmapiAssets.ProvisionAndValidateAsync(
                 this,
                 CancellationToken.None);
+            await TryBeginPlaySessionAsync(launch, snapshot, smapiBundle);
             stage = GameStartupStage.RuntimeInventory;
             var runtimeFiles = PreparedRuntimeFiles.BuildAndValidate(snapshot, smapiBundle);
             stage = GameStartupStage.LoaderInstallation;
@@ -88,6 +97,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                     $"SMAPI reported startup failure '{reportedFailure.Code}'.",
                     reportedFailure.Exception);
             }
+            await TryMarkPlaySessionRunningAsync();
             stage = GameStartupStage.Running;
             try
             {
@@ -193,14 +203,18 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     protected override void OnResume()
     {
         base.OnResume();
+        activityResumed = true;
         Log.Info("JunimoGate.SMAPI", $"activity-resumed sessionCreated={(session is null ? 0 : 1)}");
+        TryMarkPlaySessionForeground();
         session?.OnResume();
         SetImmersive();
     }
 
     protected override void OnPause()
     {
+        activityResumed = false;
         Log.Info("JunimoGate.SMAPI", $"activity-paused sessionCreated={(session is null ? 0 : 1)}");
+        TryMarkPlaySessionBackground();
         session?.OnPause();
         base.OnPause();
     }
@@ -219,6 +233,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         destroyed = true;
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
             UnregisterBackInvokedCallback();
+        CompletePlaySession(GamePlaySessionOutcomes.Completed, failureCode: null);
         session?.Dispose();
         session = null;
         GameSessionRegistry.ClearCurrentProcess(this);
@@ -230,6 +245,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
 
     private void FailStartup()
     {
+        CompletePlaySession(GamePlaySessionOutcomes.Failed, lastSmapiFailureCode);
         GameSessionRegistry.ClearCurrentProcess(this);
         session?.Dispose();
         session = null;
@@ -252,6 +268,168 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         GameHostBridge.Detach(this);
         loader?.Dispose();
         loader = null;
+    }
+
+    private async ValueTask TryBeginPlaySessionAsync(
+        ConsumedGameLaunch launch,
+        PreparedGameSnapshot snapshot,
+        PreparedSmapiBundle smapiBundle)
+    {
+        try
+        {
+            var repository = new GamePlaySessionRepository(Path.Combine(
+                JunimoGate.Android.AndroidPrivateStorage.GetUserDataRoot(ApplicationContext ?? this),
+                "sessions"));
+            var profileId = ProfileId.Parse(launch.ModSelection?.ProfileId ?? launch.Profile.ProfileId);
+            var sessionRecord = await repository.BeginAsync(
+                new GamePlaySessionMetadata(
+                    profileId,
+                    launch.ModSelection?.ProfileRevision ?? launch.Profile.Revision,
+                    launch.ModSelection?.Items.Count ?? launch.ModDirectories?.Count ?? 0,
+                    snapshot.VersionName,
+                    GameHostRuntimeIdentity.BuildId,
+                    smapiBundle.BundleId),
+                cancellationToken: CancellationToken.None);
+            playSessions = repository;
+            playSessionId = sessionRecord.SessionId;
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", "session-begin-failed", exception);
+            playSessions = null;
+            playSessionId = null;
+        }
+    }
+
+    private async ValueTask TryMarkPlaySessionRunningAsync()
+    {
+        if (playSessions is not { } repository || playSessionId is not { } sessionId)
+            return;
+        try
+        {
+            await repository.MarkRunningAsync(
+                sessionId,
+                activityResumed,
+                cancellationToken: CancellationToken.None);
+            playSessionRunning = true;
+            StartCheckpointLoop();
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", "session-running-failed", exception);
+        }
+    }
+
+    private void TryMarkPlaySessionForeground()
+    {
+        if (!playSessionRunning || playSessions is not { } repository || playSessionId is not { } sessionId)
+            return;
+        TryPersistPlaySession(
+            "session-foreground-failed",
+            () => repository.MarkForegroundAsync(sessionId, cancellationToken: CancellationToken.None));
+    }
+
+    private void TryMarkPlaySessionBackground()
+    {
+        if (!playSessionRunning || playSessions is not { } repository || playSessionId is not { } sessionId)
+            return;
+        TryPersistPlaySession(
+            "session-background-failed",
+            () => repository.MarkBackgroundAsync(sessionId, cancellationToken: CancellationToken.None));
+    }
+
+    private void StartCheckpointLoop()
+    {
+        if (checkpointTask is not null || playSessions is null || playSessionId is null)
+            return;
+        checkpointCancellation = new CancellationTokenSource();
+        checkpointTask = RunCheckpointLoopAsync(
+            playSessions,
+            playSessionId,
+            checkpointCancellation.Token);
+    }
+
+    private static async Task RunCheckpointLoopAsync(
+        GamePlaySessionRepository repository,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(GamePlaySessionRepository.CheckpointInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                await repository.CheckpointAsync(sessionId, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Session completion owns the final foreground accumulation.
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", "session-checkpoint-failed", exception);
+        }
+    }
+
+    private void CompletePlaySession(string outcome, string? failureCode)
+    {
+        StopCheckpointLoop();
+        var repository = playSessions;
+        var sessionId = playSessionId;
+        playSessions = null;
+        playSessionId = null;
+        playSessionRunning = false;
+        if (repository is null || sessionId is null)
+            return;
+        TryPersistPlaySession(
+            "session-end-failed",
+            () => repository.EndAsync(
+                sessionId,
+                outcome,
+                failureCode,
+                cancellationToken: CancellationToken.None));
+    }
+
+    private void StopCheckpointLoop()
+    {
+        checkpointCancellation?.Cancel();
+        try
+        {
+            checkpointTask?.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            // The checkpoint loop treats cancellation as normal completion.
+        }
+        checkpointCancellation?.Dispose();
+        checkpointCancellation = null;
+        checkpointTask = null;
+    }
+
+    private static void TryPersistPlaySession(string failureEvent, Func<ValueTask> operation)
+    {
+        try
+        {
+            operation().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", failureEvent, exception);
+        }
+    }
+
+    private static void TryPersistPlaySession<T>(string failureEvent, Func<ValueTask<T>> operation)
+    {
+        try
+        {
+            _ = operation().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", failureEvent, exception);
+        }
     }
 
     private void HandleSystemBack()

@@ -132,6 +132,18 @@ return TestHarness.Run(
         ModLibraryTests.RepairsRecoverableLibraryState()),
     ("Mod library deletes one exact item", () =>
         ModLibraryTests.DeletesExactItem()),
+    ("Game play sessions exclude startup time", () =>
+        GamePlaySessionTests.DoesNotCountStartupTime()),
+    ("Game play sessions count only running foreground intervals", () =>
+        GamePlaySessionTests.CountsOnlyRunningForegroundIntervals()),
+    ("Game play sessions cap inactive uncheckpointed time", () =>
+        GamePlaySessionTests.CapsAnInactiveUncheckpointedSession()),
+    ("Game play sessions archive stale current state", () =>
+        GamePlaySessionTests.ArchivesAStaleSessionBeforeBeginningAnother()),
+    ("Game play sessions record failures atomically", () =>
+        GamePlaySessionTests.RecordsFailureAndRemovesCurrentSession()),
+    ("Game play sessions reject malformed JSON", () =>
+        GamePlaySessionTests.RejectsMalformedSessionJson()),
     ("SMAPI binding planner ignores files outside the real dependency closure", () =>
         AssemblyBindingPlannerTests.IgnoresUnreferencedFiles()),
     ("SMAPI binding planner ignores non-local framework references", () =>

@@ -40,7 +40,8 @@ internal sealed record EnvironmentDisplayInfo(
 internal sealed record HomeSummary(
     int EnabledModCount,
     string? LatestSaveName,
-    DateTimeOffset? LatestSaveTimeUtc);
+    DateTimeOffset? LatestSaveTimeUtc,
+    TimeSpan TotalPlayTime);
 
 internal sealed class ProductInformationService
 {
@@ -131,10 +132,14 @@ internal sealed class ProductInformationService
                 .OrderByDescending(static directory => directory.LastWriteTimeUtc)
                 .FirstOrDefault()
             : null;
+        var playSummary = new GamePlaySessionRepository(Path.Combine(userData, "sessions"))
+            .ReadSummaryAsync(GameSessionRegistry.IsGameProcessActive(context))
+            .AsTask().GetAwaiter().GetResult();
         return new HomeSummary(
             enabledMods,
             latest?.Name,
-            latest is null ? null : new DateTimeOffset(latest.LastWriteTimeUtc, TimeSpan.Zero));
+            latest is null ? null : new DateTimeOffset(latest.LastWriteTimeUtc, TimeSpan.Zero),
+            playSummary.TotalPlayTime);
     }
 
     private string ReadAppVersion()

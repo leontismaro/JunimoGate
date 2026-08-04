@@ -28,6 +28,14 @@
 
     <string name="home_summary">概览</string>
     <string name="play_time_empty">游玩时长\n—</string>
+    <plurals name="play_time_minutes">
+        <item quantity="one">游玩时长\n%1$d 分钟</item>
+        <item quantity="other">游玩时长\n%1$d 分钟</item>
+    </plurals>
+    <plurals name="play_time_hours">
+        <item quantity="one">游玩时长\n%1$d 小时 %2$d 分钟</item>
+        <item quantity="other">游玩时长\n%1$d 小时 %2$d 分钟</item>
+    </plurals>
     <string name="last_save_empty">最近存档\n—</string>
     <string name="enabled_mods_empty">启用 Mod\n—</string>
     <string name="last_save_value">最近存档\n%1$s\n%2$s</string>
