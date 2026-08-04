@@ -28,6 +28,14 @@
         android:layout_marginTop="16dp"
         android:text="@string/mods_import_action" />
 
+    <SearchView
+        android:id="@+id/mods_search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:iconifiedByDefault="false"
+        android:queryHint="@string/mods_search_hint" />
+
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/mods_progress"
         android:layout_width="match_parent"

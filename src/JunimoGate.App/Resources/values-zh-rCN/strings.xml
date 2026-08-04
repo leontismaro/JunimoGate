@@ -40,6 +40,8 @@
     <string name="mods_library_description">导入文件只在全局库保存一份。当前阶段导入后不会自动加入正在运行的 Mod 分组。</string>
     <string name="mods_empty">全局 Mod 库中还没有导入项。</string>
     <string name="mods_import_action">导入 Mod ZIP</string>
+    <string name="mods_search_hint">搜索名称、作者、ID 或版本</string>
+    <string name="mods_search_empty">没有符合搜索条件的已导入 Mod。</string>
     <string name="mods_import_confirm_title">导入这些 Mod？</string>
     <string name="mods_import_more">……以及另外 %1$d 个</string>
     <string name="mods_import_has_warnings">压缩包还包含不阻断导入的 manifest 提示；最终能否加载仍由 SMAPI 判断。</string>
@@ -48,7 +50,13 @@
     <string name="mods_archive_rejected_description">ZIP 未通过安全导入检查，没有安装任何 Mod 文件。</string>
     <string name="mods_import_failed">无法导入 Mod 压缩包，请在产品日志中查看详情。</string>
     <string name="mods_library_read_failed">无法读取全局 Mod 库。</string>
-    <string name="mods_item_summary">%1$s · %2$s\n%3$s · %4$s</string>
+    <string name="mods_item_summary">%1$s · %2$s\n%3$s · %4$s · %5$s</string>
+    <string name="mods_details_action">详情</string>
+    <string name="mods_details_message">唯一 ID：%1$s\n作者：%2$s\n类型：%3$s\n依赖：%4$s\n内容：%5$s · %6$s\n导入时间：%7$s\n来源：%8$s\n\n%9$s</string>
+    <string name="mods_type_code">代码 Mod</string>
+    <string name="mods_type_content">内容包</string>
+    <string name="mods_type_mixed">代码和内容</string>
+    <string name="value_unavailable">暂无</string>
     <string name="mods_delete_title">删除已安装 Mod？</string>
     <string name="mods_delete_message">从全局库删除 %1$s %2$s？现有游戏 Mod 目录不会改变。</string>
     <string name="mods_delete_action">删除</string>
@@ -61,6 +69,14 @@
     <plurals name="mods_import_completed">
         <item quantity="one">已向全局库导入 %1$d 个 Mod；它尚未加入当前游戏分组。</item>
         <item quantity="other">已向全局库导入 %1$d 个 Mod；它们尚未加入当前游戏分组。</item>
+    </plurals>
+    <plurals name="mods_version_count">
+        <item quantity="one">已安装 %1$d 个版本</item>
+        <item quantity="other">已安装 %1$d 个版本</item>
+    </plurals>
+    <plurals name="mods_dependency_count">
+        <item quantity="one">声明了 %1$d 个依赖</item>
+        <item quantity="other">声明了 %1$d 个依赖</item>
     </plurals>
     <string name="logs_title">日志</string>
     <string name="logs_empty">最近一次和上一次启动日志将在这里显示。</string>

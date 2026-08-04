@@ -40,6 +40,8 @@
     <string name="mods_library_description">Imported files are stored once in the global library. Importing does not add them to the current game group yet.</string>
     <string name="mods_empty">No Mods have been imported into the global library.</string>
     <string name="mods_import_action">Import Mod ZIP</string>
+    <string name="mods_search_hint">Search name, author, ID, or version</string>
+    <string name="mods_search_empty">No imported Mods match this search.</string>
     <string name="mods_import_confirm_title">Import these Mods?</string>
     <string name="mods_import_more">…and %1$d more</string>
     <string name="mods_import_has_warnings">The archive also contains non-blocking manifest warnings. SMAPI remains the final loading authority.</string>
@@ -48,7 +50,13 @@
     <string name="mods_archive_rejected_description">The ZIP failed a safe import check. No Mod files were installed.</string>
     <string name="mods_import_failed">The Mod archive could not be imported. Check the product log for details.</string>
     <string name="mods_library_read_failed">The global Mod library could not be read.</string>
-    <string name="mods_item_summary">%1$s · %2$s\n%3$s · %4$s</string>
+    <string name="mods_item_summary">%1$s · %2$s\n%3$s · %4$s · %5$s</string>
+    <string name="mods_details_action">Details</string>
+    <string name="mods_details_message">Unique ID: %1$s\nAuthor: %2$s\nType: %3$s\nDependencies: %4$s\nContents: %5$s · %6$s\nImported: %7$s\nSource: %8$s\n\n%9$s</string>
+    <string name="mods_type_code">code Mod</string>
+    <string name="mods_type_content">content pack</string>
+    <string name="mods_type_mixed">code and content</string>
+    <string name="value_unavailable">Not available</string>
     <string name="mods_delete_title">Delete installed Mod?</string>
     <string name="mods_delete_message">Delete %1$s %2$s from the global library? Existing game folders are not changed.</string>
     <string name="mods_delete_action">Delete</string>
@@ -61,6 +69,14 @@
     <plurals name="mods_import_completed">
         <item quantity="one">Imported %1$d Mod into the global library. It has not been added to the current game group.</item>
         <item quantity="other">Imported %1$d Mods into the global library. They have not been added to the current game group.</item>
+    </plurals>
+    <plurals name="mods_version_count">
+        <item quantity="one">%1$d installed version</item>
+        <item quantity="other">%1$d installed versions</item>
+    </plurals>
+    <plurals name="mods_dependency_count">
+        <item quantity="one">%1$d declared dependency</item>
+        <item quantity="other">%1$d declared dependencies</item>
     </plurals>
     <string name="logs_title">Logs</string>
     <string name="logs_empty">The latest and previous launch logs will appear here.</string>

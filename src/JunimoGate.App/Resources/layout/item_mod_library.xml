@@ -23,13 +23,26 @@
             android:layout_marginTop="6dp"
             android:textAppearance="?attr/textAppearanceBodyMedium" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/mod_item_delete"
-            style="@style/Widget.Material3.Button.TextButton"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="end"
             android:layout_marginTop="4dp"
-            android:text="@string/mods_delete_action" />
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mod_item_details"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/mods_details_action" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mod_item_delete"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/mods_delete_action" />
+        </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

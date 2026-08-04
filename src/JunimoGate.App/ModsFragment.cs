@@ -4,6 +4,7 @@ using Android.Database;
 using Android.OS;
 using Android.Provider;
 using Android.Runtime;
+using Android.Text.Format;
 using Android.Views;
 using Android.Widget;
 using AndroidX.RecyclerView.Widget;
@@ -25,6 +26,7 @@ public sealed class ModsFragment : Fragment
 {
     private const int ImportArchiveRequestCode = 4701;
     private MaterialButton? importButton;
+    private SearchView? search;
     private LinearProgressIndicator? progress;
     private TextView? empty;
     private ModLibraryAdapter? adapter;
@@ -44,14 +46,17 @@ public sealed class ModsFragment : Fragment
             ?? throw new InvalidOperationException("The Mod import button is unavailable.");
         progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.mods_progress)
             ?? throw new InvalidOperationException("The Mod progress indicator is unavailable.");
+        search = view.FindViewById<SearchView>(Resource.Id.mods_search)
+            ?? throw new InvalidOperationException("The Mod search input is unavailable.");
         empty = view.FindViewById<TextView>(Resource.Id.mods_empty)
             ?? throw new InvalidOperationException("The Mod empty state is unavailable.");
         var list = view.FindViewById<RecyclerView>(Resource.Id.mods_list)
             ?? throw new InvalidOperationException("The Mod library list is unavailable.");
-        adapter = new ModLibraryAdapter(FormatItemSummary, RequestDelete);
+        adapter = new ModLibraryAdapter(FormatItemSummary, ShowDetails, RequestDelete);
         list.SetLayoutManager(new LinearLayoutManager(RequireContext()));
         list.SetAdapter(adapter);
         importButton.Click += OnImportClicked;
+        search.QueryTextChange += OnSearchChanged;
     }
 
     public override void OnStart()
@@ -79,7 +84,10 @@ public sealed class ModsFragment : Fragment
     {
         if (importButton is not null)
             importButton.Click -= OnImportClicked;
+        if (search is not null)
+            search.QueryTextChange -= OnSearchChanged;
         importButton = null;
+        search = null;
         progress = null;
         empty = null;
         adapter = null;
@@ -114,6 +122,12 @@ public sealed class ModsFragment : Fragment
 #pragma warning disable CS0618 // See OnActivityResult; SAF grants only the selected document stream.
         StartActivityForResult(intent, ImportArchiveRequestCode);
 #pragma warning restore CS0618
+    }
+
+    private void OnSearchChanged(object? sender, SearchView.QueryTextChangeEventArgs eventArgs)
+    {
+        adapter?.SetQuery(eventArgs.NewText);
+        UpdateEmptyState();
     }
 
     private async Task ScanArchiveAsync(global::Android.Net.Uri uri, CancellationToken cancellationToken)
@@ -263,8 +277,51 @@ public sealed class ModsFragment : Fragment
     private void Render(IReadOnlyList<ModLibraryItem> items)
     {
         adapter?.SetItems(items);
-        if (empty is not null)
-            empty.Visibility = items.Count == 0 ? ViewStates.Visible : ViewStates.Gone;
+        UpdateEmptyState();
+    }
+
+    private void UpdateEmptyState()
+    {
+        if (empty is null || adapter is null)
+            return;
+        empty.Visibility = adapter.ItemCount == 0 ? ViewStates.Visible : ViewStates.Gone;
+        empty.SetText(adapter.TotalCount == 0 ? Resource.String.mods_empty : Resource.String.mods_search_empty);
+    }
+
+    private void ShowDetails(ModLibraryItem item)
+    {
+        var type = item.Manifest.EntryDll is not null && item.Manifest.ContentPackForUniqueId is not null
+            ? GetString(Resource.String.mods_type_mixed)
+            : item.Manifest.EntryDll is not null
+                ? GetString(Resource.String.mods_type_code)
+                : GetString(Resource.String.mods_type_content);
+        var source = item.SourceArchiveName ?? GetString(Resource.String.value_unavailable);
+        var description = item.Manifest.Description ?? GetString(Resource.String.value_unavailable);
+        var dependencies = Resources?.GetQuantityString(
+            Resource.Plurals.mods_dependency_count,
+            item.Manifest.Dependencies.Count,
+            [Java.Lang.Integer.ValueOf(item.Manifest.Dependencies.Count)]) ?? item.Manifest.Dependencies.Count.ToString();
+        var files = Resources?.GetQuantityString(
+            Resource.Plurals.environment_file_count,
+            item.FileCount,
+            [Java.Lang.Integer.ValueOf(item.FileCount)]) ?? item.FileCount.ToString();
+        var size = global::Android.Text.Format.Formatter.FormatFileSize(RequireContext(), item.TotalBytes) ?? "—";
+        var detail = FormatString(
+            Resource.String.mods_details_message,
+            new JString(item.Manifest.UniqueId),
+            new JString(item.Manifest.Author),
+            new JString(type),
+            new JString(dependencies),
+            new JString(files),
+            new JString(size),
+            new JString(FormatDateTime(item.ImportedAtUtc)),
+            new JString(source),
+            new JString(description));
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle($"{item.Manifest.Name} {item.Manifest.Version}");
+        dialog.SetMessage(detail);
+        dialog.SetPositiveButton(global::Android.Resource.String.Ok, (_, _) => { });
+        dialog.Show();
     }
 
     private void RequestDelete(ModLibraryItem item)
@@ -345,19 +402,38 @@ public sealed class ModsFragment : Fragment
         return GetString(Resource.String.mods_archive_rejected_description) + "\n\n" + string.Join("\n", lines);
     }
 
-    private string FormatItemSummary(ModLibraryItem item)
+    private string FormatItemSummary(ModLibraryItem item, int installedVersions)
     {
         var size = global::Android.Text.Format.Formatter.FormatFileSize(RequireContext(), item.TotalBytes) ?? "—";
         var files = Resources?.GetQuantityString(
             Resource.Plurals.environment_file_count,
             item.FileCount,
             [Java.Lang.Integer.ValueOf(item.FileCount)]) ?? item.FileCount.ToString();
+        var versions = Resources?.GetQuantityString(
+            Resource.Plurals.mods_version_count,
+            installedVersions,
+            [Java.Lang.Integer.ValueOf(installedVersions)]) ?? installedVersions.ToString();
         return FormatString(
             Resource.String.mods_item_summary,
             new JString(item.Manifest.Author),
             new JString(item.Manifest.UniqueId),
+            new JString(versions),
             new JString(files),
             new JString(size));
+    }
+
+    private string FormatDateTime(DateTimeOffset value)
+    {
+        var context = RequireContext();
+        using var date = new Java.Util.Date(value.ToUnixTimeMilliseconds());
+        var dateFormatter = DateFormat.GetMediumDateFormat(context)
+            ?? throw new InvalidOperationException("The localized date formatter is unavailable.");
+        var timeFormatter = DateFormat.GetTimeFormat(context)
+            ?? throw new InvalidOperationException("The localized time formatter is unavailable.");
+        return FormatString(
+            Resource.String.date_time_value,
+            new JString(dateFormatter.Format(date) ?? "—"),
+            new JString(timeFormatter.Format(date) ?? "—"));
     }
 
     private string? ReadDisplayName(global::Android.Net.Uri uri)
@@ -417,39 +493,78 @@ public sealed class ModsFragment : Fragment
 }
 
 internal sealed class ModLibraryAdapter(
-    Func<ModLibraryItem, string> formatSummary,
+    Func<ModLibraryItem, int, string> formatSummary,
+    Action<ModLibraryItem> showDetails,
     Action<ModLibraryItem> delete) : RecyclerView.Adapter
 {
+    private IReadOnlyList<ModLibraryItem> allItems = Array.Empty<ModLibraryItem>();
     private IReadOnlyList<ModLibraryItem> items = Array.Empty<ModLibraryItem>();
+    private IReadOnlyDictionary<string, int> versionCounts = new Dictionary<string, int>();
+    private string query = string.Empty;
 
     public override int ItemCount => items.Count;
+    public int TotalCount => allItems.Count;
 
     public void SetItems(IReadOnlyList<ModLibraryItem> value)
     {
-        items = value;
+        allItems = value;
+        versionCounts = value
+            .GroupBy(item => item.Manifest.UniqueId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        ApplyFilter();
+    }
+
+    public void SetQuery(string? value)
+    {
+        query = value?.Trim() ?? string.Empty;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        items = string.IsNullOrEmpty(query)
+            ? allItems
+            : allItems.Where(item =>
+                    Contains(item.Manifest.Name, query) ||
+                    Contains(item.Manifest.Author, query) ||
+                    Contains(item.Manifest.UniqueId, query) ||
+                    Contains(item.Manifest.Version, query))
+                .ToArray();
         NotifyDataSetChanged();
     }
+
+    private static bool Contains(string value, string query) =>
+        value.Contains(query, StringComparison.OrdinalIgnoreCase);
 
     public override RecyclerView.ViewHolder OnCreateViewHolder(ViewGroup parent, int viewType)
     {
         var view = LayoutInflater.From(parent.Context)?.Inflate(Resource.Layout.item_mod_library, parent, false)
             ?? throw new InvalidOperationException("The Mod library item layout could not be created.");
-        return new ModLibraryViewHolder(view, delete);
+        return new ModLibraryViewHolder(view, showDetails, delete);
     }
 
-    public override void OnBindViewHolder(RecyclerView.ViewHolder holder, int position) =>
-        ((ModLibraryViewHolder)holder).Bind(items[position], formatSummary(items[position]));
+    public override void OnBindViewHolder(RecyclerView.ViewHolder holder, int position)
+    {
+        var item = items[position];
+        ((ModLibraryViewHolder)holder).Bind(item, formatSummary(item, versionCounts[item.Manifest.UniqueId]));
+    }
 
     private sealed class ModLibraryViewHolder : RecyclerView.ViewHolder
     {
         private readonly TextView title;
         private readonly TextView summary;
         private readonly MaterialButton deleteButton;
+        private readonly MaterialButton detailsButton;
+        private readonly Action<ModLibraryItem> showDetails;
         private readonly Action<ModLibraryItem> delete;
         private ModLibraryItem? item;
 
-        public ModLibraryViewHolder(View view, Action<ModLibraryItem> delete) : base(view)
+        public ModLibraryViewHolder(
+            View view,
+            Action<ModLibraryItem> showDetails,
+            Action<ModLibraryItem> delete) : base(view)
         {
+            this.showDetails = showDetails;
             this.delete = delete;
             title = view.FindViewById<TextView>(Resource.Id.mod_item_title)
                 ?? throw new InvalidOperationException("The Mod item title is unavailable.");
@@ -457,6 +572,13 @@ internal sealed class ModLibraryAdapter(
                 ?? throw new InvalidOperationException("The Mod item summary is unavailable.");
             deleteButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_delete)
                 ?? throw new InvalidOperationException("The Mod item delete button is unavailable.");
+            detailsButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_details)
+                ?? throw new InvalidOperationException("The Mod item details button is unavailable.");
+            detailsButton.Click += (_, _) =>
+            {
+                if (item is not null)
+                    this.showDetails(item);
+            };
             deleteButton.Click += (_, _) =>
             {
                 if (item is not null)
