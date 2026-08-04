@@ -124,6 +124,8 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 
     void ILauncherUiHost.OpenSaveBackups() => OpenSaveBackups();
 
+    void ILauncherUiHost.OpenAbout() => OpenAbout();
+
     void ILauncherUiHost.RequestGameEnvironmentRepair() => _ = RepairGameEnvironmentAsync();
 
     void ILauncherUiHost.RequestCacheCleanup() => _ = CleanRebuildableCachesAsync();
@@ -322,6 +324,13 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         navigation?.Navigate(Resource.Id.navigation_save_backups);
     }
 
+    private void OpenAbout()
+    {
+        if (destroyed || navigation?.CurrentDestination?.Id == Resource.Id.navigation_about)
+            return;
+        navigation?.Navigate(Resource.Id.navigation_about);
+    }
+
     private bool TryRouteToActiveGame()
     {
         if (!GameSessionRegistry.TryRouteActiveGame(this))
@@ -352,6 +361,8 @@ internal interface ILauncherUiHost
     void OpenEnvironment();
 
     void OpenSaveBackups();
+
+    void OpenAbout();
 
     void RequestGameEnvironmentRepair();
 

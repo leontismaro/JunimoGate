@@ -86,7 +86,7 @@ Each pinned repository README states that the software is public domain. The tra
 
 `tools/JunimoGate.RuntimeProbe.Core` uses the following fixed NuGet dependencies to test the stock Android runtime. These dependencies are test/probe infrastructure; their licenses do not apply MIT to JunimoGate as a whole.
 
-- **Lib.Harmony 2.4.2-junimogate.11**
+- **Lib.Harmony 2.4.2-junimogate.63**
   - repository: <https://github.com/pardeike/Harmony>
   - upstream commit: `a264a1bf1ce689e4589e8dcc54b1e2818602a90a`
   - bundled pardeike/MonoMod commit: `dfc30a1506d37fb88a2c2be004f525205f46a24c`

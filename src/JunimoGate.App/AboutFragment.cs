@@ -1,0 +1,264 @@
+using Android.Content;
+using Android.Content.PM;
+using Android.OS;
+using Android.Runtime;
+using Android.Views;
+using Android.Widget;
+using AndroidX.Fragment.App;
+using Google.Android.Material.Button;
+using Google.Android.Material.Dialog;
+using Google.Android.Material.ProgressIndicator;
+using JunimoGate.Android;
+using JunimoGate.Mods;
+using Fragment = AndroidX.Fragment.App.Fragment;
+using Log = JunimoGate.Android.JunimoGateLog;
+using JObject = Java.Lang.Object;
+using JString = Java.Lang.String;
+using OperationCanceledException = System.OperationCanceledException;
+
+namespace JunimoGate.App;
+
+[Register("org.junimogate.app.AboutFragment")]
+public sealed class AboutFragment : Fragment
+{
+    private const string RepositoryUrl = "https://github.com/leontismaro/JunimoGate";
+    private TextView? versions;
+    private MaterialButton? updateButton;
+    private MaterialButton? repositoryButton;
+    private MaterialButton? noticesButton;
+    private LinearProgressIndicator? progress;
+    private CancellationTokenSource? cancellation;
+    private LauncherSettingsRepository? settings;
+    private string appVersion = "0.1.0-dev";
+
+    public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
+        inflater.Inflate(Resource.Layout.fragment_about, container, false)
+        ?? throw new InvalidOperationException("The About layout could not be created.");
+
+    public override void OnViewCreated(View view, Bundle? savedInstanceState)
+    {
+        base.OnViewCreated(view, savedInstanceState);
+        versions = view.FindViewById<TextView>(Resource.Id.about_versions)
+            ?? throw new InvalidOperationException("The About version view is unavailable.");
+        progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.about_progress)
+            ?? throw new InvalidOperationException("The About progress view is unavailable.");
+        updateButton = view.FindViewById<MaterialButton>(Resource.Id.about_check_update)
+            ?? throw new InvalidOperationException("The update action is unavailable.");
+        repositoryButton = view.FindViewById<MaterialButton>(Resource.Id.about_repository)
+            ?? throw new InvalidOperationException("The repository action is unavailable.");
+        noticesButton = view.FindViewById<MaterialButton>(Resource.Id.about_notices)
+            ?? throw new InvalidOperationException("The notices action is unavailable.");
+        updateButton.Click += OnUpdateClicked;
+        repositoryButton.Click += OnRepositoryClicked;
+        noticesButton.Click += OnNoticesClicked;
+    }
+
+    public override void OnStart()
+    {
+        base.OnStart();
+        cancellation = new CancellationTokenSource();
+        settings = new LauncherSettingsRepository(Path.Combine(
+            AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
+            "settings"));
+        _ = LoadAsync(cancellation.Token);
+    }
+
+    public override void OnStop()
+    {
+        cancellation?.Cancel();
+        cancellation?.Dispose();
+        cancellation = null;
+        settings = null;
+        base.OnStop();
+    }
+
+    public override void OnDestroyView()
+    {
+        if (updateButton is not null)
+            updateButton.Click -= OnUpdateClicked;
+        if (repositoryButton is not null)
+            repositoryButton.Click -= OnRepositoryClicked;
+        if (noticesButton is not null)
+            noticesButton.Click -= OnNoticesClicked;
+        versions = null;
+        updateButton = null;
+        repositoryButton = null;
+        noticesButton = null;
+        progress = null;
+        base.OnDestroyView();
+    }
+
+    private async Task LoadAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var context = RequireContext();
+            var info = await new ProductInformationService(context)
+                .ReadEnvironmentAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var package = context.PackageManager?.GetPackageInfo(context.PackageName!, (PackageInfoFlags)0)
+                ?? throw new InvalidOperationException("JunimoGate package metadata is unavailable.");
+            appVersion = info.AppVersion;
+            var game = info.Games.FirstOrDefault(candidate => candidate.IsInstalled);
+            var gameValue = game is null
+                ? GetString(Resource.String.about_game_not_installed)
+                : $"{game.PackageName} {game.VersionName} ({game.VersionCode})";
+            var text = FormatString(
+                Resource.String.about_versions_value,
+                new JString(info.AppVersion),
+                Java.Lang.Long.ValueOf(GetLongVersionCode(package)),
+                new JString(info.Smapi.SmapiApiVersion),
+                new JString(info.Smapi.SmapiImplementationVersion),
+                new JString(info.Smapi.BuildId),
+                new JString(info.Smapi.BundleId),
+                new JString(gameValue));
+            if (IsAdded && !cancellationToken.IsCancellationRequested)
+                Activity?.RunOnUiThread(() => versions!.Text = text);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.About", "about-read-failed", exception);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => versions?.SetText(Resource.String.about_read_failed));
+        }
+    }
+
+    private void OnUpdateClicked(object? sender, EventArgs eventArgs)
+    {
+        if (cancellation is { IsCancellationRequested: false } lifetime)
+            _ = CheckForUpdatesAsync(lifetime.Token);
+    }
+
+    private async Task CheckForUpdatesAsync(CancellationToken cancellationToken)
+    {
+        SetChecking(true);
+        try
+        {
+            var result = await new GitHubUpdateService().CheckAsync(appVersion, cancellationToken).ConfigureAwait(false);
+            await RecordUpdateCheckAsync(cancellationToken).ConfigureAwait(false);
+            if (!IsAdded || cancellationToken.IsCancellationRequested)
+                return;
+            Activity?.RunOnUiThread(() => ShowUpdateResult(result));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                          IOException or InvalidDataException or UnauthorizedAccessException or
+                                          InvalidOperationException)
+        {
+            Log.Warn("JunimoGate.Update", "manual-update-check-failed", exception);
+            try
+            {
+                await RecordUpdateCheckAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception recordException) when (recordException is IOException or InvalidDataException or
+                                                    UnauthorizedAccessException or InvalidOperationException)
+            {
+                Log.Warn("JunimoGate.Update", "update-check-time-save-failed", recordException);
+            }
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => Toast.MakeText(RequireContext(), Resource.String.about_update_failed, ToastLength.Long)?.Show());
+        }
+        finally
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => SetChecking(false));
+        }
+    }
+
+    private async ValueTask RecordUpdateCheckAsync(CancellationToken cancellationToken)
+    {
+        if (settings is null)
+            return;
+        var current = await settings.ReadAsync(cancellationToken).ConfigureAwait(false);
+        _ = await settings.UpdateAsync(
+                current.Revision,
+                value => value with { LastUpdateCheckUtc = DateTimeOffset.UtcNow },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private void ShowUpdateResult(UpdateCheckResult result)
+    {
+        if (result.Status == UpdateCheckStatus.UpdateAvailable && result.ReleaseUrl is not null)
+        {
+            var dialog = new MaterialAlertDialogBuilder(RequireContext());
+            dialog.SetTitle(Resource.String.about_update_available_title);
+            dialog.SetMessage(FormatString(
+                Resource.String.about_update_available_message,
+                new JString(result.ReleaseName ?? result.LatestVersion ?? "—")));
+            dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
+            dialog.SetPositiveButton(Resource.String.about_open_release, (_, _) => OpenUrl(result.ReleaseUrl));
+            dialog.Show();
+            return;
+        }
+        Toast.MakeText(
+            RequireContext(),
+            result.Status == UpdateCheckStatus.NoStableRelease
+                ? Resource.String.about_no_stable_release
+                : Resource.String.about_up_to_date,
+            ToastLength.Long)?.Show();
+    }
+
+    private void OnRepositoryClicked(object? sender, EventArgs eventArgs) => OpenUrl(RepositoryUrl);
+
+    private void OnNoticesClicked(object? sender, EventArgs eventArgs)
+    {
+        try
+        {
+            using var stream = RequireContext().Assets?.Open("THIRD-PARTY-NOTICES.md")
+                ?? throw new IOException("The third-party notices asset is missing.");
+            using var reader = new StreamReader(stream);
+            var notices = reader.ReadToEnd();
+            var dialog = new MaterialAlertDialogBuilder(RequireContext());
+            dialog.SetTitle(Resource.String.about_notices);
+            dialog.SetMessage(notices);
+            dialog.SetPositiveButton(global::Android.Resource.String.Ok, (_, _) => { });
+            dialog.Show();
+        }
+        catch (IOException exception)
+        {
+            Log.Error("JunimoGate.About", "notices-read-failed", exception);
+            Toast.MakeText(RequireContext(), Resource.String.about_notices_failed, ToastLength.Long)?.Show();
+        }
+    }
+
+    private void OpenUrl(string url)
+    {
+        try
+        {
+            StartActivity(new Intent(Intent.ActionView, global::Android.Net.Uri.Parse(url)));
+        }
+        catch (ActivityNotFoundException exception)
+        {
+            Log.Warn("JunimoGate.About", "browser-unavailable", exception);
+            Toast.MakeText(RequireContext(), Resource.String.about_browser_unavailable, ToastLength.Long)?.Show();
+        }
+    }
+
+    private void SetChecking(bool value)
+    {
+        if (progress is not null)
+            progress.Visibility = value ? ViewStates.Visible : ViewStates.Gone;
+        if (updateButton is not null)
+            updateButton.Enabled = !value;
+    }
+
+    private string FormatString(int resourceId, params JObject[] arguments) =>
+        Resources?.GetString(resourceId, arguments)
+        ?? throw new InvalidOperationException("The About string resource is unavailable.");
+
+    private static long GetLongVersionCode(PackageInfo package)
+    {
+        if (OperatingSystem.IsAndroidVersionAtLeast(28))
+            return package.LongVersionCode;
+#pragma warning disable CA1422
+        return package.VersionCode;
+#pragma warning restore CA1422
+    }
+}

@@ -22,6 +22,9 @@
     <PublishTrimmed Condition="'$(Configuration)' == 'Release'">false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
+    <AndroidAsset Include="../../THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="DeepCloner" Version="0.10.4" GeneratePathProperty="true" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.1" GeneratePathProperty="true" />
     <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.63" GeneratePathProperty="true" />

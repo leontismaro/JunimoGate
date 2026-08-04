@@ -201,6 +201,31 @@
     <string name="settings_cache_cleanup_blocked">Close the running game before cleaning caches.</string>
     <string name="settings_cache_cleanup_failed">Rebuildable caches could not be cleaned.</string>
 
+    <string name="about_title">About</string>
+    <string name="about_settings_summary">Versions, author, repository, update check and open-source notices</string>
+    <string name="about_summary">Android SMAPI launcher for a legally installed copy of Stardew Valley.</string>
+    <string name="about_versions_value">JunimoGate %1$s (%2$d)
+SMAPI API %3$s
+Implementation %4$s
+BuildCode %5$s
+BundleId %6$s
+Game %7$s</string>
+    <string name="about_game_not_installed">not installed</string>
+    <string name="about_author_value">Author: leontismaro</string>
+    <string name="about_license_status">JunimoGate’s project license has not been selected. Public distribution is also blocked until the bundled OpenAL corresponding-source requirements are resolved. Third-party components retain their own licenses.</string>
+    <string name="about_check_update">Check for updates</string>
+    <string name="about_repository">GitHub repository</string>
+    <string name="about_notices">Third-party notices</string>
+    <string name="about_read_failed">Version information could not be read.</string>
+    <string name="about_update_available_title">Update available</string>
+    <string name="about_update_available_message">%1$s is available. Open its GitHub release page?</string>
+    <string name="about_open_release">Open release</string>
+    <string name="about_up_to_date">This JunimoGate build is up to date with the latest stable release.</string>
+    <string name="about_no_stable_release">No stable JunimoGate release is published yet.</string>
+    <string name="about_update_failed">Could not check GitHub for updates.</string>
+    <string name="about_notices_failed">Third-party notices could not be opened.</string>
+    <string name="about_browser_unavailable">No browser is available to open this link.</string>
+
     <string name="environment_title">Game &amp; runtime</string>
     <string name="environment_settings_summary">Installed game, SMAPI version and bundled runtime details</string>
     <string name="environment_loading">Reading installed package information…</string>

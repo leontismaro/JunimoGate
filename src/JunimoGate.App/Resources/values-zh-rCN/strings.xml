@@ -202,6 +202,31 @@
     <string name="settings_cache_cleanup_blocked">请先关闭正在运行的游戏，再清理缓存。</string>
     <string name="settings_cache_cleanup_failed">无法清理可重建缓存。</string>
 
+    <string name="about_title">关于</string>
+    <string name="about_settings_summary">版本、作者、仓库、更新检查与开源声明</string>
+    <string name="about_summary">为用户合法安装的星露谷物语提供 Android SMAPI 启动能力。</string>
+    <string name="about_versions_value">JunimoGate %1$s（%2$d）
+SMAPI API %3$s
+实现版本 %4$s
+BuildCode %5$s
+BundleId %6$s
+游戏 %7$s</string>
+    <string name="about_game_not_installed">未安装</string>
+    <string name="about_author_value">作者：leontismaro</string>
+    <string name="about_license_status">JunimoGate 项目许可证尚未确定。内置 OpenAL 的对应源码合规问题解决前，也不能公开分发。第三方组件继续适用各自许可证。</string>
+    <string name="about_check_update">检查更新</string>
+    <string name="about_repository">GitHub 仓库</string>
+    <string name="about_notices">第三方开源声明</string>
+    <string name="about_read_failed">无法读取版本信息。</string>
+    <string name="about_update_available_title">发现新版本</string>
+    <string name="about_update_available_message">%1$s 已发布，是否打开 GitHub Release 页面？</string>
+    <string name="about_open_release">打开发布页</string>
+    <string name="about_up_to_date">当前 JunimoGate 已不低于最新稳定版。</string>
+    <string name="about_no_stable_release">JunimoGate 尚未发布稳定版本。</string>
+    <string name="about_update_failed">无法通过 GitHub 检查更新。</string>
+    <string name="about_notices_failed">无法打开第三方声明。</string>
+    <string name="about_browser_unavailable">没有可用于打开链接的浏览器。</string>
+
     <string name="environment_title">游戏与运行环境</string>
     <string name="environment_settings_summary">已安装游戏、SMAPI 版本和内置运行时详情</string>
     <string name="environment_loading">正在读取已安装包信息…</string>

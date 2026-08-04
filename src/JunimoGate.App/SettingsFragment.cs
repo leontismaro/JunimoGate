@@ -27,6 +27,7 @@ public sealed class SettingsFragment : Fragment
     private bool syncing;
     private View? environmentCard;
     private View? saveBackupsCard;
+    private View? aboutCard;
     private SwitchCompat? addImportedMods;
     private SwitchCompat? confirmDeletion;
     private LauncherSettingsRepository? settingsRepository;
@@ -67,6 +68,8 @@ public sealed class SettingsFragment : Fragment
         environmentCard!.Click += OnEnvironmentClicked;
         saveBackupsCard = view.FindViewById(Resource.Id.settings_save_backups_card);
         saveBackupsCard!.Click += OnSaveBackupsClicked;
+        aboutCard = view.FindViewById(Resource.Id.settings_about_card);
+        aboutCard!.Click += OnAboutClicked;
         addImportedMods = view.FindViewById<SwitchCompat>(Resource.Id.settings_add_imported_mods)
             ?? throw new InvalidOperationException("The imported Mod setting is unavailable.");
         confirmDeletion = view.FindViewById<SwitchCompat>(Resource.Id.settings_confirm_mod_deletion)
@@ -118,6 +121,8 @@ public sealed class SettingsFragment : Fragment
             environmentCard.Click -= OnEnvironmentClicked;
         if (saveBackupsCard is not null)
             saveBackupsCard.Click -= OnSaveBackupsClicked;
+        if (aboutCard is not null)
+            aboutCard.Click -= OnAboutClicked;
         if (addImportedMods is not null)
             addImportedMods.CheckedChange -= OnAddImportedModsChanged;
         if (confirmDeletion is not null)
@@ -130,6 +135,7 @@ public sealed class SettingsFragment : Fragment
         language = null;
         environmentCard = null;
         saveBackupsCard = null;
+        aboutCard = null;
         addImportedMods = null;
         confirmDeletion = null;
         repairButton = null;
@@ -171,6 +177,8 @@ public sealed class SettingsFragment : Fragment
     private void OnEnvironmentClicked(object? sender, EventArgs eventArgs) => host?.OpenEnvironment();
 
     private void OnSaveBackupsClicked(object? sender, EventArgs eventArgs) => host?.OpenSaveBackups();
+
+    private void OnAboutClicked(object? sender, EventArgs eventArgs) => host?.OpenAbout();
 
     private void OnAddImportedModsChanged(object? sender, CompoundButton.CheckedChangeEventArgs eventArgs)
     {
