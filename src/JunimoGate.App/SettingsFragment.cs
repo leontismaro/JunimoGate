@@ -3,6 +3,7 @@ using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Fragment.App;
+using AndroidX.Navigation.Fragment;
 using Google.Android.Material.TextField;
 using JunimoGate.Mods;
 using Fragment = AndroidX.Fragment.App.Fragment;
@@ -15,6 +16,7 @@ public sealed class SettingsFragment : Fragment
     private ILauncherUiHost? host;
     private MaterialAutoCompleteTextView? bindingPolicy;
     private bool syncing;
+    private View? environmentCard;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_settings, container, false)
@@ -33,6 +35,8 @@ public sealed class SettingsFragment : Fragment
         };
         bindingPolicy.Adapter = new ArrayAdapter<string>(RequireContext(), global::Android.Resource.Layout.SimpleListItem1, labels);
         bindingPolicy.ItemClick += OnPolicyClicked;
+        environmentCard = view.FindViewById(Resource.Id.settings_environment_card);
+        environmentCard!.Click += OnEnvironmentClicked;
     }
 
     public override void OnStart()
@@ -56,7 +60,10 @@ public sealed class SettingsFragment : Fragment
     {
         if (bindingPolicy is not null)
             bindingPolicy.ItemClick -= OnPolicyClicked;
+        if (environmentCard is not null)
+            environmentCard.Click -= OnEnvironmentClicked;
         bindingPolicy = null;
+        environmentCard = null;
         base.OnDestroyView();
     }
 
@@ -90,4 +97,6 @@ public sealed class SettingsFragment : Fragment
             _ => throw new InvalidOperationException("The selected Mod dependency policy is invalid."),
         });
     }
+
+    private void OnEnvironmentClicked(object? sender, EventArgs eventArgs) => host?.OpenEnvironment();
 }

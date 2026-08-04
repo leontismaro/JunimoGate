@@ -6,6 +6,7 @@ using AndroidX.Fragment.App;
 using Google.Android.Material.Button;
 using Google.Android.Material.ProgressIndicator;
 using Fragment = AndroidX.Fragment.App.Fragment;
+using OperationCanceledException = System.OperationCanceledException;
 
 namespace JunimoGate.App;
 
@@ -16,6 +17,10 @@ public sealed class HomeFragment : Fragment
     private TextView? statusText;
     private LinearProgressIndicator? progress;
     private MaterialButton? launchButton;
+    private TextView? playTimeText;
+    private TextView? lastSaveText;
+    private TextView? modCountText;
+    private CancellationTokenSource? summaryCancellation;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_home, container, false)
@@ -27,6 +32,9 @@ public sealed class HomeFragment : Fragment
         statusText = view.FindViewById<TextView>(Resource.Id.home_status);
         progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.home_progress);
         launchButton = view.FindViewById<MaterialButton>(Resource.Id.home_launch_button);
+        playTimeText = view.FindViewById<TextView>(Resource.Id.home_play_time);
+        lastSaveText = view.FindViewById<TextView>(Resource.Id.home_last_save);
+        modCountText = view.FindViewById<TextView>(Resource.Id.home_mod_count);
         launchButton!.Click += OnLaunchClicked;
     }
 
@@ -37,6 +45,8 @@ public sealed class HomeFragment : Fragment
             ?? throw new InvalidOperationException("The Home screen requires a launcher host.");
         host.LauncherStateChanged += OnStateChanged;
         Render(host.CurrentState);
+        summaryCancellation = new CancellationTokenSource();
+        _ = LoadSummaryAsync(summaryCancellation.Token);
     }
 
     public override void OnStop()
@@ -44,6 +54,9 @@ public sealed class HomeFragment : Fragment
         if (host is not null)
             host.LauncherStateChanged -= OnStateChanged;
         host = null;
+        summaryCancellation?.Cancel();
+        summaryCancellation?.Dispose();
+        summaryCancellation = null;
         base.OnStop();
     }
 
@@ -54,12 +67,49 @@ public sealed class HomeFragment : Fragment
         statusText = null;
         progress = null;
         launchButton = null;
+        playTimeText = null;
+        lastSaveText = null;
+        modCountText = null;
         base.OnDestroyView();
     }
 
     private void OnLaunchClicked(object? sender, EventArgs eventArgs) => host?.RequestLaunch();
 
     private void OnStateChanged(LauncherState state) => Render(state);
+
+    private async Task LoadSummaryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var summary = await Task.Run(
+                () => new ProductInformationService(RequireContext()).ReadHomeSummary(),
+                cancellationToken);
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    if (playTimeText is not null)
+                        playTimeText.Text = $"{GetString(Resource.String.play_time_label)}\n—";
+                    if (lastSaveText is not null)
+                    {
+                        lastSaveText.Text = summary.LatestSaveTimeUtc is null
+                            ? $"{GetString(Resource.String.last_save_label)}\n—"
+                            : $"{GetString(Resource.String.last_save_label)}\n{summary.LatestSaveName}\n{summary.LatestSaveTimeUtc.Value.ToLocalTime():g}";
+                    }
+                    if (modCountText is not null)
+                        modCountText.Text = $"{GetString(Resource.String.enabled_mods_label)}\n{summary.EnabledModCount}";
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Leaving the screen cancels the low-cost summary refresh.
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            global::Android.Util.Log.Warn("JunimoGate.Home", $"summary-unavailable:{exception.GetType().Name}");
+        }
+    }
 
     private void Render(LauncherState state)
     {

@@ -23,4 +23,9 @@
         android:id="@+id/navigation_settings"
         android:name="org.junimogate.app.SettingsFragment"
         android:label="@string/nav_settings" />
+
+    <fragment
+        android:id="@+id/navigation_environment"
+        android:name="org.junimogate.app.EnvironmentFragment"
+        android:label="@string/environment_title" />
 </navigation>

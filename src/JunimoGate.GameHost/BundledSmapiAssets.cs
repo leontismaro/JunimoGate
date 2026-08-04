@@ -14,6 +14,8 @@ internal sealed record PreparedSmapiBundle(
     string InternalDirectory,
     IReadOnlyList<PreparedSmapiBundleFile> Files);
 
+internal sealed record PackagedSmapiBundleInfo(string BundleId, int FileCount);
+
 internal static class BundledSmapiAssets
 {
     private const string ManifestSchema = "junimogate-smapi-bundle/v2";
@@ -27,6 +29,13 @@ internal static class BundledSmapiAssets
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+
+    public static PackagedSmapiBundleInfo ReadPackagedInfo(Context context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var manifest = ReadPackagedManifest(context.ApplicationContext ?? context);
+        return new PackagedSmapiBundleInfo(manifest.BundleId, manifest.Files.Count);
+    }
 
     public static void DiscardCurrentBundle(Context context)
     {

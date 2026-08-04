@@ -13,6 +13,12 @@
     <string name="play_time_empty">Play time\n—</string>
     <string name="last_save_empty">Last save\n—</string>
     <string name="enabled_mods_empty">Enabled Mods\n—</string>
+    <string name="play_time_value">Play time\n%1$s</string>
+    <string name="last_save_value">Last save\n%1$s</string>
+    <string name="enabled_mods_value">Enabled Mods\n%1$d</string>
+    <string name="play_time_label">Play time</string>
+    <string name="last_save_label">Last save</string>
+    <string name="enabled_mods_label">Enabled Mods</string>
     <string name="mods_title">Mods</string>
     <string name="mods_empty">The global Mod library and groups will appear here.</string>
     <string name="logs_title">Logs</string>
@@ -24,4 +30,20 @@
     <string name="binding_first_loaded">First loaded</string>
     <string name="settings_more">More settings</string>
     <string name="settings_more_description">Game environment, saves, appearance, diagnostics and About will be added here.</string>
+    <string name="environment_title">Game &amp; runtime</string>
+    <string name="environment_settings_summary">Installed game, SMAPI version and bundled runtime details</string>
+    <string name="environment_loading">Reading installed package information…</string>
+    <string name="environment_app_version_value">JunimoGate %1$s</string>
+    <string name="environment_game_not_installed">%1$s\nNot installed\n%2$s</string>
+    <string name="environment_game_value">%1$s\nStardew Valley %2$s (%3$s)\n%4$s\n%5$s</string>
+    <string name="environment_status_supported">Ready for JunimoGate compatibility analysis</string>
+    <string name="environment_status_unsupported">Detected, but this store build is not supported yet</string>
+    <string name="environment_status_unrecognized">Signing identity is not recognized</string>
+    <string name="environment_smapi_value">SMAPI %1$s\nImplementation: %2$s\nBuild: %3$s\nBundle: %4$s (%5$d files)\nSMAPI updates together with JunimoGate.</string>
+    <string name="environment_refresh">Refresh</string>
+    <string name="environment_read_failed">Package information could not be read.</string>
+    <string name="environment_build_label">Build</string>
+    <string name="environment_files_label">files</string>
+    <string name="environment_smapi_updates_with_app">SMAPI updates together with JunimoGate.</string>
+    <string name="environment_not_installed_label">Not installed</string>
 </resources>

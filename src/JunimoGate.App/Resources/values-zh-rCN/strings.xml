@@ -13,6 +13,12 @@
     <string name="play_time_empty">游玩时长\n—</string>
     <string name="last_save_empty">最近存档\n—</string>
     <string name="enabled_mods_empty">启用 Mod\n—</string>
+    <string name="play_time_value">游玩时长\n%1$s</string>
+    <string name="last_save_value">最近存档\n%1$s</string>
+    <string name="enabled_mods_value">启用 Mod\n%1$d</string>
+    <string name="play_time_label">游玩时长</string>
+    <string name="last_save_label">最近存档</string>
+    <string name="enabled_mods_label">启用 Mod</string>
     <string name="mods_title">Mod</string>
     <string name="mods_empty">全局 Mod 库与分组将在这里显示。</string>
     <string name="logs_title">日志</string>
@@ -24,4 +30,20 @@
     <string name="binding_first_loaded">首个加载版本</string>
     <string name="settings_more">更多设置</string>
     <string name="settings_more_description">游戏环境、存档、外观、诊断和关于信息将在这里提供。</string>
+    <string name="environment_title">游戏与运行环境</string>
+    <string name="environment_settings_summary">已安装游戏、SMAPI 版本和内置运行时详情</string>
+    <string name="environment_loading">正在读取已安装包信息…</string>
+    <string name="environment_app_version_value">JunimoGate %1$s</string>
+    <string name="environment_game_not_installed">%1$s\n未安装\n%2$s</string>
+    <string name="environment_game_value">%1$s\n星露谷物语 %2$s（%3$s）\n%4$s\n%5$s</string>
+    <string name="environment_status_supported">可进入 JunimoGate 语义兼容分析</string>
+    <string name="environment_status_unsupported">已检测，但暂不支持该商店版本</string>
+    <string name="environment_status_unrecognized">无法识别游戏签名身份</string>
+    <string name="environment_smapi_value">SMAPI %1$s\n实现版本：%2$s\n构建：%3$s\nBundle：%4$s（%5$d 个文件）\nSMAPI 随 JunimoGate 一起更新。</string>
+    <string name="environment_refresh">重新检测</string>
+    <string name="environment_read_failed">无法读取已安装包信息。</string>
+    <string name="environment_build_label">构建</string>
+    <string name="environment_files_label">个文件</string>
+    <string name="environment_smapi_updates_with_app">SMAPI 随 JunimoGate 一起更新。</string>
+    <string name="environment_not_installed_label">未安装</string>
 </resources>

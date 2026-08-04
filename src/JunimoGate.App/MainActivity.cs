@@ -4,6 +4,7 @@ using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using AndroidX.AppCompat.App;
+using AndroidX.Navigation;
 using AndroidX.Navigation.Fragment;
 using AndroidX.Navigation.UI;
 using Google.Android.Material.BottomNavigation;
@@ -25,6 +26,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 {
     private CancellationTokenSource? lifetimeCancellation;
     private LauncherCoordinator? coordinator;
+    private NavController? navigation;
     private LauncherState currentState = new(
         LauncherStatus.Checking,
         "Checking the installed game…",
@@ -58,7 +60,8 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
             ?? throw new InvalidOperationException("The launcher navigation host is unavailable.");
         var bottomNavigation = FindViewById<BottomNavigationView>(Resource.Id.bottom_navigation)
             ?? throw new InvalidOperationException("The launcher bottom navigation is unavailable.");
-        NavigationUI.SetupWithNavController(bottomNavigation, navHost.NavController);
+        navigation = navHost.NavController;
+        NavigationUI.SetupWithNavController(bottomNavigation, navigation);
 
         lifetimeCancellation = new CancellationTokenSource();
         coordinator = new LauncherCoordinator(ApplicationContext ?? this);
@@ -91,6 +94,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
             $"activity-destroyed finishing={(IsFinishing ? 1 : 0)} changingConfiguration={(IsChangingConfigurations ? 1 : 0)}");
         destroyed = true;
         launcherStateChanged = null;
+        navigation = null;
         if (coordinator is not null)
         {
             coordinator.StateChanged -= OnLauncherStateChanged;
@@ -112,6 +116,8 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 
     void ILauncherUiHost.UpdateBindingPolicy(ModAssemblyBindingPolicy policy) =>
         _ = UpdateBindingPolicyAsync(policy);
+
+    void ILauncherUiHost.OpenEnvironment() => OpenEnvironment();
 
     private async Task LaunchAsync()
     {
@@ -208,7 +214,16 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
                 return;
             currentState = state;
             launcherStateChanged?.Invoke(state);
+            if (state.Status is LauncherStatus.GameNotInstalled or LauncherStatus.Unsupported)
+                OpenEnvironment();
         });
+    }
+
+    private void OpenEnvironment()
+    {
+        if (destroyed || navigation?.CurrentDestination?.Id == Resource.Id.navigation_environment)
+            return;
+        navigation?.Navigate(Resource.Id.navigation_environment);
     }
 
     private bool TryRouteToActiveGame()
@@ -231,4 +246,6 @@ internal interface ILauncherUiHost
     void RequestLaunch();
 
     void UpdateBindingPolicy(ModAssemblyBindingPolicy policy);
+
+    void OpenEnvironment();
 }
