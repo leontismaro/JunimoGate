@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -347,7 +346,7 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
                 throw new InvalidDataException("The Mod archive extraction path escaped staging.");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
-            AppendPathHeader(contentHash, safeRelative.Value, entry.Length);
+            ModImportUtilities.AppendPathHeader(contentHash, safeRelative.Value, entry.Length);
             await using var source = entry.Open();
             await using var output = new FileStream(
                 destination,
@@ -418,64 +417,7 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
         await stream.CopyToAsync(memory, cancellationToken).ConfigureAwait(false);
         if (memory.Length != entry.Length || memory.Length > limits.MaximumManifestBytes)
             throw new InvalidDataException("The Mod manifest length changed while reading.");
-        try
-        {
-            var manifestBytes = memory.ToArray().AsMemory();
-            if (manifestBytes.Span.StartsWith(Encoding.UTF8.Preamble))
-                manifestBytes = manifestBytes[Encoding.UTF8.Preamble.Length..];
-            using var document = JsonDocument.Parse(
-                manifestBytes,
-                new JsonDocumentOptions
-                {
-                    AllowTrailingCommas = true,
-                    CommentHandling = JsonCommentHandling.Skip,
-                });
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                throw new InvalidDataException("The Mod manifest must be a JSON object.");
-            var name = ReadRequiredString(root, "Name");
-            var author = ReadRequiredString(root, "Author");
-            var version = ReadRequiredString(root, "Version");
-            var uniqueId = ReadRequiredString(root, "UniqueID");
-            var description = ReadOptionalString(root, "Description");
-            var entryDll = ReadOptionalString(root, "EntryDll");
-            string? contentPackFor = null;
-            if (TryGetProperty(root, "ContentPackFor", out var contentPack) && contentPack.ValueKind != JsonValueKind.Null)
-            {
-                if (contentPack.ValueKind != JsonValueKind.Object)
-                    throw new InvalidDataException("ContentPackFor must be an object.");
-                contentPackFor = ReadRequiredString(contentPack, "UniqueID");
-            }
-
-            var dependencies = new List<ModDependencySummary>();
-            if (TryGetProperty(root, "Dependencies", out var dependencyArray) && dependencyArray.ValueKind != JsonValueKind.Null)
-            {
-                if (dependencyArray.ValueKind != JsonValueKind.Array)
-                    throw new InvalidDataException("Dependencies must be an array.");
-                foreach (var dependency in dependencyArray.EnumerateArray())
-                {
-                    if (dependency.ValueKind != JsonValueKind.Object)
-                        throw new InvalidDataException("Each dependency must be an object.");
-                    dependencies.Add(new ModDependencySummary(
-                        ReadRequiredString(dependency, "UniqueID"),
-                        ReadOptionalBoolean(dependency, "IsRequired") ?? true,
-                        ReadOptionalString(dependency, "MinimumVersion")));
-                }
-            }
-            return new ModManifestSummary(
-                name,
-                author,
-                version,
-                uniqueId,
-                description,
-                entryDll,
-                contentPackFor,
-                dependencies);
-        }
-        catch (JsonException exception)
-        {
-            throw new InvalidDataException("The Mod manifest JSON is malformed.", exception);
-        }
+        return ModImportUtilities.ParseManifest(memory.ToArray());
     }
 
     private static IReadOnlyDictionary<string, ZipArchiveEntry> BuildEntryMap(ZipArchive archive)
@@ -489,56 +431,6 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
                 throw new InvalidDataException("The Mod archive contains duplicate normalized paths.");
         }
         return entries;
-    }
-
-    private static void AppendPathHeader(IncrementalHash hash, string path, long length)
-    {
-        var pathBytes = Encoding.UTF8.GetBytes(path);
-        Span<byte> header = stackalloc byte[12];
-        BinaryPrimitives.WriteInt32BigEndian(header[..4], pathBytes.Length);
-        BinaryPrimitives.WriteInt64BigEndian(header[4..], length);
-        hash.AppendData(header);
-        hash.AppendData(pathBytes);
-    }
-
-    private static string ReadRequiredString(JsonElement element, string name) =>
-        ReadOptionalString(element, name) is { } value
-            ? value
-            : throw new InvalidDataException($"The Mod manifest is missing {name}.");
-
-    private static string? ReadOptionalString(JsonElement element, string name)
-    {
-        if (!TryGetProperty(element, name, out var value) || value.ValueKind == JsonValueKind.Null)
-            return null;
-        if (value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
-            throw new InvalidDataException($"The Mod manifest field {name} must be a non-empty string.");
-        var result = value.GetString()!.Trim();
-        if (result.Length > 4096)
-            throw new InvalidDataException($"The Mod manifest field {name} is too long.");
-        return result;
-    }
-
-    private static bool? ReadOptionalBoolean(JsonElement element, string name)
-    {
-        if (!TryGetProperty(element, name, out var value) || value.ValueKind == JsonValueKind.Null)
-            return null;
-        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-            throw new InvalidDataException($"The Mod manifest field {name} must be a boolean.");
-        return value.GetBoolean();
-    }
-
-    private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
-    {
-        foreach (var property in element.EnumerateObject())
-        {
-            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
-            {
-                value = property.Value;
-                return true;
-            }
-        }
-        value = default;
-        return false;
     }
 
     private static bool IsDirectory(ZipArchiveEntry entry) =>
@@ -569,11 +461,7 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
     private static string GetRelativePath(string root, string path) =>
         root.Length == 0 ? path : path[(root.Length + 1)..];
 
-    private static bool IsContained(string root, string path)
-    {
-        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        return path.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
-    }
+    private static bool IsContained(string root, string path) => ModImportUtilities.IsContained(root, path);
 
     private static string? NormalizeArchiveName(string? value)
     {

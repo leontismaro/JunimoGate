@@ -96,6 +96,12 @@ return TestHarness.Run(
         ModProfileV2Tests.UpdatesMembersAtomically()),
     ("Profile v2 repository rejects duplicate members and deletes exactly", () =>
         ModProfileV2Tests.RejectsDuplicateMembersAndDeletesExactly()),
+    ("Profile v2 migration preserves the legacy fallback", () =>
+        ModProfileV2Tests.MigratesLegacyDirectoriesWithoutRemovingFallback()),
+    ("Profile v2 migration rejects ambiguous enabled Mods", () =>
+        ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
+    ("Active Profile selection uses revision-checked updates", () =>
+        ModProfileV2Tests.PersistsActiveProfileWithRevisionChecks()),
     ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
         ModLibraryTests.DiscoversMultipleNestedMods()),
     ("Mod archive scanner accepts repeated directory entries", () =>

@@ -267,6 +267,36 @@ public sealed class ModProfileV2Repository
         }
     }
 
+    internal async ValueTask<ModProfileV2> WriteMigratedAsync(
+        ModProfileV2 profile,
+        CancellationToken cancellationToken)
+    {
+        var profileId = profile.Validate();
+        if (profileId.Value == ModProfileV2.NoModsId)
+            throw new InvalidOperationException("The reserved no-Mod Profile is not a migration target.");
+
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Directory.CreateDirectory(profilesRoot);
+            await EnsureNoModsUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var path = GetProfilePath(profileId);
+            if (!File.Exists(path))
+                throw new FileNotFoundException("The legacy Mod Profile does not exist.", path);
+            var existing = await TryReadV2UnlockedAsync(profileId, cancellationToken).ConfigureAwait(false);
+            if (existing is not null)
+                return existing;
+            await WriteAtomicAsync(path, profile, overwrite: true, cancellationToken).ConfigureAwait(false);
+            return profile;
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
+    internal static JsonSerializerOptions SerializerOptions => JsonOptions;
+
     private async ValueTask<ModProfileV2> EnsureNoModsUnlockedAsync(CancellationToken cancellationToken)
     {
         var profileId = ProfileId.Parse(ModProfileV2.NoModsId);

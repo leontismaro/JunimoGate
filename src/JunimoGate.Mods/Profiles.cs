@@ -167,28 +167,32 @@ public sealed class ModProfileRepository
         if (file.Length is < 1 or > MaximumProfileBytes)
             throw new InvalidDataException("The Mod Profile has an invalid size.");
 
-        await using var stream = new FileStream(
-            layout.ProfileJsonPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            16 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        ModProfile profile;
+        var bytes = await File.ReadAllBytesAsync(layout.ProfileJsonPath, cancellationToken).ConfigureAwait(false);
         try
         {
-            profile = await JsonSerializer.DeserializeAsync<ModProfile>(stream, JsonOptions, cancellationToken)
-                .ConfigureAwait(false) ?? throw new InvalidDataException("The Mod Profile is empty.");
+            using var document = JsonDocument.Parse(bytes);
+            if (!document.RootElement.TryGetProperty("schema", out var schema))
+                throw new InvalidDataException("The Mod Profile schema is missing.");
+            if (schema.GetString() == ModProfileV2.CurrentSchema)
+            {
+                var v2 = JsonSerializer.Deserialize<ModProfileV2>(bytes, ModProfileV2Repository.SerializerOptions)
+                    ?? throw new InvalidDataException("The Mod Profile is empty.");
+                var actualV2Id = v2.Validate();
+                if (actualV2Id != profileId)
+                    throw new InvalidDataException("The Mod Profile ID does not match its directory.");
+                return ProjectLegacyView(v2);
+            }
+            var profile = JsonSerializer.Deserialize<ModProfile>(bytes, JsonOptions)
+                ?? throw new InvalidDataException("The Mod Profile is empty.");
+            var actualId = profile.Validate();
+            if (actualId != profileId)
+                throw new InvalidDataException("The Mod Profile ID does not match its directory.");
+            return profile;
         }
         catch (JsonException exception)
         {
             throw new InvalidDataException("The Mod Profile JSON is malformed.", exception);
         }
-
-        var actualId = profile.Validate();
-        if (actualId != profileId)
-            throw new InvalidDataException("The Mod Profile ID does not match its directory.");
-        return profile;
     }
 
     public async ValueTask<ModProfile> UpdateBindingPolicyAsync(
@@ -205,16 +209,44 @@ public sealed class ModProfileRepository
         if (current.AssemblyBindingPolicy == policy)
             return current;
 
+        var layout = new ProfileLayout(profilesRoot, profileId);
+        var bytes = await File.ReadAllBytesAsync(layout.ProfileJsonPath, cancellationToken).ConfigureAwait(false);
+        using (var document = JsonDocument.Parse(bytes))
+        {
+            if (document.RootElement.TryGetProperty("schema", out var schema) &&
+                schema.GetString() == ModProfileV2.CurrentSchema)
+            {
+                var v2Repository = new ModProfileV2Repository(profilesRoot);
+                var v2 = await v2Repository.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
+                var updatedV2 = await v2Repository.UpdateAsync(
+                        profileId,
+                        expectedRevision,
+                        v2.DisplayName,
+                        v2.Description,
+                        policy,
+                        v2.Members,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                return ProjectLegacyView(updatedV2);
+            }
+        }
+
         var updated = current with
         {
             Revision = checked(current.Revision + 1),
             AssemblyBindingPolicy = policy,
             UpdatedAtUtc = DateTimeOffset.UtcNow,
         };
-        var path = new ProfileLayout(profilesRoot, profileId).ProfileJsonPath;
-        await WriteAtomicAsync(path, updated, overwrite: true, cancellationToken).ConfigureAwait(false);
+        await WriteAtomicAsync(layout.ProfileJsonPath, updated, overwrite: true, cancellationToken).ConfigureAwait(false);
         return updated;
     }
+
+    private static ModProfile ProjectLegacyView(ModProfileV2 profile) => new(
+        ModProfile.CurrentSchema,
+        profile.Id,
+        profile.Revision,
+        profile.AssemblyBindingPolicyOverride ?? ModAssemblyBindingPolicy.HighestCompatible,
+        profile.UpdatedAtUtc);
 
     private static void EnsureDirectories(ProfileLayout layout)
     {
