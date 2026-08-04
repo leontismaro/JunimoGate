@@ -102,6 +102,12 @@ return TestHarness.Run(
         ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
     ("Active Profile selection uses revision-checked updates", () =>
         ModProfileV2Tests.PersistsActiveProfileWithRevisionChecks()),
+    ("Mod launch selection freezes enabled library items", () =>
+        ModLaunchSelectionTests.FreezesOnlyEnabledLibraryItems()),
+    ("Mod launch selection rejects missing enabled members", () =>
+        ModLaunchSelectionTests.RejectsMissingEnabledMembers()),
+    ("Mod launch selection resolves contained existing roots", () =>
+        ModLaunchSelectionTests.ResolvesOnlyContainedExistingRoots()),
     ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
         ModLibraryTests.DiscoversMultipleNestedMods()),
     ("Mod archive scanner accepts repeated directory entries", () =>
