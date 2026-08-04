@@ -150,9 +150,7 @@ return TestHarness.Run(
     ("GameHost rejects unsupported snapshot schemas", () =>
         GameLaunchSchemaTests.RejectsUnknownSnapshotSchemas()),
     ("GameHost snapshots omit the SMAPI bundle identity", () =>
-        GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()),
-    ("GameHost separates runtime and SMAPI bundle identities", () =>
-        GameLaunchSchemaTests.SeparatesRuntimeAndBundleIdentity()));
+        GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

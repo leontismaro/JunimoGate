@@ -16,14 +16,6 @@ public static class GameLaunchSchema
 
 public static class GameHostRuntimeIdentity
 {
-    /// <summary>Identifies SMAPI host behavior and partitions runtime rewrite/load caches.</summary>
+    /// <summary>Human-readable SMAPI Android implementation label used in logs and backups.</summary>
     public const string BuildId = SMAPIAndroidBuild.BuildCode;
-
-    /// <summary>
-    /// Identifies the complete embedded SMAPI asset set. Increment the revision when a bundled
-    /// dependency changes without a corresponding SMAPI <see cref="BuildId"/> change.
-    /// </summary>
-    public const int SmapiBundleRevision = 1;
-
-    public static string SmapiBundleId { get; } = $"{BuildId}-bundle.{SmapiBundleRevision}";
 }

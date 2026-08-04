@@ -198,6 +198,85 @@ def read_elf64_aarch64_section(image: bytes, section_name: str) -> bytes:
     raise RuntimeError(f"Managed provider ELF does not contain the required {section_name!r} section.")
 
 
+def verify_smapi_bundle_manifest(archive: zipfile.ZipFile) -> dict[str, object]:
+    manifest_path = "assets/smapi-bundle-manifest.json"
+    try:
+        manifest = json.loads(archive.read(manifest_path))
+    except KeyError as exception:
+        raise RuntimeError("The APK does not contain the generated SMAPI bundle manifest.") from exception
+    if not isinstance(manifest, dict) or set(manifest) != {"schema", "bundleId", "contentSha256", "files"}:
+        raise RuntimeError("The generated SMAPI bundle manifest shape is invalid.")
+    if manifest["schema"] != "junimogate-smapi-bundle/v2":
+        raise RuntimeError("The generated SMAPI bundle manifest schema is invalid.")
+    content_sha256 = manifest["contentSha256"]
+    bundle_id = manifest["bundleId"]
+    if not isinstance(content_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", content_sha256) is None:
+        raise RuntimeError("The generated SMAPI bundle content digest is invalid.")
+    if bundle_id != f"smapi-bundle-{content_sha256[:24]}":
+        raise RuntimeError("The generated SMAPI bundle ID does not match its content digest.")
+    files = manifest["files"]
+    if not isinstance(files, list) or not files or len(files) > 256:
+        raise RuntimeError("The generated SMAPI bundle file list is invalid.")
+
+    archive_names = set(archive.namelist())
+    asset_paths: set[str] = set()
+    relative_paths: set[str] = set()
+    previous_asset_path: str | None = None
+    for index, entry in enumerate(files):
+        if not isinstance(entry, dict) or set(entry) != {"assetPath", "relativePath", "size", "sha256"}:
+            raise RuntimeError(f"SMAPI bundle entry {index} has an invalid shape.")
+        asset_path = entry["assetPath"]
+        relative_path = entry["relativePath"]
+        size = entry["size"]
+        file_sha256 = entry["sha256"]
+        if (
+            not isinstance(asset_path, str)
+            or not isinstance(relative_path, str)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size <= 0
+            or not isinstance(file_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", file_sha256) is None
+            or pathlib.PurePosixPath(asset_path).is_absolute()
+            or pathlib.PurePosixPath(relative_path).is_absolute()
+            or any(part in {"", ".", ".."} for part in pathlib.PurePosixPath(asset_path).parts)
+            or any(part in {"", ".", ".."} for part in pathlib.PurePosixPath(relative_path).parts)
+            or "\\" in asset_path
+            or "\\" in relative_path
+            or asset_path.casefold() in asset_paths
+            or relative_path.casefold() in relative_paths
+            or previous_asset_path is not None
+            and previous_asset_path >= asset_path
+        ):
+            raise RuntimeError(f"SMAPI bundle entry {index} is invalid.")
+        archive_path = f"assets/{asset_path}"
+        if archive_path not in archive_names:
+            raise RuntimeError(f"SMAPI bundle asset is missing from the APK: {archive_path}")
+        payload = archive.read(archive_path)
+        if len(payload) != size or hashlib.sha256(payload).hexdigest() != file_sha256:
+            raise RuntimeError(f"SMAPI bundle asset does not match its manifest: {archive_path}")
+        asset_paths.add(asset_path.casefold())
+        relative_paths.add(relative_path.casefold())
+        previous_asset_path = asset_path
+
+    identity_payload = json.dumps(
+        {"schema": manifest["schema"], "files": files},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if hashlib.sha256(identity_payload).hexdigest() != content_sha256:
+        raise RuntimeError("The generated SMAPI bundle content digest is incorrect.")
+    packaged_assets = {
+        name.removeprefix("assets/")
+        for name in archive_names
+        if name.startswith("assets/smapi-managed/") or name.startswith("assets/smapi-internal/")
+    }
+    if packaged_assets != {entry["assetPath"] for entry in files}:
+        raise RuntimeError("The generated SMAPI bundle manifest does not cover the exact packaged asset set.")
+    return {"bundleId": bundle_id, "contentSha256": content_sha256, "fileCount": len(files)}
+
+
 def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.Path, expected: ExpectedArtifact) -> dict[str, object]:
     path = root / expected.relative_path
     if not path.is_file():
@@ -236,6 +315,7 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
 
     with zipfile.ZipFile(path) as archive:
         archive_names = archive.namelist()
+        smapi_bundle = verify_smapi_bundle_manifest(archive) if expected.require_smapi_host else None
         native_entries = [
             entry
             for entry in archive.infolist()
@@ -361,6 +441,7 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             and smapi_cecil_assets.issubset(archive_names)
             and smapi_internal_assets.issubset(archive_names)
             and legacy_smapi_toolkit_payloads.isdisjoint(archive_names)
+            and smapi_bundle is not None
         )
 
     smapi_activity = manifest.activities.get("org.junimogate.gamehost.SmapiGameActivity")
@@ -448,6 +529,7 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             "required": expected.require_smapi_host,
             "payloadComplete": smapi_payload_complete,
             "activity": smapi_activity,
+            "bundle": smapi_bundle,
         },
         "manifest": {
             "queryPackages": manifest.query_packages,

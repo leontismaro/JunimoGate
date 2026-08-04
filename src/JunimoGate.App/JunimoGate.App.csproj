@@ -41,50 +41,6 @@
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
     <ProjectReference Include="../JunimoGate.GameHost/JunimoGate.GameHost.csproj" />
-    <AndroidAsset Include="../../smapi/src/SMAPI/bin/$(Configuration)/net9.0-android35.0/StardewModdingAPI.dll"
-                  Link="smapi-managed/StardewModdingAPI.dll" />
-    <AndroidAsset Include="../../smapi/src/SMAPI.Toolkit/bin/$(Configuration)/net9.0/SMAPI.Toolkit.dll"
-                  Link="smapi-managed/SMAPI.Toolkit.dll" />
-    <AndroidAsset Include="../../smapi/src/SMAPI.Toolkit.CoreInterfaces/bin/$(Configuration)/net9.0/SMAPI.Toolkit.CoreInterfaces.dll"
-                  Link="smapi-managed/SMAPI.Toolkit.CoreInterfaces.dll" />
-    <AndroidAsset Include="$(PkgDeepCloner)/lib/netstandard1.3/DeepCloner.dll"
-                  Link="smapi-managed/DeepCloner.dll" />
-    <AndroidAsset Include="$(PkgHtmlAgilityPack)/lib/net8.0/HtmlAgilityPack.dll"
-                  Link="smapi-managed/HtmlAgilityPack.dll" />
-    <AndroidAsset Include="$(PkgLib_Harmony)/lib/net9.0/0Harmony.dll"
-                  Link="smapi-managed/0Harmony.dll" />
-    <AndroidAsset Include="$(PkgMarkdig)/lib/net9.0/Markdig.dll"
-                  Link="smapi-managed/Markdig.dll" />
-    <AndroidAsset Include="$(PkgMono_Cecil)/lib/netstandard2.0/Mono.Cecil.dll"
-                  Link="smapi-managed/Mono.Cecil.dll" />
-    <AndroidAsset Include="$(PkgMono_Cecil)/lib/netstandard2.0/Mono.Cecil.Mdb.dll"
-                  Link="smapi-managed/Mono.Cecil.Mdb.dll" />
-    <AndroidAsset Include="$(PkgMono_Cecil)/lib/netstandard2.0/Mono.Cecil.Pdb.dll"
-                  Link="smapi-managed/Mono.Cecil.Pdb.dll" />
-    <AndroidAsset Include="$(PkgMono_Cecil)/lib/netstandard2.0/Mono.Cecil.Rocks.dll"
-                  Link="smapi-managed/Mono.Cecil.Rocks.dll" />
-    <AndroidAsset Include="$(PkgMicrosoft_Extensions_DependencyInjection_Abstractions)/lib/net7.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll"
-                  Link="smapi-managed/Microsoft.Extensions.DependencyInjection.Abstractions.dll" />
-    <AndroidAsset Include="$(PkgNVorbis)/lib/netstandard2.0/NVorbis.dll"
-                  Link="smapi-managed/NVorbis.dll" />
-    <AndroidAsset Include="$(PkgNewtonsoft_Json)/lib/net6.0/Newtonsoft.Json.dll"
-                  Link="smapi-managed/Newtonsoft.Json.dll" />
-    <AndroidAsset Include="$(PkgNewtonsoft_Json_Bson)/lib/netstandard2.0/Newtonsoft.Json.Bson.dll"
-                  Link="smapi-managed/Newtonsoft.Json.Bson.dll" />
-    <AndroidAsset Include="$(PkgPathoschild_Http_FluentClient)/lib/net5.0/Pathoschild.Http.Client.dll"
-                  Link="smapi-managed/Pathoschild.Http.Client.dll" />
-    <AndroidAsset Include="$(PkgPintail)/lib/net6.0/Pintail.dll"
-                  Link="smapi-managed/Pintail.dll" />
-    <AndroidAsset Include="$(PkgPlatonymous_TMXTile)/lib/net45/TMXTile.dll"
-                  Link="smapi-managed/TMXTile.dll" />
-    <AndroidAsset Include="$(PkgMicrosoft_AspNet_WebApi_Client)/lib/netstandard2.0/System.Net.Http.Formatting.dll"
-                  Link="smapi-managed/System.Net.Http.Formatting.dll" />
-    <AndroidAsset Include="$(PkgSkiaSharp)/lib/net9.0-android35.0/SkiaSharp.dll"
-                  Link="smapi-managed/SkiaSharp.dll" />
-    <AndroidAsset Include="$(PkgStbImageWriteSharp)/lib/netstandard2.0/StbImageWriteSharp.dll"
-                  Link="smapi-managed/StbImageWriteSharp.dll" />
-    <AndroidAsset Include="$(PkgTextCopy)/lib/net6.0/TextCopy.dll"
-                  Link="smapi-managed/TextCopy.dll" />
     <TrimmerRootDescriptor Include="linker.xml"
                            Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' == 'true'" />
   </ItemGroup>
@@ -119,5 +75,6 @@
     <Error Condition="'$(Configuration)' == 'Release' and '$(PublishTrimmed)' != 'false'"
            Text="JunimoGate App Release must remain untrimmed while dynamically loaded game assemblies have no complete trimmer dependency descriptor." />
   </Target>
+  <Import Project="../../build/JunimoGate.SmapiBundle.targets" />
   <Import Project="../../build/JunimoGate.MonoRuntime.targets" />
 </Project>

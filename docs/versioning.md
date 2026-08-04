@@ -8,18 +8,26 @@ Changing one must not force unrelated game extraction or workspace rewriting.
 | --- | --- | --- | --- |
 | Android app version | `JunimoGate.App.csproj` | Android install/upgrade ordering and user-visible version | publishing a new APK |
 | SMAPI API version | `smapi/src/SMAPI/SMAPI.csproj` | Mod API compatibility | adopting a new upstream SMAPI API |
-| SMAPI `BuildCode` | `SMAPIAndroidBuild.cs` | JunimoGate SMAPI implementation and runtime rewrite/load cache partition | SMAPI Android behavior or rewrite logic changes |
-| SMAPI `BundleId` | `GameHostRuntimeIdentity.SmapiBundleId` | immutable APK asset set under `smapi-managed` and `smapi-internal` | any bundled file changes without a new `BuildCode` |
+| SMAPI `BuildCode` | `SMAPIAndroidBuild.cs` | human-readable JunimoGate SMAPI implementation label used in logs and backups | when a release needs a new diagnostic label |
+| SMAPI `BundleId` | generated `smapi-bundle-manifest.json` | immutable APK asset set under `smapi-managed` and `smapi-internal` | generated automatically whenever any bundled file changes |
 | Schema/recipe version | owning contract type | persisted JSON or rewrite semantics | the corresponding persisted shape or interpretation changes |
 
 `BuildCode` and `BundleId` are intentionally not stored in the prepared game snapshot. A pure
 SMAPI or Harmony update deploys a new bundle and keeps the already prepared game workspace. A
 game package update or a game-workspace schema/recipe change enters Deep Prepare once.
 
-The current bundle identity is the SMAPI `BuildCode` plus a small bundle revision. A SMAPI code
-change therefore invalidates the bundle automatically. When only Harmony or another embedded
-dependency changes, increment `SmapiBundleRevision`; do not rename the SMAPI build or the game
-workspace schema to force invalidation.
+`build/JunimoGate.SmapiBundle.targets` owns the complete bundle input list. Immediately before
+Android asset collection, it invokes `generate-smapi-bundle-manifest.py`, which hashes the final
+SMAPI, Harmony, Cecil, configuration, and translation payloads and derives `BundleId` from their
+canonical content manifest. Identical content keeps the same identity; any content change produces
+a new identity without a manually maintained revision. The runtime reads the packaged manifest,
+uses its identity as the private deployment-directory key, and does not re-hash bundle files on the
+Fast Launch path.
+
+The generated `BundleId`, rather than `BuildCode`, partitions the assembly materialization and Mod
+rewrite caches. SMAPI code or dependency changes therefore invalidate those caches automatically.
+`BuildCode` is no longer a correctness key and does not need to change during every development
+iteration.
 
 Generated Harmony and MonoGame packages live in the ignored local NuGet feed. Their exact
 versions and source/output hashes are pinned by `build/harmony-android-versions.sh` and

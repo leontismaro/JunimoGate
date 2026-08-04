@@ -1,0 +1,144 @@
+<Project>
+  <PropertyGroup Condition="'$(JunimoGateRequiresSmapi)' == 'true'">
+    <JunimoGateSmapiBundleIntermediateDirectory>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\junimogate-smapi-bundle</JunimoGateSmapiBundleIntermediateDirectory>
+    <JunimoGateSmapiBundleSpec>$(JunimoGateSmapiBundleIntermediateDirectory)\assets.txt</JunimoGateSmapiBundleSpec>
+    <JunimoGateSmapiBundleManifest>$(JunimoGateSmapiBundleIntermediateDirectory)\manifest.json</JunimoGateSmapiBundleManifest>
+    <JunimoGatePython Condition="'$(JunimoGatePython)' == ''">python3</JunimoGatePython>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(JunimoGateRequiresSmapi)' == 'true'">
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\src\SMAPI\bin\$(Configuration)\net9.0-android35.0\StardewModdingAPI.dll">
+      <AssetPath>smapi-managed/StardewModdingAPI.dll</AssetPath>
+      <RelativePath>managed/StardewModdingAPI.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\src\SMAPI.Toolkit\bin\$(Configuration)\net9.0\SMAPI.Toolkit.dll">
+      <AssetPath>smapi-managed/SMAPI.Toolkit.dll</AssetPath>
+      <RelativePath>managed/SMAPI.Toolkit.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\src\SMAPI.Toolkit.CoreInterfaces\bin\$(Configuration)\net9.0\SMAPI.Toolkit.CoreInterfaces.dll">
+      <AssetPath>smapi-managed/SMAPI.Toolkit.CoreInterfaces.dll</AssetPath>
+      <RelativePath>managed/SMAPI.Toolkit.CoreInterfaces.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgDeepCloner)\lib\netstandard1.3\DeepCloner.dll">
+      <AssetPath>smapi-managed/DeepCloner.dll</AssetPath>
+      <RelativePath>managed/DeepCloner.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgHtmlAgilityPack)\lib\net8.0\HtmlAgilityPack.dll">
+      <AssetPath>smapi-managed/HtmlAgilityPack.dll</AssetPath>
+      <RelativePath>managed/HtmlAgilityPack.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgLib_Harmony)\lib\net9.0\0Harmony.dll">
+      <AssetPath>smapi-managed/0Harmony.dll</AssetPath>
+      <RelativePath>managed/0Harmony.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMarkdig)\lib\net9.0\Markdig.dll">
+      <AssetPath>smapi-managed/Markdig.dll</AssetPath>
+      <RelativePath>managed/Markdig.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMono_Cecil)\lib\netstandard2.0\Mono.Cecil.dll">
+      <AssetPath>smapi-managed/Mono.Cecil.dll</AssetPath>
+      <RelativePath>managed/Mono.Cecil.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMono_Cecil)\lib\netstandard2.0\Mono.Cecil.Mdb.dll">
+      <AssetPath>smapi-managed/Mono.Cecil.Mdb.dll</AssetPath>
+      <RelativePath>managed/Mono.Cecil.Mdb.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMono_Cecil)\lib\netstandard2.0\Mono.Cecil.Pdb.dll">
+      <AssetPath>smapi-managed/Mono.Cecil.Pdb.dll</AssetPath>
+      <RelativePath>managed/Mono.Cecil.Pdb.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMono_Cecil)\lib\netstandard2.0\Mono.Cecil.Rocks.dll">
+      <AssetPath>smapi-managed/Mono.Cecil.Rocks.dll</AssetPath>
+      <RelativePath>managed/Mono.Cecil.Rocks.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMicrosoft_Extensions_DependencyInjection_Abstractions)\lib\net7.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll">
+      <AssetPath>smapi-managed/Microsoft.Extensions.DependencyInjection.Abstractions.dll</AssetPath>
+      <RelativePath>managed/Microsoft.Extensions.DependencyInjection.Abstractions.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgNVorbis)\lib\netstandard2.0\NVorbis.dll">
+      <AssetPath>smapi-managed/NVorbis.dll</AssetPath>
+      <RelativePath>managed/NVorbis.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgNewtonsoft_Json)\lib\net6.0\Newtonsoft.Json.dll">
+      <AssetPath>smapi-managed/Newtonsoft.Json.dll</AssetPath>
+      <RelativePath>managed/Newtonsoft.Json.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgNewtonsoft_Json_Bson)\lib\netstandard2.0\Newtonsoft.Json.Bson.dll">
+      <AssetPath>smapi-managed/Newtonsoft.Json.Bson.dll</AssetPath>
+      <RelativePath>managed/Newtonsoft.Json.Bson.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgPathoschild_Http_FluentClient)\lib\net5.0\Pathoschild.Http.Client.dll">
+      <AssetPath>smapi-managed/Pathoschild.Http.Client.dll</AssetPath>
+      <RelativePath>managed/Pathoschild.Http.Client.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgPintail)\lib\net6.0\Pintail.dll">
+      <AssetPath>smapi-managed/Pintail.dll</AssetPath>
+      <RelativePath>managed/Pintail.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgPlatonymous_TMXTile)\lib\net45\TMXTile.dll">
+      <AssetPath>smapi-managed/TMXTile.dll</AssetPath>
+      <RelativePath>managed/TMXTile.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgMicrosoft_AspNet_WebApi_Client)\lib\netstandard2.0\System.Net.Http.Formatting.dll">
+      <AssetPath>smapi-managed/System.Net.Http.Formatting.dll</AssetPath>
+      <RelativePath>managed/System.Net.Http.Formatting.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgSkiaSharp)\lib\net9.0-android35.0\SkiaSharp.dll">
+      <AssetPath>smapi-managed/SkiaSharp.dll</AssetPath>
+      <RelativePath>managed/SkiaSharp.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgStbImageWriteSharp)\lib\netstandard2.0\StbImageWriteSharp.dll">
+      <AssetPath>smapi-managed/StbImageWriteSharp.dll</AssetPath>
+      <RelativePath>managed/StbImageWriteSharp.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(PkgTextCopy)\lib\net6.0\TextCopy.dll">
+      <AssetPath>smapi-managed/TextCopy.dll</AssetPath>
+      <RelativePath>managed/TextCopy.dll</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\src\SMAPI\SMAPI.config.json">
+      <AssetPath>smapi-internal/config.json</AssetPath>
+      <RelativePath>smapi-internal/config.json</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\resources\metadata.json">
+      <AssetPath>smapi-internal/metadata.json</AssetPath>
+      <RelativePath>smapi-internal/metadata.json</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\resources\blacklist.json">
+      <AssetPath>smapi-internal/blacklist.json</AssetPath>
+      <RelativePath>smapi-internal/blacklist.json</RelativePath>
+    </SmapiBundleAsset>
+    <SmapiBundleAsset Include="$(MSBuildThisFileDirectory)..\smapi\src\SMAPI\i18n\*.json">
+      <AssetPath>smapi-internal/i18n/%(Filename)%(Extension)</AssetPath>
+      <RelativePath>smapi-internal/i18n/%(Filename)%(Extension)</RelativePath>
+    </SmapiBundleAsset>
+
+    <AndroidAsset Include="$(JunimoGateSmapiBundleManifest)">
+      <Link>smapi-bundle-manifest.json</Link>
+    </AndroidAsset>
+  </ItemGroup>
+
+  <Target Name="PrepareJunimoGateSmapiBundleSpec"
+          Condition="'$(JunimoGateRequiresSmapi)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          BeforeTargets="GenerateJunimoGateSmapiBundleManifest">
+    <ItemGroup>
+      <_JunimoGateSmapiBundleSpecLine Include="@(SmapiBundleAsset->'%(FullPath)|%(AssetPath)|%(RelativePath)')" />
+      <AndroidAsset Include="@(SmapiBundleAsset)">
+        <Link>%(SmapiBundleAsset.AssetPath)</Link>
+      </AndroidAsset>
+    </ItemGroup>
+    <MakeDir Directories="$(JunimoGateSmapiBundleIntermediateDirectory)" />
+    <WriteLinesToFile File="$(JunimoGateSmapiBundleSpec)"
+                      Lines="@(_JunimoGateSmapiBundleSpecLine)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="GenerateJunimoGateSmapiBundleManifest"
+          Condition="'$(JunimoGateRequiresSmapi)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          BeforeTargets="_ComputeAndroidAssetsPaths"
+          DependsOnTargets="PrepareJunimoGateSmapiBundleSpec"
+          Inputs="$(MSBuildThisFileDirectory)generate-smapi-bundle-manifest.py;$(JunimoGateSmapiBundleSpec);@(SmapiBundleAsset)"
+          Outputs="$(JunimoGateSmapiBundleManifest)">
+    <Exec Command="$(JunimoGatePython) &quot;$(MSBuildThisFileDirectory)generate-smapi-bundle-manifest.py&quot; --spec &quot;$(JunimoGateSmapiBundleSpec)&quot; --output &quot;$(JunimoGateSmapiBundleManifest)&quot;" />
+  </Target>
+</Project>

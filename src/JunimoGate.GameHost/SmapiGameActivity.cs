@@ -67,14 +67,16 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             var runtimeRoot = JunimoGate.Android.AndroidPrivateStorage.GetRuntimeRoot(ApplicationContext ?? this);
             loader = new SmapiDefaultAssemblyLoader(
                 runtimeFiles,
-                Path.Combine(runtimeRoot, "smapi", "assembly-load-cache-v1", GameHostRuntimeIdentity.BuildId),
+                Path.Combine(runtimeRoot, "smapi", "assembly-load-cache-v1", smapiBundle.BundleId),
                 launch.ModsDirectory);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
             stage = GameStartupStage.GameAssembly;
             _ = loader.LoadGameAssembly();
-            Log.Info("JunimoGate.SMAPI", $"session-starting:build={GameHostRuntimeIdentity.BuildId}:smapi=4.5.2");
+            Log.Info(
+                "JunimoGate.SMAPI",
+                $"session-starting:build={GameHostRuntimeIdentity.BuildId}:bundle={smapiBundle.BundleId}:smapi=4.5.2");
             stage = GameStartupStage.SmapiSession;
             var startupCompletion = new TaskCompletionSource<SmapiFailure?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -152,10 +154,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 JunimoGate.Android.AndroidPrivateStorage.GetRuntimeRoot(ApplicationContext ?? this),
                 "smapi",
                 "mod-rewrite-cache-v2",
-                GameHostRuntimeIdentity.BuildId),
+                smapiBundle.BundleId),
             ModRewriteCacheIdentity = string.Join(
                 '|',
-                GameHostRuntimeIdentity.BuildId,
+                smapiBundle.BundleId,
                 snapshot.SourceWorkspaceKey,
                 snapshot.AppliedWorkspaceKey),
             MainThread = new ActivityDispatcher(this),
