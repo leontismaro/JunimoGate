@@ -158,6 +158,20 @@
     <string name="logs_export_complete">诊断包已导出。</string>
     <string name="logs_export_failed">无法导出诊断包。</string>
 
+    <string name="save_backups_title">存档与备份</string>
+    <string name="save_backups_settings_summary">查看实时存档元数据并导出现有 SMAPI 备份；当前不提供恢复。</string>
+    <string name="save_backups_description">此处只读取实时存档的名称与日期。导出会通过 Android 文件选择器复制一份已有备份，不修改或恢复任何存档。</string>
+    <string name="save_backups_loading">正在读取存档元数据…</string>
+    <string name="save_backups_empty">当前没有完整可导出的 SMAPI 备份 ZIP。</string>
+    <string name="save_backups_no_live_save">未发现实时存档</string>
+    <string name="save_backups_latest_save">最近：%1$s · %2$s</string>
+    <string name="save_backups_overview">%1$d 个实时存档 · %2$d 份可导出备份\n%3$s\n已隐藏 %4$d 个不完整或回退目录</string>
+    <string name="save_backups_item_summary">%1$s · %2$s · %3$d 个存档目录</string>
+    <string name="save_backups_export">导出</string>
+    <string name="save_backups_export_complete">存档备份已导出。</string>
+    <string name="save_backups_export_failed">无法导出所选存档备份。</string>
+    <string name="save_backups_read_failed">无法读取存档与备份元数据。</string>
+
     <string name="mod_default_settings">Mod 默认设置</string>
     <string name="language_setting">语言</string>
     <string name="language_system">跟随系统</string>

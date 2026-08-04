@@ -121,6 +121,8 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 
     void ILauncherUiHost.OpenEnvironment() => OpenEnvironment();
 
+    void ILauncherUiHost.OpenSaveBackups() => OpenSaveBackups();
+
     private async Task LaunchAsync()
     {
         if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
@@ -246,6 +248,13 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         navigation?.Navigate(Resource.Id.navigation_environment);
     }
 
+    private void OpenSaveBackups()
+    {
+        if (destroyed || navigation?.CurrentDestination?.Id == Resource.Id.navigation_save_backups)
+            return;
+        navigation?.Navigate(Resource.Id.navigation_save_backups);
+    }
+
     private bool TryRouteToActiveGame()
     {
         if (!GameSessionRegistry.TryRouteActiveGame(this))
@@ -270,4 +279,6 @@ internal interface ILauncherUiHost
     void RefreshProfile();
 
     void OpenEnvironment();
+
+    void OpenSaveBackups();
 }

@@ -157,6 +157,20 @@
     <string name="logs_export_complete">Diagnostic bundle exported.</string>
     <string name="logs_export_failed">The diagnostic bundle could not be exported.</string>
 
+    <string name="save_backups_title">Saves and backups</string>
+    <string name="save_backups_settings_summary">View live save metadata and export an existing SMAPI backup. Restore is not available yet.</string>
+    <string name="save_backups_description">JunimoGate only reads live save names and dates here. Export copies one existing backup through Android’s document picker; it never changes or restores a save.</string>
+    <string name="save_backups_loading">Reading save metadata…</string>
+    <string name="save_backups_empty">No complete SMAPI backup ZIP is available yet.</string>
+    <string name="save_backups_no_live_save">No live save found</string>
+    <string name="save_backups_latest_save">Latest: %1$s · %2$s</string>
+    <string name="save_backups_overview">%1$d live saves · %2$d exportable backups\n%3$s\n%4$d incomplete or fallback entries hidden</string>
+    <string name="save_backups_item_summary">%1$s · %2$s · %3$d save folders</string>
+    <string name="save_backups_export">Export</string>
+    <string name="save_backups_export_complete">Save backup exported.</string>
+    <string name="save_backups_export_failed">The selected save backup could not be exported.</string>
+    <string name="save_backups_read_failed">Save and backup metadata could not be read.</string>
+
     <string name="mod_default_settings">Mod defaults</string>
     <string name="language_setting">Language</string>
     <string name="language_system">Follow system</string>

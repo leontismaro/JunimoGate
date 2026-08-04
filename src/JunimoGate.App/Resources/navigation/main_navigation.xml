@@ -30,6 +30,11 @@
         android:label="@string/environment_title" />
 
     <fragment
+        android:id="@+id/navigation_save_backups"
+        android:name="org.junimogate.app.SaveBackupsFragment"
+        android:label="@string/save_backups_title" />
+
+    <fragment
         android:id="@+id/navigation_mod_groups"
         android:name="org.junimogate.app.ModGroupsFragment"
         android:label="@string/mod_groups_title" />

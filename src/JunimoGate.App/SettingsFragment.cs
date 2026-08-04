@@ -20,6 +20,7 @@ public sealed class SettingsFragment : Fragment
     private MaterialAutoCompleteTextView? language;
     private bool syncing;
     private View? environmentCard;
+    private View? saveBackupsCard;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_settings, container, false)
@@ -52,6 +53,8 @@ public sealed class SettingsFragment : Fragment
         language.ItemClick += OnLanguageClicked;
         environmentCard = view.FindViewById(Resource.Id.settings_environment_card);
         environmentCard!.Click += OnEnvironmentClicked;
+        saveBackupsCard = view.FindViewById(Resource.Id.settings_save_backups_card);
+        saveBackupsCard!.Click += OnSaveBackupsClicked;
     }
 
     public override void OnStart()
@@ -80,9 +83,12 @@ public sealed class SettingsFragment : Fragment
             language.ItemClick -= OnLanguageClicked;
         if (environmentCard is not null)
             environmentCard.Click -= OnEnvironmentClicked;
+        if (saveBackupsCard is not null)
+            saveBackupsCard.Click -= OnSaveBackupsClicked;
         bindingPolicy = null;
         language = null;
         environmentCard = null;
+        saveBackupsCard = null;
         base.OnDestroyView();
     }
 
@@ -118,6 +124,8 @@ public sealed class SettingsFragment : Fragment
     }
 
     private void OnEnvironmentClicked(object? sender, EventArgs eventArgs) => host?.OpenEnvironment();
+
+    private void OnSaveBackupsClicked(object? sender, EventArgs eventArgs) => host?.OpenSaveBackups();
 
     private void RenderLanguage()
     {

@@ -283,7 +283,13 @@ return TestHarness.Run(
     ("Product diagnostics redact private paths and tokens", () =>
         ProductDiagnosticTests.RedactsPrivatePathsAndTokens()),
     ("Product diagnostics create a path-free bounded ZIP", () =>
-        ProductDiagnosticTests.CreatesAPathFreeBoundedZip()));
+        ProductDiagnosticTests.CreatesAPathFreeBoundedZip()),
+    ("Save backup catalog lists only complete ZIP files", () =>
+        SaveBackupCatalogTests.ListsOnlyCompleteTopLevelZipBackups()),
+    ("Save backup catalog exports one exact backup", () =>
+        SaveBackupCatalogTests.ExportsOneExactBackup()),
+    ("Save backup catalog rejects traversal and incomplete files", () =>
+        SaveBackupCatalogTests.RejectsTraversalAndIncompleteSelections()));
 
 sealed class RuntimeInventoryFixture : IDisposable
 {
