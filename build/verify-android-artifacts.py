@@ -485,6 +485,12 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             and smapi_activity.get("android:exported") in {"false", "0"}
             and smapi_activity.get("android:process") == ":game"
         )
+        checks["appLocalesDeclared"] = (
+            "android:localeConfig" in manifest_tree
+            and "androidx.appcompat.app.AppLocalesMetadataHolderService" in manifest_tree
+            and "autoStoreLocales" in manifest_tree
+            and "res/xml/locales_config.xml" in archive_names
+        )
     if expected.query_packages is not None:
         checks["exactGamePackageQueries"] = (
             sorted(manifest.query_packages) == sorted(expected.query_packages)

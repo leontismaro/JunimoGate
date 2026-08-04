@@ -5,46 +5,71 @@
     <string name="nav_mods">Mods</string>
     <string name="nav_logs">Logs</string>
     <string name="nav_settings">Settings</string>
+
     <string name="game_title">Stardew Valley through SMAPI</string>
-    <string name="checking_game">Checking the installed game…</string>
     <string name="launch_game">Launch game</string>
-    <string name="launching_game">Starting…</string>
+    <string name="prepare_and_launch">Prepare and launch</string>
+    <string name="retry_and_launch">Retry and launch</string>
+    <string name="launching_game">Working…</string>
+    <string name="launcher_checking_game">Checking the installed game…</string>
+    <string name="launcher_checking_workspace">Checking the prepared game workspace…</string>
+    <string name="launcher_needs_preparation">Stardew Valley has not been prepared yet. Tap to prepare and launch it.</string>
+    <string name="launcher_recovery_available">The previous game launch failed. Tap to retry recovery.</string>
+    <string name="launcher_preparing_game">Preparing Stardew Valley for launch…</string>
+    <string name="launcher_prepared_game_changed">The prepared game changed. Checking it again…</string>
+    <string name="launcher_game_updated">The installed game changed. Adapting the new version…</string>
+    <string name="launcher_recovering">Repairing the game runtime for another launch…</string>
+    <string name="launcher_game_not_installed">Stardew Valley is not installed for the current Android user.</string>
+    <string name="launcher_unsupported">This installed Stardew Valley build is not supported yet.\n\nCode: %1$s</string>
+    <string name="launcher_failed">Stardew Valley could not start.\n\nCode: %1$s</string>
+    <string name="launcher_ready">Stardew Valley %1$s\n\nReady to launch through SMAPI.</string>
+    <string name="launcher_launching">Starting Stardew Valley through SMAPI…</string>
+
     <string name="home_summary">Overview</string>
     <string name="play_time_empty">Play time\n—</string>
     <string name="last_save_empty">Last save\n—</string>
     <string name="enabled_mods_empty">Enabled Mods\n—</string>
-    <string name="play_time_value">Play time\n%1$s</string>
-    <string name="last_save_value">Last save\n%1$s</string>
-    <string name="enabled_mods_value">Enabled Mods\n%1$d</string>
-    <string name="play_time_label">Play time</string>
-    <string name="last_save_label">Last save</string>
-    <string name="enabled_mods_label">Enabled Mods</string>
+    <string name="last_save_value">Last save\n%1$s\n%2$s</string>
+    <string name="date_time_value">%1$s %2$s</string>
+    <plurals name="enabled_mods_count">
+        <item quantity="one">Enabled Mod\n%1$d</item>
+        <item quantity="other">Enabled Mods\n%1$d</item>
+    </plurals>
+
     <string name="mods_title">Mods</string>
     <string name="mods_empty">The global Mod library and groups will appear here.</string>
     <string name="logs_title">Logs</string>
     <string name="logs_empty">The latest and previous launch logs will appear here.</string>
+
     <string name="mod_default_settings">Mod defaults</string>
+    <string name="language_setting">Language</string>
+    <string name="language_system">Follow system</string>
+    <string name="language_simplified_chinese">Simplified Chinese</string>
+    <string name="language_english">English</string>
     <string name="binding_policy">Assembly dependency policy</string>
     <string name="binding_highest_compatible">Highest compatible</string>
     <string name="binding_strict">Strict</string>
     <string name="binding_first_loaded">First loaded</string>
     <string name="settings_more">More settings</string>
-    <string name="settings_more_description">Game environment, saves, appearance, diagnostics and About will be added here.</string>
+    <string name="settings_more_description">Saves, appearance, diagnostics and About will be added here.</string>
+
     <string name="environment_title">Game &amp; runtime</string>
     <string name="environment_settings_summary">Installed game, SMAPI version and bundled runtime details</string>
     <string name="environment_loading">Reading installed package information…</string>
     <string name="environment_app_version_value">JunimoGate %1$s</string>
     <string name="environment_game_not_installed">%1$s\nNot installed\n%2$s</string>
     <string name="environment_game_value">%1$s\nStardew Valley %2$s (%3$s)\n%4$s\n%5$s</string>
-    <string name="environment_status_supported">Ready for JunimoGate compatibility analysis</string>
+    <string name="environment_status_supported">Ready to prepare and launch</string>
     <string name="environment_status_unsupported">Detected, but this store build is not supported yet</string>
     <string name="environment_status_unrecognized">Signing identity is not recognized</string>
-    <string name="environment_smapi_value">SMAPI %1$s\nImplementation: %2$s\nBuild: %3$s\nBundle: %4$s (%5$d files)\nSMAPI updates together with JunimoGate.</string>
+    <string name="environment_smapi_value">SMAPI %1$s\nImplementation: %2$s\nBuild: %3$s\nBundle: %4$s (%5$s)\nSMAPI updates together with JunimoGate.</string>
     <string name="environment_refresh">Refresh</string>
     <string name="environment_prepare_launch">Prepare and launch</string>
     <string name="environment_read_failed">Package information could not be read.</string>
-    <string name="environment_build_label">Build</string>
-    <string name="environment_files_label">files</string>
-    <string name="environment_smapi_updates_with_app">SMAPI updates together with JunimoGate.</string>
-    <string name="environment_not_installed_label">Not installed</string>
+    <string name="store_google_play">Google Play</string>
+    <string name="store_galaxy">Galaxy Store</string>
+    <plurals name="environment_file_count">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
 </resources>

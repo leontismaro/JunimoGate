@@ -7,14 +7,30 @@ using JunimoGate.Mods;
 
 namespace JunimoGate.App;
 
+internal enum GameStore
+{
+    GooglePlay,
+    GalaxyStore,
+}
+
+internal enum InstalledGameStatus
+{
+    NotInstalled,
+    Supported,
+    DetectedUnsupported,
+    Unrecognized,
+}
+
 internal sealed record InstalledGameDisplayInfo(
     string PackageName,
-    string StoreName,
-    bool IsInstalled,
+    GameStore Store,
     bool IsSelectable,
     string? VersionName,
     long? VersionCode,
-    string Status);
+    InstalledGameStatus Status)
+{
+    public bool IsInstalled => Status != InstalledGameStatus.NotInstalled;
+}
 
 internal sealed record EnvironmentDisplayInfo(
     string AppVersion,
@@ -42,8 +58,8 @@ internal sealed class ProductInformationService
         var games = new List<InstalledGameDisplayInfo>(2);
         foreach (var candidate in new[]
                  {
-                     (AndroidPlatformBoundary.PlayPackageName, "Google Play"),
-                     (AndroidPlatformBoundary.SamsungPackageName, "Galaxy Store"),
+                     (AndroidPlatformBoundary.PlayPackageName, GameStore.GooglePlay),
+                     (AndroidPlatformBoundary.SamsungPackageName, GameStore.GalaxyStore),
                  })
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -53,11 +69,10 @@ internal sealed class ProductInformationService
                 games.Add(new InstalledGameDisplayInfo(
                     candidate.Item1,
                     candidate.Item2,
-                    IsInstalled: false,
                     IsSelectable: false,
                     VersionName: null,
                     VersionCode: null,
-                    Status: "not-installed"));
+                    Status: InstalledGameStatus.NotInstalled));
                 continue;
             }
 
@@ -69,15 +84,14 @@ internal sealed class ProductInformationService
             games.Add(new InstalledGameDisplayInfo(
                 candidate.Item1,
                 candidate.Item2,
-                IsInstalled: true,
                 IsSelectable: selectable,
                 snapshot.VersionName,
                 snapshot.LongVersionCode,
                 Status: selectable
-                    ? "supported"
+                    ? InstalledGameStatus.Supported
                     : certificate?.Status == GameCertificateStatus.Unrecognized
-                        ? "unrecognized"
-                        : "detected-unsupported"));
+                        ? InstalledGameStatus.Unrecognized
+                        : InstalledGameStatus.DetectedUnsupported));
         }
 
         return new EnvironmentDisplayInfo(ReadAppVersion(), games, GameHostRuntimeInformationReader.Read(context));
@@ -111,6 +125,6 @@ internal sealed class ProductInformationService
             ?? throw new InvalidOperationException("Android PackageManager is unavailable.");
         var package = manager.GetPackageInfo(context.PackageName!, (PackageInfoFlags)0)
             ?? throw new InvalidOperationException("JunimoGate package metadata is unavailable.");
-        return package.VersionName ?? "unknown";
+        return package.VersionName ?? "—";
     }
 }

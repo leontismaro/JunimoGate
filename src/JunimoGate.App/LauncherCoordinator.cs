@@ -21,11 +21,29 @@ internal enum LauncherStatus
     Failed,
 }
 
+internal enum LauncherMessageKey
+{
+    CheckingInstalledGame,
+    CheckingWorkspace,
+    NeedsPreparation,
+    RecoveryAvailable,
+    PreparingGame,
+    PreparedGameChanged,
+    GameUpdated,
+    Recovering,
+    GameNotInstalled,
+    Unsupported,
+    Failed,
+    Ready,
+    Launching,
+}
+
 internal sealed record LauncherState(
     LauncherStatus Status,
-    string Message,
+    LauncherMessageKey Message,
     bool ShowProgress,
     bool CanLaunch,
+    string? Detail = null,
     ModAssemblyBindingPolicy AssemblyBindingPolicy = ModAssemblyBindingPolicy.HighestCompatible,
     bool CanConfigureProfile = false);
 
@@ -47,7 +65,7 @@ internal sealed class LauncherCoordinator : IDisposable
         profiles = new ModProfileRepository(Path.Combine(AndroidPrivateStorage.GetUserDataRoot(this.context), "profiles"));
         CurrentState = new LauncherState(
             LauncherStatus.Checking,
-            "Checking the installed game…",
+            LauncherMessageKey.CheckingInstalledGame,
             ShowProgress: true,
             CanLaunch: false);
     }
@@ -79,7 +97,7 @@ internal sealed class LauncherCoordinator : IDisposable
                     pendingRecovery = pending;
                     Publish(new LauncherState(
                         LauncherStatus.RecoveryAvailable,
-                        "The previous game launch failed. Tap to retry recovery.",
+                        LauncherMessageKey.RecoveryAvailable,
                         ShowProgress: false,
                         CanLaunch: true));
                     return null;
@@ -95,7 +113,7 @@ internal sealed class LauncherCoordinator : IDisposable
 
             Publish(new LauncherState(
                 LauncherStatus.Checking,
-                "Checking the prepared game workspace…",
+                LauncherMessageKey.CheckingWorkspace,
                 ShowProgress: true,
                 CanLaunch: false));
             preparedGame = await GameLaunchRegistry.TryOpenActiveAsync(context, cancellationToken)
@@ -103,7 +121,7 @@ internal sealed class LauncherCoordinator : IDisposable
             Publish(preparedGame is null
                 ? new LauncherState(
                     LauncherStatus.NeedsPreparation,
-                    "Stardew Valley has not been prepared yet. Tap to prepare and launch it.",
+                    LauncherMessageKey.NeedsPreparation,
                     ShowProgress: false,
                     CanLaunch: true)
                 : ReadyState(preparedGame));
@@ -144,7 +162,7 @@ internal sealed class LauncherCoordinator : IDisposable
             {
                 Publish(new LauncherState(
                     LauncherStatus.Preparing,
-                    "Preparing Stardew Valley for launch…",
+                    LauncherMessageKey.PreparingGame,
                     ShowProgress: true,
                     CanLaunch: false));
                 var retried = await GameDeepPrepareCoordinator
@@ -170,7 +188,7 @@ internal sealed class LauncherCoordinator : IDisposable
                 preparedGame = null;
                 Publish(new LauncherState(
                     LauncherStatus.Checking,
-                    "The prepared game changed. Checking it again…",
+                    LauncherMessageKey.PreparedGameChanged,
                     ShowProgress: true,
                     CanLaunch: false));
                 var refreshed = await GameDeepPrepareCoordinator
@@ -189,7 +207,7 @@ internal sealed class LauncherCoordinator : IDisposable
 
             Publish(new LauncherState(
                 LauncherStatus.Preparing,
-                "The installed game changed. Preparing it again…",
+                LauncherMessageKey.GameUpdated,
                 ShowProgress: true,
                 CanLaunch: false));
             var prepared = await GameDeepPrepareCoordinator
@@ -313,7 +331,7 @@ internal sealed class LauncherCoordinator : IDisposable
                 $"recovery-started stage={pending.Stage} code={pending.Code} level={level}");
             Publish(new LauncherState(
                 LauncherStatus.Recovering,
-                "Preparing Stardew Valley for launch…",
+                LauncherMessageKey.Recovering,
                 ShowProgress: true,
                 CanLaunch: false));
             var prepared = await GameDeepPrepareCoordinator
@@ -393,34 +411,37 @@ internal sealed class LauncherCoordinator : IDisposable
         GamePreparationStatus.Ready => ReadyState(result.PreparedGame!),
         GamePreparationStatus.GameNotInstalled => new LauncherState(
             LauncherStatus.GameNotInstalled,
-            "Stardew Valley is not installed for the current Android user.",
+            LauncherMessageKey.GameNotInstalled,
             ShowProgress: false,
             CanLaunch: false),
         GamePreparationStatus.Unsupported => new LauncherState(
             LauncherStatus.Unsupported,
-            $"This installed Stardew Valley build is not supported yet.\n\nCode: {result.Code}",
+            LauncherMessageKey.Unsupported,
             ShowProgress: false,
-            CanLaunch: false),
+            CanLaunch: false,
+            Detail: result.Code),
         _ => FailedState(result.Code),
     };
 
     private static LauncherState FailedState(string code = "launcher_failed") => new(
         LauncherStatus.Failed,
-        $"Stardew Valley could not start.\n\nCode: {code}",
+        LauncherMessageKey.Failed,
         ShowProgress: false,
-        CanLaunch: true);
+        CanLaunch: true,
+        Detail: code);
 
     private LauncherState ReadyState(PreparedGameHandle handle) => new(
         LauncherStatus.Ready,
-        $"Stardew Valley {handle.VersionName}\n\nReady to launch through SMAPI.",
+        LauncherMessageKey.Ready,
         ShowProgress: false,
         CanLaunch: true,
+        Detail: handle.VersionName,
         AssemblyBindingPolicy: profile?.AssemblyBindingPolicy ?? ModAssemblyBindingPolicy.HighestCompatible,
         CanConfigureProfile: true);
 
     private void PublishLaunching() => Publish(new LauncherState(
         LauncherStatus.Launching,
-        "Starting Stardew Valley through SMAPI…",
+        LauncherMessageKey.Launching,
         ShowProgress: true,
         CanLaunch: false));
 
@@ -436,9 +457,15 @@ internal sealed class LauncherCoordinator : IDisposable
             var status = value.Stage == GamePreparationStage.Preparing
                 ? LauncherStatus.Preparing
                 : LauncherStatus.Checking;
+            var message = value.Stage switch
+            {
+                GamePreparationStage.Checking => LauncherMessageKey.CheckingWorkspace,
+                GamePreparationStage.Discovering => LauncherMessageKey.CheckingInstalledGame,
+                _ => LauncherMessageKey.PreparingGame,
+            };
             owner.Publish(new LauncherState(
                 status,
-                value.Message,
+                message,
                 ShowProgress: true,
                 CanLaunch: false));
         }

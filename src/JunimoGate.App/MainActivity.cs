@@ -29,7 +29,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
     private NavController? navigation;
     private LauncherState currentState = new(
         LauncherStatus.Checking,
-        "Checking the installed game…",
+        LauncherMessageKey.CheckingInstalledGame,
         ShowProgress: true,
         CanLaunch: false);
     private bool returningFromGame;

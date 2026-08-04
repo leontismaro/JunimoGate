@@ -29,6 +29,8 @@ else
   }
 fi
 
+python3 "$root/build/verify-app-locales.py"
+
 "$dotnet_command" build "$root/JunimoGate.Host.slnf" --configuration "$configuration" -m:1
 
 "$dotnet_command" run \

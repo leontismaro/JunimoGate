@@ -2,6 +2,8 @@ using Android.OS;
 using Android.Runtime;
 using Android.Views;
 using Android.Widget;
+using AndroidX.AppCompat.App;
+using AndroidX.Core.OS;
 using AndroidX.Fragment.App;
 using AndroidX.Navigation.Fragment;
 using Google.Android.Material.TextField;
@@ -15,6 +17,7 @@ public sealed class SettingsFragment : Fragment
 {
     private ILauncherUiHost? host;
     private MaterialAutoCompleteTextView? bindingPolicy;
+    private MaterialAutoCompleteTextView? language;
     private bool syncing;
     private View? environmentCard;
 
@@ -35,6 +38,18 @@ public sealed class SettingsFragment : Fragment
         };
         bindingPolicy.Adapter = new ArrayAdapter<string>(RequireContext(), global::Android.Resource.Layout.SimpleListItem1, labels);
         bindingPolicy.ItemClick += OnPolicyClicked;
+        language = view.FindViewById<MaterialAutoCompleteTextView>(Resource.Id.settings_language)
+            ?? throw new InvalidOperationException("The language control is unavailable.");
+        language.Adapter = new ArrayAdapter<string>(
+            RequireContext(),
+            global::Android.Resource.Layout.SimpleListItem1,
+            new[]
+            {
+                GetString(Resource.String.language_system),
+                GetString(Resource.String.language_simplified_chinese),
+                GetString(Resource.String.language_english),
+            });
+        language.ItemClick += OnLanguageClicked;
         environmentCard = view.FindViewById(Resource.Id.settings_environment_card);
         environmentCard!.Click += OnEnvironmentClicked;
     }
@@ -46,6 +61,7 @@ public sealed class SettingsFragment : Fragment
             ?? throw new InvalidOperationException("The Settings screen requires a launcher host.");
         host.LauncherStateChanged += OnStateChanged;
         Render(host.CurrentState);
+        RenderLanguage();
     }
 
     public override void OnStop()
@@ -60,9 +76,12 @@ public sealed class SettingsFragment : Fragment
     {
         if (bindingPolicy is not null)
             bindingPolicy.ItemClick -= OnPolicyClicked;
+        if (language is not null)
+            language.ItemClick -= OnLanguageClicked;
         if (environmentCard is not null)
             environmentCard.Click -= OnEnvironmentClicked;
         bindingPolicy = null;
+        language = null;
         environmentCard = null;
         base.OnDestroyView();
     }
@@ -99,4 +118,29 @@ public sealed class SettingsFragment : Fragment
     }
 
     private void OnEnvironmentClicked(object? sender, EventArgs eventArgs) => host?.OpenEnvironment();
+
+    private void RenderLanguage()
+    {
+        if (language is null)
+            return;
+        var tags = AppCompatDelegate.ApplicationLocales?.ToLanguageTags() ?? string.Empty;
+        language.SetText(GetString(tags switch
+        {
+            "zh-CN" or "zh-Hans" => Resource.String.language_simplified_chinese,
+            "en" => Resource.String.language_english,
+            _ => Resource.String.language_system,
+        }), filter: false);
+    }
+
+    private void OnLanguageClicked(object? sender, AdapterView.ItemClickEventArgs eventArgs)
+    {
+        var locales = eventArgs.Position switch
+        {
+            0 => LocaleListCompat.EmptyLocaleList,
+            1 => LocaleListCompat.ForLanguageTags("zh-CN"),
+            2 => LocaleListCompat.ForLanguageTags("en"),
+            _ => throw new InvalidOperationException("The selected application language is invalid."),
+        } ?? throw new InvalidOperationException("The selected application locale could not be created.");
+        AppCompatDelegate.ApplicationLocales = locales;
+    }
 }

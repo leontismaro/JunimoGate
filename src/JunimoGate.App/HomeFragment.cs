@@ -5,7 +5,11 @@ using Android.Widget;
 using AndroidX.Fragment.App;
 using Google.Android.Material.Button;
 using Google.Android.Material.ProgressIndicator;
+using AndroidDateFormat = Android.Text.Format.DateFormat;
 using Fragment = AndroidX.Fragment.App.Fragment;
+using JInteger = Java.Lang.Integer;
+using JObject = Java.Lang.Object;
+using JString = Java.Lang.String;
 using OperationCanceledException = System.OperationCanceledException;
 
 namespace JunimoGate.App;
@@ -89,15 +93,22 @@ public sealed class HomeFragment : Fragment
                 Activity?.RunOnUiThread(() =>
                 {
                     if (playTimeText is not null)
-                        playTimeText.Text = $"{GetString(Resource.String.play_time_label)}\n—";
+                        playTimeText.Text = GetString(Resource.String.play_time_empty);
                     if (lastSaveText is not null)
                     {
                         lastSaveText.Text = summary.LatestSaveTimeUtc is null
-                            ? $"{GetString(Resource.String.last_save_label)}\n—"
-                            : $"{GetString(Resource.String.last_save_label)}\n{summary.LatestSaveName}\n{summary.LatestSaveTimeUtc.Value.ToLocalTime():g}";
+                            ? GetString(Resource.String.last_save_empty)
+                            : FormatString(
+                                Resource.String.last_save_value,
+                                new JString(summary.LatestSaveName ?? "—"),
+                                new JString(FormatDateTime(summary.LatestSaveTimeUtc.Value)));
                     }
                     if (modCountText is not null)
-                        modCountText.Text = $"{GetString(Resource.String.enabled_mods_label)}\n{summary.EnabledModCount}";
+                    {
+                        modCountText.Text = FormatQuantity(
+                            Resource.Plurals.enabled_mods_count,
+                            summary.EnabledModCount);
+                    }
                 });
             }
         }
@@ -115,11 +126,33 @@ public sealed class HomeFragment : Fragment
     {
         if (statusText is null || progress is null || launchButton is null)
             return;
-        statusText.Text = state.Message;
+        statusText.Text = LauncherTextFormatter.Format(RequireContext(), state);
         progress.Visibility = state.ShowProgress ? ViewStates.Visible : ViewStates.Gone;
         launchButton.Enabled = state.CanLaunch;
-        launchButton.Text = GetString(state.Status == LauncherStatus.Launching
-            ? Resource.String.launching_game
-            : Resource.String.launch_game);
+        launchButton.Text = GetString(LauncherTextFormatter.GetActionTextResource(state));
     }
+
+    private string FormatDateTime(DateTimeOffset value)
+    {
+        var context = RequireContext();
+        using var date = new Java.Util.Date(value.ToUnixTimeMilliseconds());
+        var dateFormatter = AndroidDateFormat.GetMediumDateFormat(context)
+            ?? throw new InvalidOperationException("The localized date formatter is unavailable.");
+        var timeFormatter = AndroidDateFormat.GetTimeFormat(context)
+            ?? throw new InvalidOperationException("The localized time formatter is unavailable.");
+        var dateText = dateFormatter.Format(date) ?? "—";
+        var timeText = timeFormatter.Format(date) ?? "—";
+        return FormatString(
+            Resource.String.date_time_value,
+            new JString(dateText),
+            new JString(timeText));
+    }
+
+    private string FormatQuantity(int resourceId, int quantity) =>
+        Resources?.GetQuantityString(resourceId, quantity, [JInteger.ValueOf(quantity)])
+        ?? throw new InvalidOperationException("The home quantity resource is unavailable.");
+
+    private string FormatString(int resourceId, params JObject[] arguments) =>
+        Resources?.GetString(resourceId, arguments)
+        ?? throw new InvalidOperationException("The home string resource is unavailable.");
 }

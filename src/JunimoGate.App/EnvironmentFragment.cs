@@ -25,6 +25,7 @@ public sealed class EnvironmentFragment : Fragment
     private MaterialButton? launch;
     private CancellationTokenSource? cancellation;
     private ILauncherUiHost? host;
+    private bool hasSelectableGame;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_environment, container, false)
@@ -49,6 +50,8 @@ public sealed class EnvironmentFragment : Fragment
         base.OnStart();
         host = Activity as ILauncherUiHost
             ?? throw new InvalidOperationException("The environment screen requires a launcher host.");
+        host.LauncherStateChanged += OnLauncherStateChanged;
+        RenderLaunchState(host.CurrentState);
         Refresh();
     }
 
@@ -57,6 +60,8 @@ public sealed class EnvironmentFragment : Fragment
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = null;
+        if (host is not null)
+            host.LauncherStateChanged -= OnLauncherStateChanged;
         host = null;
         base.OnStop();
     }
@@ -81,6 +86,8 @@ public sealed class EnvironmentFragment : Fragment
 
     private void OnLaunchClicked(object? sender, EventArgs eventArgs) => host?.RequestLaunch();
 
+    private void OnLauncherStateChanged(LauncherState state) => RenderLaunchState(state);
+
     private void Refresh()
     {
         cancellation?.Cancel();
@@ -97,6 +104,7 @@ public sealed class EnvironmentFragment : Fragment
             refresh.Enabled = false;
         if (launch is not null)
             launch.Enabled = false;
+        hasSelectableGame = false;
         try
         {
             var info = await new ProductInformationService(RequireContext())
@@ -150,36 +158,56 @@ public sealed class EnvironmentFragment : Fragment
             new JString(info.Smapi.SmapiImplementationVersion),
             new JString(info.Smapi.BuildId),
             new JString(info.Smapi.BundleId),
-            JInteger.ValueOf(info.Smapi.BundleFileCount));
-        if (launch is not null)
-            launch.Enabled = info.Games.Any(static game => game.IsSelectable);
+            new JString(FormatQuantity(Resource.Plurals.environment_file_count, info.Smapi.BundleFileCount)));
+        hasSelectableGame = info.Games.Any(static game => game.IsSelectable);
+        if (host is not null)
+            RenderLaunchState(host.CurrentState);
     }
 
     private string FormatGame(InstalledGameDisplayInfo game)
     {
+        var storeName = GetString(game.Store switch
+        {
+            GameStore.GooglePlay => Resource.String.store_google_play,
+            GameStore.GalaxyStore => Resource.String.store_galaxy,
+            _ => throw new InvalidOperationException("The game store is invalid."),
+        });
         if (!game.IsInstalled)
         {
             return FormatString(
                 Resource.String.environment_game_not_installed,
-                new JString(game.StoreName),
+                new JString(storeName),
                 new JString(game.PackageName));
         }
         var status = game.Status switch
         {
-            "supported" => GetString(Resource.String.environment_status_supported),
-            "unrecognized" => GetString(Resource.String.environment_status_unrecognized),
-            _ => GetString(Resource.String.environment_status_unsupported),
+            InstalledGameStatus.Supported => GetString(Resource.String.environment_status_supported),
+            InstalledGameStatus.Unrecognized => GetString(Resource.String.environment_status_unrecognized),
+            InstalledGameStatus.DetectedUnsupported => GetString(Resource.String.environment_status_unsupported),
+            _ => throw new InvalidOperationException("The installed game status is invalid."),
         };
         return FormatString(
             Resource.String.environment_game_value,
-            new JString(game.StoreName),
+            new JString(storeName),
             new JString(game.VersionName ?? "—"),
             new JString(game.VersionCode?.ToString() ?? "—"),
             new JString(status),
             new JString(game.PackageName));
     }
 
+    private string FormatQuantity(int resourceId, int quantity) =>
+        Resources?.GetQuantityString(resourceId, quantity, [JInteger.ValueOf(quantity)])
+        ?? throw new InvalidOperationException("The environment quantity resource is unavailable.");
+
     private string FormatString(int resourceId, params JObject[] arguments) =>
         Resources?.GetString(resourceId, arguments)
         ?? throw new InvalidOperationException("The environment string resource is unavailable.");
+
+    private void RenderLaunchState(LauncherState state)
+    {
+        if (launch is null)
+            return;
+        launch.Enabled = hasSelectableGame && state.CanLaunch;
+        launch.Text = GetString(LauncherTextFormatter.GetActionTextResource(state));
+    }
 }

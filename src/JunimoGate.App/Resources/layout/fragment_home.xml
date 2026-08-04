@@ -35,7 +35,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="@string/checking_game"
+                    android:text="@string/launcher_checking_game"
                     android:textAppearance="?attr/textAppearanceBodyLarge" />
 
                 <com.google.android.material.progressindicator.LinearProgressIndicator
