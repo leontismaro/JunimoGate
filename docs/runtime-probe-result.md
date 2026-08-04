@@ -1,5 +1,10 @@
 # RuntimeProbe result
 
+> Historical physical-device evidence for the `.11` Harmony package and the original access-policy
+> gate. The current build consumes `.63`; current package pins are authoritative in
+> `build/harmony-android-versions.sh`, and later fixes are covered by focused host tests and real Mod
+> device sessions. Do not use the artifact hashes below as current package restore inputs.
+
 ## Decision
 
 Phase 0 selected the second permitted outcome:

@@ -76,8 +76,8 @@ Phase 0 RuntimeProbe 的十个 hard cases 已在 ARM64 test device Android 16/AP
 - JIT；
 - interpreter disabled；
 - game AOT disabled；
-- `Lib.Harmony 2.4.2-junimogate.11`；
-- 不维护完整 Mono fork；只在构建阶段改写应用副本中的两个访问判定函数。
+- `Lib.Harmony 2.4.2-junimogate.63`；
+- 不维护完整 Mono fork；只在构建阶段对应用副本应用四个已确认的有界配方：两个访问判定函数、无 GUID 动态程序集的诊断格式化，以及 Reflection.Emit 非法零类型的 fatal fallback。
 
 RuntimeProbe 是 runtime 能力证据，不要求在每次开发或产品启动时重复运行。
 

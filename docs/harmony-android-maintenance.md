@@ -20,8 +20,8 @@ build/build-cacheflush.sh
 生成物位于 ignored 目录：
 
 ```text
-artifacts/nuget/Lib.Harmony.2.4.2-junimogate.11.nupkg
-artifacts/nuget/Lib.Harmony.2.4.2-junimogate.11.provenance.json
+artifacts/nuget/Lib.Harmony.2.4.2-junimogate.63.nupkg
+artifacts/nuget/Lib.Harmony.2.4.2-junimogate.63.provenance.json
 .toolchains/source-cache/harmony-android/
 .toolchains/source-build/harmony-android/
 ```
@@ -246,10 +246,10 @@ git apply /absolute/path/to/patches/harmony-android/harmony-2.4.2-android.patch
 任何二进制变化都先把：
 
 ```xml
-<HarmonyPrerelease>-junimogate.11</HarmonyPrerelease>
+<HarmonyPrerelease>-junimogate.63</HarmonyPrerelease>
 ```
 
-改成新的、从未使用过的版本，例如 `.12`。同时更新 RuntimeProbe 的 PackageReference 候选版本。
+改成新的、从未使用过的版本，例如 `.64`。同时更新所有消费项目的 PackageReference。
 
 ### 6.4 重新生成 patch
 
@@ -302,7 +302,7 @@ build/harmony-android-versions.sh
 新版本首先作为候选：
 
 ```text
-known-good: 2.4.2-junimogate.11
+known-good: 2.4.2-junimogate.63
 candidate:  新Harmony/MonoMod + candidate patch
 ```
 
@@ -589,10 +589,10 @@ M2通过只允许进入后续阶段。正式升级还应经过：
 当前 known-good：
 
 ```text
-Lib.Harmony 2.4.2-junimogate.11
-nupkg SHA-256: a476d0a4d1b2cdfe47414225ea1e547ecb21ac0dddaa8a1e412a1673ffb66ac4
-0Harmony.dll SHA-256: 240ec869c07564ec12fc212103ccbf642ee547c49d55f3db21e71bcdc9cf07a3
-patch SHA-256: cfee9e3088008a2f434ae2b01a9f695668ba05c7df61a4ed5cba796aff5f95f6
+Lib.Harmony 2.4.2-junimogate.63
+nupkg SHA-256: 9d728a94a599805230d970173b88ca41c7969380c9bc841b654c86ada7e72025
+0Harmony.dll SHA-256: baf23a4f2764e7e0357c0979f3c90683c8dc71d5c5bf5148736a54b2df64c027
+patch SHA-256: 5554b9c9f20ad555987167f3364c5d35d26efb568ee94b872c7270a645b005f9
 ```
 
 ## 12. 删除本地 patch 的条件
