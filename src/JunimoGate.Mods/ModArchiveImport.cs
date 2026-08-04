@@ -214,7 +214,7 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
 
         var issues = new List<ModArchiveIssue>();
         var normalizedEntries = new List<ScannedArchiveEntry>();
-        var paths = new HashSet<string>(StringComparer.Ordinal);
+        var pathKinds = new Dictionary<string, bool>(StringComparer.Ordinal);
         long expandedBytes = 0;
         foreach (var entry in archive.Entries)
         {
@@ -224,18 +224,21 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
                 issues.Add(new ModArchiveIssue(ModArchiveIssueSeverity.Error, "unsafe_path", entry.FullName, error));
                 continue;
             }
-            if (!paths.Add(safePath.Value))
+            var isDirectory = IsDirectory(entry);
+            if (pathKinds.TryGetValue(safePath.Value, out var existingIsDirectory))
             {
+                if (isDirectory && existingIsDirectory)
+                    continue;
                 issues.Add(new ModArchiveIssue(ModArchiveIssueSeverity.Error, "duplicate_path", safePath.Value));
                 continue;
             }
+            pathKinds.Add(safePath.Value, isDirectory);
             if (IsSpecialEntry(entry))
             {
                 issues.Add(new ModArchiveIssue(ModArchiveIssueSeverity.Error, "special_entry", safePath.Value));
                 continue;
             }
 
-            var isDirectory = IsDirectory(entry);
             if (!isDirectory)
             {
                 if (entry.Length > limits.MaximumSingleFileBytes)
@@ -417,8 +420,11 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
             throw new InvalidDataException("The Mod manifest length changed while reading.");
         try
         {
+            var manifestBytes = memory.ToArray().AsMemory();
+            if (manifestBytes.Span.StartsWith(Encoding.UTF8.Preamble))
+                manifestBytes = manifestBytes[Encoding.UTF8.Preamble.Length..];
             using var document = JsonDocument.Parse(
-                memory.ToArray(),
+                manifestBytes,
                 new JsonDocumentOptions
                 {
                     AllowTrailingCommas = true,

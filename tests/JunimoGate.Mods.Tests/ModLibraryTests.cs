@@ -9,7 +9,7 @@ internal static class ModLibraryTests
     {
         using var fixture = new ModLibraryFixture();
         using var archive = CreateArchive(
-            ("bundle/Alpha/manifest.json", ManifestWithCommentsAndTrailingComma("Example.Alpha", "1.0.0", "Alpha.dll")),
+            ("bundle/Alpha/manifest.json", "\uFEFF" + ManifestWithCommentsAndTrailingComma("Example.Alpha", "1.0.0", "Alpha.dll")),
             ("bundle/Alpha/Alpha.dll", "alpha"),
             ("bundle/Beta/manifest.json", Manifest("Example.Beta", "2.0.0", contentPackFor: "Pathoschild.ContentPatcher")),
             ("bundle/Beta/content.json", "{}"),
@@ -25,6 +25,27 @@ internal static class ModLibraryTests
             TestHarness.Equal("Example.Alpha", scan.Candidates[0].Manifest.UniqueId);
             TestHarness.Equal("Example.Beta", scan.Candidates[1].Manifest.UniqueId);
             TestHarness.Equal("Pathoschild.ContentPatcher", scan.Candidates[1].Manifest.ContentPackForUniqueId);
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void AllowsRepeatedDirectoryEntries()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Wrapped/", ""),
+            ("Wrapped/", ""),
+            ("Wrapped/Mod/manifest.json", Manifest("Example.Directory", "1.0.0", entryDll: "Mod.dll")),
+            ("Wrapped/Mod/Mod.dll", "content"));
+        var transaction = fixture.Repository.CreateInstallTransaction("directories.zip");
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            TestHarness.True(transaction.ScanResult!.CanCommit);
+            TestHarness.Equal(1, transaction.ScanResult.Candidates.Count);
         }
         finally
         {

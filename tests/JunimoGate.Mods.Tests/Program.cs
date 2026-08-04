@@ -90,8 +90,10 @@ return TestHarness.Run(
         TestHarness.Throws<InvalidDataException>(() =>
             fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
     }),
-    ("Mod archive scanner discovers multiple nested Mods", () =>
+    ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
         ModLibraryTests.DiscoversMultipleNestedMods()),
+    ("Mod archive scanner accepts repeated directory entries", () =>
+        ModLibraryTests.AllowsRepeatedDirectoryEntries()),
     ("Mod archive scanner rejects traversal and overlapping roots", () =>
         ModLibraryTests.RejectsUnsafeArchiveShapes()),
     ("Mod library imports atomically and reuses identical content", () =>
