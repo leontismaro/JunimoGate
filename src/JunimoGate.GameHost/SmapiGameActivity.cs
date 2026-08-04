@@ -87,6 +87,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 "JunimoGate.SMAPI",
                 $"session-starting:build={GameHostRuntimeIdentity.BuildId}:bundle={smapiBundle.BundleId}:smapi=4.5.2");
             stage = GameStartupStage.SmapiSession;
+            PreservePreviousSmapiLog(snapshot.LogDirectory);
             var startupCompletion = new TaskCompletionSource<SmapiFailure?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             CreateAndRunSession(snapshot, launch, smapiBundle, loader, startupCompletion);
@@ -268,6 +269,24 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         GameHostBridge.Detach(this);
         loader?.Dispose();
         loader = null;
+    }
+
+    private void PreservePreviousSmapiLog(string logDirectory)
+    {
+        var current = Path.Combine(logDirectory, "SMAPI-latest.txt");
+        if (!File.Exists(current))
+            return;
+        try
+        {
+            var destination = Path.Combine(
+                JunimoGate.Android.AndroidPrivateStorage.GetProductLogsRoot(ApplicationContext ?? this),
+                "smapi-previous.txt");
+            File.Move(current, destination, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("JunimoGate.SMAPI", "smapi-previous-log-retention-failed", exception);
+        }
     }
 
     private async ValueTask TryBeginPlaySessionAsync(

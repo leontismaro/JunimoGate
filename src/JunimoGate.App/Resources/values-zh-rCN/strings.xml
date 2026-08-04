@@ -136,6 +136,27 @@
     </plurals>
     <string name="logs_title">日志</string>
     <string name="logs_empty">最近一次和上一次启动日志将在这里显示。</string>
+    <string name="logs_source">来源</string>
+    <string name="logs_generation">场次</string>
+    <string name="logs_source_launcher">启动器</string>
+    <string name="logs_source_game">游戏宿主</string>
+    <string name="logs_source_smapi">SMAPI 与 Mod</string>
+    <string name="logs_current">本次</string>
+    <string name="logs_previous">上次</string>
+    <string name="logs_copy">复制</string>
+    <string name="logs_copied">日志已复制。</string>
+    <string name="logs_share">分享</string>
+    <string name="logs_export">导出</string>
+    <string name="logs_export_diagnostics">诊断包</string>
+    <string name="logs_file_unavailable">当前来源没有这一次的日志。</string>
+    <string name="logs_summary">显示 %1$s · %2$d 个错误 · %3$d 个警告</string>
+    <string name="logs_summary_truncated">显示最新 %1$s · %2$d 个错误 · %3$d 个警告</string>
+    <string name="logs_read_failed">无法读取所选日志。</string>
+    <string name="logs_diagnostic_title">导出诊断包</string>
+    <string name="logs_diagnostic_preview">将导出以下日志的脱敏副本：\n\n%1$s\n\n最多包含 %2$s。不会包含存档、Mod 文件、游戏文件或启动令牌。</string>
+    <string name="logs_diagnostic_no_logs">当前没有可用日志。诊断包将只包含版本与设备元数据。</string>
+    <string name="logs_export_complete">诊断包已导出。</string>
+    <string name="logs_export_failed">无法导出诊断包。</string>
 
     <string name="mod_default_settings">Mod 默认设置</string>
     <string name="language_setting">语言</string>

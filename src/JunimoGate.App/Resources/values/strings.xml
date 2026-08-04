@@ -135,6 +135,27 @@
     </plurals>
     <string name="logs_title">Logs</string>
     <string name="logs_empty">The latest and previous launch logs will appear here.</string>
+    <string name="logs_source">Source</string>
+    <string name="logs_generation">Session</string>
+    <string name="logs_source_launcher">Launcher</string>
+    <string name="logs_source_game">GameHost</string>
+    <string name="logs_source_smapi">SMAPI and Mods</string>
+    <string name="logs_current">Current</string>
+    <string name="logs_previous">Previous</string>
+    <string name="logs_copy">Copy</string>
+    <string name="logs_copied">Log copied.</string>
+    <string name="logs_share">Share</string>
+    <string name="logs_export">Export</string>
+    <string name="logs_export_diagnostics">Diagnostics</string>
+    <string name="logs_file_unavailable">No log is available for this source and session.</string>
+    <string name="logs_summary">Showing %1$s · %2$d errors · %3$d warnings</string>
+    <string name="logs_summary_truncated">Showing the newest %1$s · %2$d errors · %3$d warnings</string>
+    <string name="logs_read_failed">The selected log could not be read.</string>
+    <string name="logs_diagnostic_title">Export diagnostic bundle</string>
+    <string name="logs_diagnostic_preview">The export contains a redacted copy of:\n\n%1$s\n\nMaximum included size: %2$s. It never includes saves, Mod files, game files, or launch tokens.</string>
+    <string name="logs_diagnostic_no_logs">No log files are currently available. The bundle will contain version and device metadata only.</string>
+    <string name="logs_export_complete">Diagnostic bundle exported.</string>
+    <string name="logs_export_failed">The diagnostic bundle could not be exported.</string>
 
     <string name="mod_default_settings">Mod defaults</string>
     <string name="language_setting">Language</string>

@@ -277,7 +277,13 @@ return TestHarness.Run(
                 StringComparer.OrdinalIgnoreCase,
                 "managed assembly"));
         }
-    }));
+    }),
+    ("Product diagnostics read only a bounded log tail", () =>
+        ProductDiagnosticTests.ReadsOnlyTheBoundedTail()),
+    ("Product diagnostics redact private paths and tokens", () =>
+        ProductDiagnosticTests.RedactsPrivatePathsAndTokens()),
+    ("Product diagnostics create a path-free bounded ZIP", () =>
+        ProductDiagnosticTests.CreatesAPathFreeBoundedZip()));
 
 sealed class RuntimeInventoryFixture : IDisposable
 {
