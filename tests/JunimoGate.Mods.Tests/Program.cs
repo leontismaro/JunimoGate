@@ -90,6 +90,12 @@ return TestHarness.Run(
         TestHarness.Throws<InvalidDataException>(() =>
             fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
     }),
+    ("Profile v2 repository preserves legacy profiles and creates groups", () =>
+        ModProfileV2Tests.CreatesSystemAndUserProfiles()),
+    ("Profile v2 repository updates members atomically", () =>
+        ModProfileV2Tests.UpdatesMembersAtomically()),
+    ("Profile v2 repository rejects duplicate members and deletes exactly", () =>
+        ModProfileV2Tests.RejectsDuplicateMembersAndDeletesExactly()),
     ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
         ModLibraryTests.DiscoversMultipleNestedMods()),
     ("Mod archive scanner accepts repeated directory entries", () =>
