@@ -27,6 +27,11 @@ return TestHarness.Run(
         TestHarness.False(SafeArchivePath.TryParse("   ", out _));
         TestHarness.False(SafeArchivePath.TryParse("mods/evil\0.dll", out _));
     }),
+    ("SafeArchivePath rejects filesystem-sized segments", () =>
+    {
+        TestHarness.False(SafeArchivePath.TryParse(new string('a', 256) + "/file.dll", out _));
+        TestHarness.True(SafeArchivePath.TryParse(new string('a', 255) + "/file.dll", out _));
+    }),
     ("ProfileId enforces conservative stable syntax", () =>
     {
         TestHarness.Equal("farm-2", ProfileId.Parse("farm-2").Value);
@@ -85,6 +90,18 @@ return TestHarness.Run(
         TestHarness.Throws<InvalidDataException>(() =>
             fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
     }),
+    ("Mod archive scanner discovers multiple nested Mods", () =>
+        ModLibraryTests.DiscoversMultipleNestedMods()),
+    ("Mod archive scanner rejects traversal and overlapping roots", () =>
+        ModLibraryTests.RejectsUnsafeArchiveShapes()),
+    ("Mod library imports atomically and reuses identical content", () =>
+        ModLibraryTests.ImportsAndReusesContent()),
+    ("Mod library keeps same-version different-content items", () =>
+        ModLibraryTests.KeepsDistinctContentCandidates()),
+    ("Mod library repairs missing and orphaned item directories", () =>
+        ModLibraryTests.RepairsRecoverableLibraryState()),
+    ("Mod library deletes one exact item", () =>
+        ModLibraryTests.DeletesExactItem()),
     ("SMAPI binding planner ignores files outside the real dependency closure", () =>
         AssemblyBindingPlannerTests.IgnoresUnreferencedFiles()),
     ("SMAPI binding planner ignores non-local framework references", () =>

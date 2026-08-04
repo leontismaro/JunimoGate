@@ -31,6 +31,10 @@ public interface IModArchiveInstallTransaction : IAsyncDisposable
 {
     ModInstallTransactionState State { get; }
 
+    ModArchiveScanResult? ScanResult { get; }
+
+    ModArchiveImportResult? ImportResult { get; }
+
     ValueTask ScanAsync(Stream archive, CancellationToken cancellationToken = default);
 
     ValueTask CommitAsync(CancellationToken cancellationToken = default);

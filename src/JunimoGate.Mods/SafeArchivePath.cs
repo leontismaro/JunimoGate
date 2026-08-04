@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace JunimoGate.Mods;
 
 /// <summary>A normalized relative ZIP entry path that has passed traversal and rooted-path checks.</summary>
@@ -59,7 +61,20 @@ public readonly record struct SafeArchivePath
             return false;
         }
 
-        path = new SafeArchivePath(string.Join('/', segments));
+        if (segments.Any(static segment => Encoding.UTF8.GetByteCount(segment) > 255))
+        {
+            error = "Archive entry path segments cannot exceed 255 UTF-8 bytes.";
+            return false;
+        }
+
+        var canonical = string.Join('/', segments);
+        if (Encoding.UTF8.GetByteCount(canonical) > 2048)
+        {
+            error = "Archive entry paths cannot exceed 2048 UTF-8 bytes.";
+            return false;
+        }
+
+        path = new SafeArchivePath(canonical);
         return true;
     }
 
