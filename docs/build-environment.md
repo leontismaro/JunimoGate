@@ -90,7 +90,7 @@ Extraction tests use synthetic legacy AssemblyStore v1, ELF64-wrapped AssemblySt
 
 ## Patched Harmony and cache helper
 
-RuntimeProbe uses the generated `Lib.Harmony 2.4.2-junimogate.11` package from the ignored local NuGet feed. The package is rebuilt from pinned Harmony, MonoMod, and iced source archives plus the tracked patch whenever it is absent or stale:
+RuntimeProbe and GameHost use the generated `Lib.Harmony 2.4.2-junimogate.63` package from the ignored local NuGet feed. The package is rebuilt from pinned Harmony, MonoMod, and iced source archives plus the tracked patch whenever it is absent or stale:
 
 ```bash
 ./build/build-harmony-android.sh
@@ -109,6 +109,13 @@ RuntimeProbe also packages an ARM64 no-libc instruction-cache helper built from 
 ## Android builds
 
 Build the ARM64 RuntimeProbe and Launcher scaffold:
+
+```bash
+export JUNIMOGATE_GAME_REFERENCE_DIR="/absolute/path/to/legally-extracted/game/assemblies"
+```
+
+The path is required for compile-time references only. It must be absolute; the build does not
+search for game files or copy them into the repository or final APK.
 
 ```bash
 ./build/build-android.sh Debug probe

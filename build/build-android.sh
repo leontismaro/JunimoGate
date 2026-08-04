@@ -40,6 +40,7 @@ for project in "${projects[@]}"; do
   printf '\nBuilding %s (%s)...\n' "${project#$root/}" "$configuration"
   "$DOTNET_ROOT/dotnet" build "$project" \
     --configuration "$configuration" \
+    --maxcpucount:1 \
     --property:AndroidSdkDirectory="$ANDROID_SDK_ROOT" \
     --property:JavaSdkDirectory="$JAVA_HOME"
 done
