@@ -641,6 +641,19 @@ public static class GameLaunchRegistry
         return active is null ? null : CreateHandle(active.Value.SnapshotId, active.Value.Snapshot, reused: true);
     }
 
+    public static async ValueTask<RuntimeCacheCleanupResult> CleanRebuildableCachesAsync(
+        Context context,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (GameSessionRegistry.IsGameProcessActive(context))
+            return new RuntimeCacheCleanupResult(0, 0, BlockedByRunningGame: true);
+        var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+        return await RuntimeCacheMaintenance
+            .PruneAsync(context, state, cancellationToken, throwOnFailure: true)
+            .ConfigureAwait(false);
+    }
+
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,

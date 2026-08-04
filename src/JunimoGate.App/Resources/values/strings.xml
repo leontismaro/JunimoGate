@@ -188,7 +188,18 @@
     <string name="settings_confirm_mod_deletion">Confirm before deleting a Mod</string>
     <string name="settings_confirm_mod_deletion_summary">Running or starting game sessions remain protected even when confirmation is off.</string>
     <string name="settings_more">More settings</string>
-    <string name="settings_more_description">Saves, appearance, diagnostics and About will be added here.</string>
+    <string name="settings_more_description">Maintenance runs only when requested. Normal launch keeps using the prepared environment.</string>
+    <string name="settings_repair_action">Reprepare game environment</string>
+    <string name="settings_repair_summary">Runs one Deep Prepare without launching the game. Use after an update or a confirmed runtime problem.</string>
+    <string name="settings_repair_confirm_title">Reprepare the game environment?</string>
+    <string name="settings_repair_confirm_message">This can take a while and will re-check the installed game. Mods, saves, backups and logs are not changed.</string>
+    <string name="settings_repair_complete">The game environment is ready.</string>
+    <string name="settings_repair_failed">The game environment could not be prepared.</string>
+    <string name="settings_cache_cleanup_action">Clean rebuildable caches</string>
+    <string name="settings_cache_cleanup_summary">Removes only old unreferenced workspaces, bundles and temporary caches. Active game data is retained.</string>
+    <string name="settings_cache_cleanup_complete">Removed %1$d cache entries and reclaimed %2$s.</string>
+    <string name="settings_cache_cleanup_blocked">Close the running game before cleaning caches.</string>
+    <string name="settings_cache_cleanup_failed">Rebuildable caches could not be cleaned.</string>
 
     <string name="environment_title">Game &amp; runtime</string>
     <string name="environment_settings_summary">Installed game, SMAPI version and bundled runtime details</string>

@@ -7,6 +7,8 @@ using AndroidX.AppCompat.Widget;
 using AndroidX.Core.OS;
 using AndroidX.Fragment.App;
 using AndroidX.Navigation.Fragment;
+using Google.Android.Material.Button;
+using Google.Android.Material.Dialog;
 using Google.Android.Material.TextField;
 using JunimoGate.Android;
 using JunimoGate.Mods;
@@ -29,6 +31,8 @@ public sealed class SettingsFragment : Fragment
     private SwitchCompat? confirmDeletion;
     private LauncherSettingsRepository? settingsRepository;
     private CancellationTokenSource? settingsCancellation;
+    private MaterialButton? repairButton;
+    private MaterialButton? cleanupButton;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_settings, container, false)
@@ -69,6 +73,12 @@ public sealed class SettingsFragment : Fragment
             ?? throw new InvalidOperationException("The Mod deletion setting is unavailable.");
         addImportedMods.CheckedChange += OnAddImportedModsChanged;
         confirmDeletion.CheckedChange += OnConfirmDeletionChanged;
+        repairButton = view.FindViewById<MaterialButton>(Resource.Id.settings_repair_game)
+            ?? throw new InvalidOperationException("The game repair action is unavailable.");
+        cleanupButton = view.FindViewById<MaterialButton>(Resource.Id.settings_cleanup_cache)
+            ?? throw new InvalidOperationException("The cache cleanup action is unavailable.");
+        repairButton.Click += OnRepairClicked;
+        cleanupButton.Click += OnCleanupClicked;
     }
 
     public override void OnStart()
@@ -112,12 +122,18 @@ public sealed class SettingsFragment : Fragment
             addImportedMods.CheckedChange -= OnAddImportedModsChanged;
         if (confirmDeletion is not null)
             confirmDeletion.CheckedChange -= OnConfirmDeletionChanged;
+        if (repairButton is not null)
+            repairButton.Click -= OnRepairClicked;
+        if (cleanupButton is not null)
+            cleanupButton.Click -= OnCleanupClicked;
         bindingPolicy = null;
         language = null;
         environmentCard = null;
         saveBackupsCard = null;
         addImportedMods = null;
         confirmDeletion = null;
+        repairButton = null;
+        cleanupButton = null;
         base.OnDestroyView();
     }
 
@@ -167,6 +183,18 @@ public sealed class SettingsFragment : Fragment
         if (!syncing && settingsCancellation is { IsCancellationRequested: false } lifetime)
             _ = UpdateSettingsAsync(addImported: null, confirmDelete: eventArgs.IsChecked, lifetime.Token);
     }
+
+    private void OnRepairClicked(object? sender, EventArgs eventArgs)
+    {
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.settings_repair_confirm_title);
+        dialog.SetMessage(Resource.String.settings_repair_confirm_message);
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
+        dialog.SetPositiveButton(Resource.String.settings_repair_action, (_, _) => host?.RequestGameEnvironmentRepair());
+        dialog.Show();
+    }
+
+    private void OnCleanupClicked(object? sender, EventArgs eventArgs) => host?.RequestCacheCleanup();
 
     private async Task LoadSettingsAsync(CancellationToken cancellationToken)
     {

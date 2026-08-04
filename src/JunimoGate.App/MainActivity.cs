@@ -3,6 +3,7 @@ using Android.Content;
 using Android.Content.PM;
 using Android.OS;
 using Android.Util;
+using Android.Widget;
 using AndroidX.AppCompat.App;
 using AndroidX.Navigation;
 using AndroidX.Navigation.Fragment;
@@ -123,6 +124,10 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 
     void ILauncherUiHost.OpenSaveBackups() => OpenSaveBackups();
 
+    void ILauncherUiHost.RequestGameEnvironmentRepair() => _ = RepairGameEnvironmentAsync();
+
+    void ILauncherUiHost.RequestCacheCleanup() => _ = CleanRebuildableCachesAsync();
+
     private async Task LaunchAsync()
     {
         if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
@@ -183,6 +188,68 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
                                           InvalidDataException or InvalidOperationException)
         {
             Log.Error("JunimoGate.Launcher", "profile-refresh-failed", exception);
+        }
+    }
+
+    private async Task RepairGameEnvironmentAsync()
+    {
+        if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
+            return;
+        try
+        {
+            var result = await coordinator.RepairGameEnvironmentAsync(cancellation.Token);
+            if (!destroyed)
+            {
+                RunOnUiThread(() => Toast.MakeText(
+                    this,
+                    result.IsReady ? Resource.String.settings_repair_complete : Resource.String.settings_repair_failed,
+                    ToastLength.Long)?.Show());
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Launcher", "manual-repair-failed", exception);
+            if (!destroyed)
+                RunOnUiThread(() => Toast.MakeText(this, Resource.String.settings_repair_failed, ToastLength.Long)?.Show());
+            _ = InitializeAsync(cancellation.Token);
+        }
+    }
+
+    private async Task CleanRebuildableCachesAsync()
+    {
+        if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
+            return;
+        try
+        {
+            var result = await coordinator.CleanRebuildableCachesAsync(cancellation.Token);
+            if (destroyed)
+                return;
+            RunOnUiThread(() =>
+            {
+                var reclaimed = global::Android.Text.Format.Formatter
+                    .FormatFileSize(this, result.ReclaimedBytes) ?? "0 B";
+                var message = result.BlockedByRunningGame
+                    ? GetString(Resource.String.settings_cache_cleanup_blocked)
+                    : FormatString(
+                        Resource.String.settings_cache_cleanup_complete,
+                        Java.Lang.Integer.ValueOf(result.RemovedEntries),
+                        new Java.Lang.String(reclaimed));
+                Toast.MakeText(this, message, ToastLength.Long)?.Show();
+            });
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Cache", "manual-cache-cleanup-failed", exception);
+            if (!destroyed)
+                RunOnUiThread(() => Toast.MakeText(this, Resource.String.settings_cache_cleanup_failed, ToastLength.Long)?.Show());
         }
     }
 
@@ -264,6 +331,10 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         Finish();
         return true;
     }
+
+    private string FormatString(int resourceId, params Java.Lang.Object[] arguments) =>
+        Resources?.GetString(resourceId, arguments)
+        ?? throw new InvalidOperationException("The Launcher string resource is unavailable.");
 }
 
 internal interface ILauncherUiHost
@@ -281,4 +352,8 @@ internal interface ILauncherUiHost
     void OpenEnvironment();
 
     void OpenSaveBackups();
+
+    void RequestGameEnvironmentRepair();
+
+    void RequestCacheCleanup();
 }

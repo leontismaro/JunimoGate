@@ -308,6 +308,48 @@ internal sealed class LauncherCoordinator : IDisposable
         }
     }
 
+    public async ValueTask<GamePreparationResult> RepairGameEnvironmentAsync(CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (GameSessionRegistry.IsGameProcessActive(context))
+                throw new InvalidOperationException("The game is running.");
+            Publish(new LauncherState(
+                LauncherStatus.Preparing,
+                LauncherMessageKey.PreparingGame,
+                ShowProgress: true,
+                CanLaunch: false));
+            var result = await GameDeepPrepareCoordinator
+                .PrepareAsync(context, new PreparationProgress(this), cancellationToken)
+                .ConfigureAwait(false);
+            PublishPreparationResult(result);
+            return result;
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
+    public async ValueTask<RuntimeCacheCleanupResult> CleanRebuildableCachesAsync(
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await GameLaunchRegistry
+                .CleanRebuildableCachesAsync(context, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
     public void ReportLaunchFailure()
     {
         if (!disposed)

@@ -189,7 +189,18 @@
     <string name="settings_confirm_mod_deletion">删除 Mod 前确认</string>
     <string name="settings_confirm_mod_deletion_summary">即使关闭确认，正在启动或运行的游戏会话仍受保护。</string>
     <string name="settings_more">更多设置</string>
-    <string name="settings_more_description">存档、外观、诊断和关于信息将在这里提供。</string>
+    <string name="settings_more_description">维护操作只在用户主动点击后执行；正常启动继续复用已准备环境。</string>
+    <string name="settings_repair_action">重新准备游戏环境</string>
+    <string name="settings_repair_summary">执行一次 Deep Prepare，但不启动游戏。仅在游戏更新或确认运行环境异常后使用。</string>
+    <string name="settings_repair_confirm_title">重新准备游戏环境？</string>
+    <string name="settings_repair_confirm_message">此操作可能耗时，并会重新检查已安装游戏；不会修改 Mod、存档、备份或日志。</string>
+    <string name="settings_repair_complete">游戏环境已准备完成。</string>
+    <string name="settings_repair_failed">无法重新准备游戏环境。</string>
+    <string name="settings_cache_cleanup_action">清理可重建缓存</string>
+    <string name="settings_cache_cleanup_summary">只删除未被引用的旧 workspace、bundle 和临时缓存；保留当前游戏数据。</string>
+    <string name="settings_cache_cleanup_complete">已删除 %1$d 个缓存项，释放 %2$s。</string>
+    <string name="settings_cache_cleanup_blocked">请先关闭正在运行的游戏，再清理缓存。</string>
+    <string name="settings_cache_cleanup_failed">无法清理可重建缓存。</string>
 
     <string name="environment_title">游戏与运行环境</string>
     <string name="environment_settings_summary">已安装游戏、SMAPI 版本和内置运行时详情</string>

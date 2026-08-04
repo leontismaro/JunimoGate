@@ -8,6 +8,11 @@ using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.GameHost;
 
+public sealed record RuntimeCacheCleanupResult(
+    int RemovedEntries,
+    long ReclaimedBytes,
+    bool BlockedByRunningGame);
+
 internal static class RuntimeCacheMaintenance
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -41,13 +46,14 @@ internal static class RuntimeCacheMaintenance
             $"cache-reset level={recoveryLevel} stage={stage} source={(recoveryLevel == 2 ? 1 : 0)} applied=1 bundle=1");
     }
 
-    public static async ValueTask PruneAsync(
+    public static async ValueTask<RuntimeCacheCleanupResult> PruneAsync(
         Context context,
         GameLaunchRegistry.GameActivationState state,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool throwOnFailure = false)
     {
         if (GameSessionRegistry.IsGameProcessActive(context))
-            return;
+            return new RuntimeCacheCleanupResult(0, 0, BlockedByRunningGame: true);
 
         try
         {
@@ -82,6 +88,7 @@ internal static class RuntimeCacheMaintenance
             removed += BundledSmapiAssets.PruneOldRuntimeCaches(context, ref reclaimed);
 
             Log.Info("JunimoGate.Cache", $"pruned entries={removed} reclaimedBytes={reclaimed}");
+            return new RuntimeCacheCleanupResult(removed, reclaimed, BlockedByRunningGame: false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -89,7 +96,10 @@ internal static class RuntimeCacheMaintenance
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
+            if (throwOnFailure)
+                throw;
             Log.Warn("JunimoGate.Cache", $"prune-skipped:{exception.GetType().Name}");
+            return new RuntimeCacheCleanupResult(0, 0, BlockedByRunningGame: false);
         }
     }
 
