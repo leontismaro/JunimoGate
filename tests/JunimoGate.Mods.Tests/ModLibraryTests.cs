@@ -9,7 +9,7 @@ internal static class ModLibraryTests
     {
         using var fixture = new ModLibraryFixture();
         using var archive = CreateArchive(
-            ("bundle/Alpha/manifest.json", Manifest("Example.Alpha", "1.0.0", entryDll: "Alpha.dll")),
+            ("bundle/Alpha/manifest.json", ManifestWithCommentsAndTrailingComma("Example.Alpha", "1.0.0", "Alpha.dll")),
             ("bundle/Alpha/Alpha.dll", "alpha"),
             ("bundle/Beta/manifest.json", Manifest("Example.Beta", "2.0.0", contentPackFor: "Pathoschild.ContentPatcher")),
             ("bundle/Beta/content.json", "{}"),
@@ -211,6 +211,21 @@ internal static class ModLibraryTests
             : $",\"ContentPackFor\":{{\"UniqueID\":\"{contentPackFor}\"}}";
         return $"{{\"Name\":\"{uniqueId}\",\"Author\":\"Test\",\"Version\":\"{version}\",\"UniqueID\":\"{uniqueId}\"{load}}}";
     }
+
+    private static string ManifestWithCommentsAndTrailingComma(
+        string uniqueId,
+        string version,
+        string entryDll) =>
+        $$"""
+        {
+          // SMAPI manifests commonly use JSON comments and trailing commas.
+          "Name": "{{uniqueId}}",
+          "Author": "Test",
+          "Version": "{{version}}",
+          "UniqueID": "{{uniqueId}}",
+          "EntryDll": "{{entryDll}}",
+        }
+        """;
 
     private static void CopyDirectory(string source, string destination)
     {

@@ -417,7 +417,13 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
             throw new InvalidDataException("The Mod manifest length changed while reading.");
         try
         {
-            using var document = JsonDocument.Parse(memory.ToArray());
+            using var document = JsonDocument.Parse(
+                memory.ToArray(),
+                new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = true,
+                    CommentHandling = JsonCommentHandling.Skip,
+                });
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("The Mod manifest must be a JSON object.");
