@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JunimoGate</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_mods">Mods</string>
+    <string name="nav_logs">Logs</string>
+    <string name="nav_settings">Settings</string>
+    <string name="game_title">Stardew Valley through SMAPI</string>
+    <string name="checking_game">Checking the installed game…</string>
+    <string name="launch_game">Launch game</string>
+    <string name="launching_game">Starting…</string>
+    <string name="home_summary">Overview</string>
+    <string name="play_time_empty">Play time\n—</string>
+    <string name="last_save_empty">Last save\n—</string>
+    <string name="enabled_mods_empty">Enabled Mods\n—</string>
+    <string name="mods_title">Mods</string>
+    <string name="mods_empty">The global Mod library and groups will appear here.</string>
+    <string name="logs_title">Logs</string>
+    <string name="logs_empty">The latest and previous launch logs will appear here.</string>
+    <string name="mod_default_settings">Mod defaults</string>
+    <string name="binding_policy">Assembly dependency policy</string>
+    <string name="binding_highest_compatible">Highest compatible</string>
+    <string name="binding_strict">Strict</string>
+    <string name="binding_first_loaded">First loaded</string>
+    <string name="settings_more">More settings</string>
+    <string name="settings_more_description">Game environment, saves, appearance, diagnostics and About will be added here.</string>
+</resources>

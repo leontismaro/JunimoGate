@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.JunimoGate" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/junimo_primary</item>
+        <item name="colorOnPrimary">@color/junimo_on_primary</item>
+        <item name="colorPrimaryContainer">@color/junimo_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/junimo_on_primary_container</item>
+        <item name="colorSecondary">@color/junimo_secondary</item>
+        <item name="colorSurface">@color/junimo_surface</item>
+        <item name="colorSurfaceContainer">@color/junimo_surface_container</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/junimo_surface_container</item>
+    </style>
+</resources>

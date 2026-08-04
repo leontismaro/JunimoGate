@@ -38,6 +38,12 @@
     <PackageReference Include="SkiaSharp" Version="4.150.1" GeneratePathProperty="true" />
     <PackageReference Include="StbImageWriteSharp" Version="1.16.7" GeneratePathProperty="true" />
     <PackageReference Include="TextCopy" Version="6.2.1" GeneratePathProperty="true" />
+    <PackageReference Include="Xamarin.AndroidX.AppCompat" Version="1.7.1.4" />
+    <PackageReference Include="Xamarin.AndroidX.Fragment" Version="1.8.9.3" />
+    <PackageReference Include="Xamarin.AndroidX.Navigation.Fragment" Version="2.9.8.1" />
+    <PackageReference Include="Xamarin.AndroidX.Navigation.UI" Version="2.9.8.1" />
+    <PackageReference Include="Xamarin.AndroidX.RecyclerView" Version="1.4.0.6" />
+    <PackageReference Include="Xamarin.Google.Android.Material" Version="1.14.0.6" />
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />
     <ProjectReference Include="../JunimoGate.GameHost/JunimoGate.GameHost.csproj" />

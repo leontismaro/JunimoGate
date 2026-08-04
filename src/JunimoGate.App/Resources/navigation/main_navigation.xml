@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_navigation"
+    app:startDestination="@id/navigation_home">
+
+    <fragment
+        android:id="@+id/navigation_home"
+        android:name="org.junimogate.app.HomeFragment"
+        android:label="@string/nav_home" />
+
+    <fragment
+        android:id="@+id/navigation_mods"
+        android:name="org.junimogate.app.ModsFragment"
+        android:label="@string/nav_mods" />
+
+    <fragment
+        android:id="@+id/navigation_logs"
+        android:name="org.junimogate.app.LogsFragment"
+        android:label="@string/nav_logs" />
+
+    <fragment
+        android:id="@+id/navigation_settings"
+        android:name="org.junimogate.app.SettingsFragment"
+        android:label="@string/nav_settings" />
+</navigation>

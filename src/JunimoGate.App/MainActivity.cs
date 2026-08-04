@@ -1,11 +1,12 @@
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
-using Android.Graphics;
 using Android.OS;
 using Android.Util;
-using Android.Views;
-using Android.Widget;
+using AndroidX.AppCompat.App;
+using AndroidX.Navigation.Fragment;
+using AndroidX.Navigation.UI;
+using Google.Android.Material.BottomNavigation;
 using JunimoGate.GameHost;
 using JunimoGate.Mods;
 using Log = JunimoGate.Android.JunimoGateLog;
@@ -15,21 +16,32 @@ namespace JunimoGate.App;
 
 [Activity(
     Name = "org.junimogate.app.MainActivity",
-    Label = "JunimoGate",
+    Label = "@string/app_name",
+    Theme = "@style/Theme.JunimoGate",
     MainLauncher = true,
     Exported = true,
     LaunchMode = LaunchMode.SingleTop)]
-public sealed class MainActivity : Activity
+public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 {
     private CancellationTokenSource? lifetimeCancellation;
     private LauncherCoordinator? coordinator;
-    private TextView? statusText;
-    private ProgressBar? progressBar;
-    private Button? launchButton;
-    private Spinner? bindingPolicySpinner;
-    private bool syncingBindingPolicy;
+    private LauncherState currentState = new(
+        LauncherStatus.Checking,
+        "Checking the installed game…",
+        ShowProgress: true,
+        CanLaunch: false);
     private bool returningFromGame;
     private bool destroyed;
+
+    LauncherState ILauncherUiHost.CurrentState => currentState;
+
+    private event Action<LauncherState>? launcherStateChanged;
+
+    event Action<LauncherState>? ILauncherUiHost.LauncherStateChanged
+    {
+        add => launcherStateChanged += value;
+        remove => launcherStateChanged -= value;
+    }
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
@@ -38,66 +50,15 @@ public sealed class MainActivity : Activity
         if (TryRouteToActiveGame())
             return;
 
-        var density = Resources!.DisplayMetrics!.Density;
-        var padding = (int)(24 * density);
-        statusText = new TextView(this)
-        {
-            Text = "Checking the installed game…",
-            TextSize = 18,
-            Gravity = GravityFlags.Center,
-            Typeface = Typeface.Default,
-        };
-        statusText.SetPadding(padding, padding, padding, padding);
+        SetContentView(Resource.Layout.activity_main);
+        SetSupportActionBar(FindViewById<Google.Android.Material.AppBar.MaterialToolbar>(Resource.Id.top_app_bar));
+        SupportActionBar?.SetDisplayShowTitleEnabled(true);
 
-        progressBar = new ProgressBar(this)
-        {
-            Indeterminate = true,
-        };
-
-        launchButton = new Button(this)
-        {
-            Text = "Launch game",
-            Enabled = false,
-        };
-        launchButton.Click += OnLaunchClicked;
-
-        var bindingPolicyLabel = new TextView(this)
-        {
-            Text = "Mod dependency policy",
-            TextSize = 14,
-        };
-        bindingPolicySpinner = new Spinner(this) { Enabled = false };
-        var bindingPolicyAdapter = new ArrayAdapter<string>(
-            this,
-            global::Android.Resource.Layout.SimpleSpinnerItem,
-            ["Highest compatible", "Strict", "First loaded"]);
-        bindingPolicyAdapter.SetDropDownViewResource(global::Android.Resource.Layout.SimpleSpinnerDropDownItem);
-        bindingPolicySpinner.Adapter = bindingPolicyAdapter;
-        bindingPolicySpinner.ItemSelected += OnBindingPolicySelected;
-
-        var layout = new LinearLayout(this)
-        {
-            Orientation = Orientation.Vertical,
-        };
-        layout.SetGravity(GravityFlags.Center);
-        layout.SetPadding(padding, padding, padding, padding);
-        layout.AddView(statusText, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MatchParent,
-            0,
-            1));
-        layout.AddView(progressBar, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WrapContent,
-            ViewGroup.LayoutParams.WrapContent));
-        layout.AddView(bindingPolicyLabel, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MatchParent,
-            ViewGroup.LayoutParams.WrapContent));
-        layout.AddView(bindingPolicySpinner, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MatchParent,
-            ViewGroup.LayoutParams.WrapContent));
-        layout.AddView(launchButton, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MatchParent,
-            ViewGroup.LayoutParams.WrapContent));
-        SetContentView(layout);
+        var navHost = SupportFragmentManager.FindFragmentById(Resource.Id.nav_host_fragment) as NavHostFragment
+            ?? throw new InvalidOperationException("The launcher navigation host is unavailable.");
+        var bottomNavigation = FindViewById<BottomNavigationView>(Resource.Id.bottom_navigation)
+            ?? throw new InvalidOperationException("The launcher bottom navigation is unavailable.");
+        NavigationUI.SetupWithNavController(bottomNavigation, navHost.NavController);
 
         lifetimeCancellation = new CancellationTokenSource();
         coordinator = new LauncherCoordinator(ApplicationContext ?? this);
@@ -129,10 +90,7 @@ public sealed class MainActivity : Activity
             "JunimoGate.Launcher",
             $"activity-destroyed finishing={(IsFinishing ? 1 : 0)} changingConfiguration={(IsChangingConfigurations ? 1 : 0)}");
         destroyed = true;
-        if (launchButton is not null)
-            launchButton.Click -= OnLaunchClicked;
-        if (bindingPolicySpinner is not null)
-            bindingPolicySpinner.ItemSelected -= OnBindingPolicySelected;
+        launcherStateChanged = null;
         if (coordinator is not null)
         {
             coordinator.StateChanged -= OnLauncherStateChanged;
@@ -147,14 +105,15 @@ public sealed class MainActivity : Activity
             cancellation.Dispose();
         }
 
-        statusText = null;
-        progressBar = null;
-        launchButton = null;
-        bindingPolicySpinner = null;
         base.OnDestroy();
     }
 
-    private async void OnLaunchClicked(object? sender, EventArgs eventArgs)
+    void ILauncherUiHost.RequestLaunch() => _ = LaunchAsync();
+
+    void ILauncherUiHost.UpdateBindingPolicy(ModAssemblyBindingPolicy policy) =>
+        _ = UpdateBindingPolicyAsync(policy);
+
+    private async Task LaunchAsync()
     {
         if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
             return;
@@ -176,6 +135,26 @@ public sealed class MainActivity : Activity
             Log.Error("JunimoGate.Launcher", "launch-dispatch-failed", exception);
             returningFromGame = false;
             coordinator.ReportLaunchFailure();
+        }
+    }
+
+    private async Task UpdateBindingPolicyAsync(ModAssemblyBindingPolicy policy)
+    {
+        if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
+            return;
+
+        try
+        {
+            await coordinator.UpdateBindingPolicyAsync(policy, cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Activity destruction cancels pending Profile writes.
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Launcher", "profile-policy-update-failed", exception);
+            _ = InitializeAsync(cancellation.Token);
         }
     }
 
@@ -227,56 +206,9 @@ public sealed class MainActivity : Activity
         {
             if (destroyed)
                 return;
-            if (statusText is not null)
-                statusText.Text = state.Message;
-            if (progressBar is not null)
-                progressBar.Visibility = state.ShowProgress ? ViewStates.Visible : ViewStates.Gone;
-            if (launchButton is not null)
-                launchButton.Enabled = state.CanLaunch;
-            if (bindingPolicySpinner is not null)
-            {
-                syncingBindingPolicy = true;
-                bindingPolicySpinner.SetSelection(state.AssemblyBindingPolicy switch
-                {
-                    ModAssemblyBindingPolicy.HighestCompatible => 0,
-                    ModAssemblyBindingPolicy.Strict => 1,
-                    ModAssemblyBindingPolicy.FirstLoaded => 2,
-                    _ => 0,
-                });
-                bindingPolicySpinner.Enabled = state.CanConfigureProfile;
-                syncingBindingPolicy = false;
-            }
+            currentState = state;
+            launcherStateChanged?.Invoke(state);
         });
-    }
-
-    private async void OnBindingPolicySelected(object? sender, AdapterView.ItemSelectedEventArgs eventArgs)
-    {
-        if (syncingBindingPolicy || destroyed || coordinator is null ||
-            lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
-        {
-            return;
-        }
-
-        var policy = eventArgs.Position switch
-        {
-            0 => ModAssemblyBindingPolicy.HighestCompatible,
-            1 => ModAssemblyBindingPolicy.Strict,
-            2 => ModAssemblyBindingPolicy.FirstLoaded,
-            _ => throw new InvalidOperationException("The selected Mod dependency policy is invalid."),
-        };
-        try
-        {
-            await coordinator.UpdateBindingPolicyAsync(policy, cancellation.Token);
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            // Activity destruction cancels pending Profile writes.
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
-        {
-            Log.Error("JunimoGate.Launcher", "profile-policy-update-failed", exception);
-            _ = InitializeAsync(cancellation.Token);
-        }
     }
 
     private bool TryRouteToActiveGame()
@@ -288,4 +220,15 @@ public sealed class MainActivity : Activity
         Finish();
         return true;
     }
+}
+
+internal interface ILauncherUiHost
+{
+    LauncherState CurrentState { get; }
+
+    event Action<LauncherState>? LauncherStateChanged;
+
+    void RequestLaunch();
+
+    void UpdateBindingPolicy(ModAssemblyBindingPolicy policy);
 }

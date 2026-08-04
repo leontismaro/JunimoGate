@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="junimo_primary">#5D7748</color>
+    <color name="junimo_on_primary">#FFFFFF</color>
+    <color name="junimo_primary_container">#DCEBCB</color>
+    <color name="junimo_on_primary_container">#17280D</color>
+    <color name="junimo_secondary">#8A5D16</color>
+    <color name="junimo_surface">#FFF9ED</color>
+    <color name="junimo_surface_container">#F3EDDF</color>
+</resources>
