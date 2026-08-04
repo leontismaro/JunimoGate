@@ -8,6 +8,7 @@ using Android.Text.Format;
 using Android.Views;
 using Android.Widget;
 using AndroidX.RecyclerView.Widget;
+using AndroidX.Navigation.Fragment;
 using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
 using Google.Android.Material.ProgressIndicator;
@@ -29,8 +30,12 @@ public sealed class ModsFragment : Fragment
     private SearchView? search;
     private LinearProgressIndicator? progress;
     private TextView? empty;
+    private TextView? groupSummary;
+    private MaterialButton? manageGroupsButton;
     private ModLibraryAdapter? adapter;
     private ModLibraryRepository? repository;
+    private ModProfileV2Repository? profiles;
+    private ActiveModProfileSelectionRepository? activeProfile;
     private CancellationTokenSource? cancellation;
     private IModArchiveInstallTransaction? pendingTransaction;
     private bool busy;
@@ -50,12 +55,17 @@ public sealed class ModsFragment : Fragment
             ?? throw new InvalidOperationException("The Mod search input is unavailable.");
         empty = view.FindViewById<TextView>(Resource.Id.mods_empty)
             ?? throw new InvalidOperationException("The Mod empty state is unavailable.");
+        groupSummary = view.FindViewById<TextView>(Resource.Id.mods_group_summary)
+            ?? throw new InvalidOperationException("The Mod group summary is unavailable.");
+        manageGroupsButton = view.FindViewById<MaterialButton>(Resource.Id.mods_manage_groups)
+            ?? throw new InvalidOperationException("The Mod group action is unavailable.");
         var list = view.FindViewById<RecyclerView>(Resource.Id.mods_list)
             ?? throw new InvalidOperationException("The Mod library list is unavailable.");
         adapter = new ModLibraryAdapter(FormatItemSummary, ShowDetails, RequestDelete);
         list.SetLayoutManager(new LinearLayoutManager(RequireContext()));
         list.SetAdapter(adapter);
         importButton.Click += OnImportClicked;
+        manageGroupsButton.Click += OnManageGroupsClicked;
         search.QueryTextChange += OnSearchChanged;
     }
 
@@ -64,7 +74,10 @@ public sealed class ModsFragment : Fragment
         base.OnStart();
         cancellation = new CancellationTokenSource();
         repository = CreateRepository();
-        _ = RefreshAsync(cancellation.Token);
+        var profilesRoot = Path.Combine(AndroidPrivateStorage.GetUserDataRoot(RequireContext()), "profiles");
+        profiles = new ModProfileV2Repository(profilesRoot);
+        activeProfile = new ActiveModProfileSelectionRepository(profilesRoot);
+        _ = InitializeContentAsync(profilesRoot, cancellation.Token);
     }
 
     public override void OnStop()
@@ -76,6 +89,8 @@ public sealed class ModsFragment : Fragment
         if (pending is not null)
             _ = pending.DisposeAsync();
         repository = null;
+        profiles = null;
+        activeProfile = null;
         SetBusy(false);
         base.OnStop();
     }
@@ -86,10 +101,14 @@ public sealed class ModsFragment : Fragment
             importButton.Click -= OnImportClicked;
         if (search is not null)
             search.QueryTextChange -= OnSearchChanged;
+        if (manageGroupsButton is not null)
+            manageGroupsButton.Click -= OnManageGroupsClicked;
         importButton = null;
         search = null;
         progress = null;
         empty = null;
+        groupSummary = null;
+        manageGroupsButton = null;
         adapter = null;
         base.OnDestroyView();
     }
@@ -128,6 +147,48 @@ public sealed class ModsFragment : Fragment
     {
         adapter?.SetQuery(eventArgs.NewText);
         UpdateEmptyState();
+    }
+
+    private void OnManageGroupsClicked(object? sender, EventArgs eventArgs) =>
+        NavHostFragment.FindNavController(this).Navigate(Resource.Id.navigation_mod_groups);
+
+    private async Task InitializeContentAsync(string profilesRoot, CancellationToken cancellationToken)
+    {
+        SetBusy(true);
+        try
+        {
+            await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
+            if (repository is not null && profiles is not null)
+            {
+                var migrator = new LegacyModProfileMigrator(profilesRoot, repository, profiles);
+                var migration = await migrator
+                    .MigrateAsync(ProfileId.Parse("default"), "Default", cancellationToken)
+                    .ConfigureAwait(false);
+                Log.Info(
+                    "JunimoGate.Mods",
+                    $"profile-migration already={(migration.AlreadyMigrated ? 1 : 0)} imported={migration.ImportedItems} reused={migration.ReusedItems} enabled={migration.EnabledMembers} disabled={migration.DisabledMembers}");
+            }
+            await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Leaving the screen cancels migration and refresh work.
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "profile-initialization-failed", exception);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_profile_migration_failed));
+            }
+            await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => SetBusy(false));
+        }
     }
 
     private async Task ScanArchiveAsync(global::Android.Net.Uri uri, CancellationToken cancellationToken)
@@ -216,7 +277,7 @@ public sealed class ModsFragment : Fragment
                 ?? throw new InvalidDataException("The Mod import result is missing.");
             Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
-            await RefreshAsync(cancellationToken).ConfigureAwait(false);
+            await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -272,6 +333,63 @@ public sealed class ModsFragment : Fragment
             if (IsAdded)
                 Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_library_read_failed));
         }
+    }
+
+    private async Task RefreshAllAsync(CancellationToken cancellationToken)
+    {
+        if (repository is null)
+            return;
+        var index = await repository.ReadAsync(cancellationToken).ConfigureAwait(false);
+        ModProfileV2? selectedProfile = null;
+        if (profiles is not null && activeProfile is not null)
+        {
+            var selection = await activeProfile
+                .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                selectedProfile = await profiles
+                    .ReadAsync(ProfileId.Parse(selection.ActiveProfileId), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (FileNotFoundException)
+            {
+                selectedProfile = await profiles
+                    .ReadAsync(ProfileId.Parse(ModProfileV2.NoModsId), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+        if (!IsAdded || cancellationToken.IsCancellationRequested)
+            return;
+        Activity?.RunOnUiThread(() =>
+        {
+            Render(index.Items);
+            RenderGroupSummary(selectedProfile, index);
+        });
+    }
+
+    private void RenderGroupSummary(ModProfileV2? profile, ModLibraryIndex library)
+    {
+        if (groupSummary is null)
+            return;
+        if (profile is null)
+        {
+            groupSummary.SetText(Resource.String.mods_group_unavailable);
+            return;
+        }
+        var ids = library.Items.Select(item => item.LibraryItemId).ToHashSet(StringComparer.Ordinal);
+        var enabledCount = profile.Members.Count(member => member.Enabled);
+        var missingCount = profile.Members.Count(member => member.LibraryItemId is null || !ids.Contains(member.LibraryItemId));
+        var name = profile.Id == ModProfileV2.NoModsId
+            ? GetString(Resource.String.mods_no_mods_group)
+            : profile.Id == "default"
+                ? GetString(Resource.String.mods_default_group)
+                : profile.DisplayName;
+        groupSummary.Text = FormatString(
+            Resource.String.mods_group_summary,
+            new JString(name),
+            Java.Lang.Integer.ValueOf(enabledCount),
+            Java.Lang.Integer.ValueOf(missingCount));
     }
 
     private void Render(IReadOnlyList<ModLibraryItem> items)
@@ -351,7 +469,7 @@ public sealed class ModsFragment : Fragment
         try
         {
             await repository.DeleteAsync(item.LibraryItemId, cancellationToken).ConfigureAwait(false);
-            await RefreshAsync(cancellationToken).ConfigureAwait(false);
+            await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
                 Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_completed));
         }

@@ -28,4 +28,14 @@
         android:id="@+id/navigation_environment"
         android:name="org.junimogate.app.EnvironmentFragment"
         android:label="@string/environment_title" />
+
+    <fragment
+        android:id="@+id/navigation_mod_groups"
+        android:name="org.junimogate.app.ModGroupsFragment"
+        android:label="@string/mod_groups_title" />
+
+    <fragment
+        android:id="@+id/navigation_mod_group_editor"
+        android:name="org.junimogate.app.ModGroupEditorFragment"
+        android:label="@string/mod_group_editor_title" />
 </navigation>
