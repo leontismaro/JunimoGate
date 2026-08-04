@@ -28,6 +28,14 @@
         android:layout_marginTop="16dp"
         android:text="@string/mod_groups_create_action" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/mod_groups_import"
+        style="@style/Widget.Material3.Button.OutlinedButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/mod_groups_import_action" />
+
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/mod_groups_progress"
         android:layout_width="match_parent"

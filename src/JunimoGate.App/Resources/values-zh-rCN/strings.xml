@@ -48,6 +48,7 @@
     <string name="mod_groups_title">Mod 分组</string>
     <string name="mod_groups_description">每次启动选择一个分组。分组引用全局库中的精确版本，不重复复制 Mod 文件。</string>
     <string name="mod_groups_create_action">创建分组</string>
+    <string name="mod_groups_import_action">导入分享分组</string>
     <string name="mod_groups_create_title">创建 Mod 分组</string>
     <string name="mod_groups_name_hint">分组名称</string>
     <string name="mod_groups_empty">还没有可用的 Mod 分组。</string>
@@ -57,6 +58,16 @@
     <string name="mod_groups_open">编辑</string>
     <string name="mod_groups_select">选择</string>
     <string name="mod_groups_selected">已选择</string>
+    <string name="mod_groups_share">分享</string>
+    <string name="mod_groups_share_title">分享“%1$s”</string>
+    <string name="mod_groups_export_manifest">仅清单</string>
+    <string name="mod_groups_export_package">完整包</string>
+    <string name="mod_groups_package_confirm_title">导入分享的 Mod 分组？</string>
+    <string name="mod_groups_package_confirm_message">%1$s\n\n%2$d 个成员 · %3$d 个随包 Mod</string>
+    <string name="mod_groups_import_result">已导入“%1$s”：新增 %2$d、复用 %3$d、缺失 %4$d、同版本不同内容候选 %5$d。</string>
+    <string name="mod_groups_export_result">已导出 %1$d 个 Mod；排除 %2$d 个配置文件；%3$d 个成员缺失。</string>
+    <string name="mod_groups_import_failed">无法导入分享的 Mod 分组。</string>
+    <string name="mod_groups_export_failed">无法导出 Mod 分组。</string>
     <string name="mod_groups_delete_title">删除 Mod 分组？</string>
     <string name="mod_groups_delete_message">删除分组“%1$s”？已经安装的 Mod 文件不会被删除。</string>
     <string name="mod_groups_create_failed">无法创建 Mod 分组，请输入有效名称。</string>

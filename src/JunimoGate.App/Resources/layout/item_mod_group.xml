@@ -44,6 +44,13 @@
                 android:text="@string/mod_groups_select" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/mod_group_share"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/mod_groups_share" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/mod_group_delete"
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"

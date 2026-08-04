@@ -47,6 +47,7 @@
     <string name="mod_groups_title">Mod groups</string>
     <string name="mod_groups_description">Choose one group for each launch. A group references exact versions from the global library without copying them.</string>
     <string name="mod_groups_create_action">Create group</string>
+    <string name="mod_groups_import_action">Import shared group</string>
     <string name="mod_groups_create_title">Create Mod group</string>
     <string name="mod_groups_name_hint">Group name</string>
     <string name="mod_groups_empty">No Mod groups are available.</string>
@@ -56,6 +57,16 @@
     <string name="mod_groups_open">Edit</string>
     <string name="mod_groups_select">Select</string>
     <string name="mod_groups_selected">Selected</string>
+    <string name="mod_groups_share">Share</string>
+    <string name="mod_groups_share_title">Share “%1$s”</string>
+    <string name="mod_groups_export_manifest">Manifest only</string>
+    <string name="mod_groups_export_package">Complete package</string>
+    <string name="mod_groups_package_confirm_title">Import shared Mod group?</string>
+    <string name="mod_groups_package_confirm_message">%1$s\n\n%2$d members · %3$d packaged Mods</string>
+    <string name="mod_groups_import_result">Imported “%1$s”: %2$d new, %3$d reused, %4$d missing, %5$d alternate-content candidates.</string>
+    <string name="mod_groups_export_result">Exported %1$d Mods; excluded %2$d config files; %3$d members were missing.</string>
+    <string name="mod_groups_import_failed">The shared Mod group could not be imported.</string>
+    <string name="mod_groups_export_failed">The Mod group could not be exported.</string>
     <string name="mod_groups_delete_title">Delete Mod group?</string>
     <string name="mod_groups_delete_message">Delete the group “%1$s”? Installed Mod files are not deleted.</string>
     <string name="mod_groups_create_failed">The Mod group could not be created. Enter a valid name.</string>

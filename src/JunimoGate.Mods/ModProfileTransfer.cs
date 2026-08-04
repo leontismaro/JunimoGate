@@ -83,7 +83,8 @@ public sealed record ModProfileImportResult(
     ModProfileV2 Profile,
     IReadOnlyList<ModLibraryItem> AddedItems,
     IReadOnlyList<ModLibraryItem> ReusedItems,
-    int MissingMembers);
+    int MissingMembers,
+    int DistinctContentCandidates);
 
 public sealed class ModProfileTransferService
 {
@@ -238,7 +239,8 @@ public sealed class ModProfileTransferService
             profile,
             Array.Empty<ModLibraryItem>(),
             Array.Empty<ModLibraryItem>(),
-            members.Count(member => member.LibraryItemId is null));
+            members.Count(member => member.LibraryItemId is null),
+            DistinctContentCandidates: 0);
     }
 
     public ModProfilePackageImportTransaction CreatePackageImportTransaction(
@@ -438,7 +440,10 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
                 profile,
                 imported.AddedItems,
                 imported.ReusedItems,
-                members.Count(member => member.LibraryItemId is null));
+                members.Count(member => member.LibraryItemId is null),
+                imported.AddedItems.Count(added => previousIndex.Items.Any(existing =>
+                    existing.Manifest.UniqueId.Equals(added.Manifest.UniqueId, StringComparison.OrdinalIgnoreCase) &&
+                    existing.Manifest.Version.Equals(added.Manifest.Version, StringComparison.OrdinalIgnoreCase))));
         }
         catch
         {

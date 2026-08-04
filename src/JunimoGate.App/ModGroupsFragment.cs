@@ -1,4 +1,8 @@
+using Android.App;
+using Android.Content;
+using Android.Database;
 using Android.OS;
+using Android.Provider;
 using Android.Runtime;
 using Android.Views;
 using Android.Widget;
@@ -20,14 +24,21 @@ namespace JunimoGate.App;
 [Register("org.junimogate.app.ModGroupsFragment")]
 public sealed class ModGroupsFragment : Fragment
 {
+    private const int ImportGroupRequestCode = 4710;
+    private const int ExportManifestRequestCode = 4711;
+    private const int ExportPackageRequestCode = 4712;
     private CancellationTokenSource? cancellation;
+    private CancellationTokenSource? viewCancellation;
     private ModProfileV2Repository? profiles;
     private ActiveModProfileSelectionRepository? selection;
     private ModLibraryRepository? library;
     private ModGroupAdapter? adapter;
     private MaterialButton? createButton;
+    private MaterialButton? importButton;
     private LinearProgressIndicator? progress;
     private TextView? empty;
+    private ModProfileV2? pendingExportProfile;
+    private ModProfilePackageImportTransaction? pendingPackageImport;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_mod_groups, container, false)
@@ -36,18 +47,22 @@ public sealed class ModGroupsFragment : Fragment
     public override void OnViewCreated(View view, Bundle? savedInstanceState)
     {
         base.OnViewCreated(view, savedInstanceState);
+        viewCancellation = new CancellationTokenSource();
         createButton = view.FindViewById<MaterialButton>(Resource.Id.mod_groups_create)
             ?? throw new InvalidOperationException("The create-group action is unavailable.");
+        importButton = view.FindViewById<MaterialButton>(Resource.Id.mod_groups_import)
+            ?? throw new InvalidOperationException("The import-group action is unavailable.");
         progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.mod_groups_progress)
             ?? throw new InvalidOperationException("The group progress indicator is unavailable.");
         empty = view.FindViewById<TextView>(Resource.Id.mod_groups_empty)
             ?? throw new InvalidOperationException("The group empty state is unavailable.");
         var list = view.FindViewById<RecyclerView>(Resource.Id.mod_groups_list)
             ?? throw new InvalidOperationException("The group list is unavailable.");
-        adapter = new ModGroupAdapter(FormatSummary, OpenProfile, SelectProfile, RequestDelete);
+        adapter = new ModGroupAdapter(FormatSummary, OpenProfile, SelectProfile, RequestShare, RequestDelete);
         list.SetLayoutManager(new LinearLayoutManager(RequireContext()));
         list.SetAdapter(adapter);
         createButton.Click += OnCreateClicked;
+        importButton.Click += OnImportClicked;
     }
 
     public override void OnStart()
@@ -76,14 +91,50 @@ public sealed class ModGroupsFragment : Fragment
 
     public override void OnDestroyView()
     {
+        viewCancellation?.Cancel();
+        viewCancellation?.Dispose();
+        viewCancellation = null;
+        pendingExportProfile = null;
+        var pendingImport = Interlocked.Exchange(ref pendingPackageImport, null);
+        if (pendingImport is not null)
+            _ = pendingImport.DisposeAsync();
         if (createButton is not null)
             createButton.Click -= OnCreateClicked;
+        if (importButton is not null)
+            importButton.Click -= OnImportClicked;
         createButton = null;
+        importButton = null;
         progress = null;
         empty = null;
         adapter = null;
         base.OnDestroyView();
     }
+
+#pragma warning disable CS0618, CS0672 // Fragment activity-result API is scoped to this lifecycle and SAF grants one document.
+    public override void OnActivityResult(int requestCode, int resultCode, Intent? data)
+    {
+        base.OnActivityResult(requestCode, resultCode, data);
+        if (requestCode is ExportManifestRequestCode or ExportPackageRequestCode && resultCode != (int)Result.Ok)
+            pendingExportProfile = null;
+        if (resultCode != (int)Result.Ok || data?.Data is not { } uri ||
+            viewCancellation is not { IsCancellationRequested: false } lifetime)
+        {
+            return;
+        }
+
+        if (requestCode == ImportGroupRequestCode)
+            _ = ImportGroupAsync(uri, lifetime.Token);
+        else if (requestCode is ExportManifestRequestCode or ExportPackageRequestCode && pendingExportProfile is { } profile)
+        {
+            pendingExportProfile = null;
+            _ = ExportGroupAsync(
+                uri,
+                profile,
+                requestCode == ExportPackageRequestCode ? ModProfileTransferKind.Complete : ModProfileTransferKind.Manifest,
+                lifetime.Token);
+        }
+    }
+#pragma warning restore CS0618, CS0672
 
     private void OnCreateClicked(object? sender, EventArgs eventArgs)
     {
@@ -103,6 +154,257 @@ public sealed class ModGroupsFragment : Fragment
                 _ = CreateAsync(input.Text ?? string.Empty, lifetime.Token);
         });
         dialog.Show();
+    }
+
+    private void OnImportClicked(object? sender, EventArgs eventArgs)
+    {
+        var intent = new Intent(Intent.ActionOpenDocument);
+        intent.AddCategory(Intent.CategoryOpenable);
+        intent.SetType("application/octet-stream");
+        intent.PutExtra(Intent.ExtraMimeTypes, new[]
+        {
+            "application/json",
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/octet-stream",
+        });
+#pragma warning disable CS0618
+        StartActivityForResult(intent, ImportGroupRequestCode);
+#pragma warning restore CS0618
+    }
+
+    private void RequestShare(ModProfileV2 profile)
+    {
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(FormatString(Resource.String.mod_groups_share_title, new JString(GetDisplayName(profile))));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
+        dialog.SetNeutralButton(Resource.String.mod_groups_export_manifest, (_, _) => StartExport(profile, ModProfileTransferKind.Manifest));
+        dialog.SetPositiveButton(Resource.String.mod_groups_export_package, (_, _) => StartExport(profile, ModProfileTransferKind.Complete));
+        dialog.Show();
+    }
+
+    private void StartExport(ModProfileV2 profile, ModProfileTransferKind kind)
+    {
+        pendingExportProfile = profile;
+        var intent = new Intent(Intent.ActionCreateDocument);
+        intent.AddCategory(Intent.CategoryOpenable);
+        intent.SetType(kind == ModProfileTransferKind.Complete ? "application/zip" : "application/json");
+        intent.PutExtra(Intent.ExtraTitle, $"JunimoGate-{profile.Id}.{(kind == ModProfileTransferKind.Complete ? "zip" : "json")}");
+#pragma warning disable CS0618
+        StartActivityForResult(intent, kind == ModProfileTransferKind.Complete ? ExportPackageRequestCode : ExportManifestRequestCode);
+#pragma warning restore CS0618
+    }
+
+    private async Task ExportGroupAsync(
+        global::Android.Net.Uri uri,
+        ModProfileV2 profile,
+        ModProfileTransferKind kind,
+        CancellationToken cancellationToken)
+    {
+        SetBusy(true);
+        try
+        {
+            var service = CreateTransferService();
+            await using var output = RequireContext().ContentResolver?.OpenOutputStream(uri, "w")
+                ?? throw new IOException("The selected export document could not be opened.");
+            var result = kind == ModProfileTransferKind.Complete
+                ? await service.ExportPackageAsync(ProfileId.Parse(profile.Id), output, cancellationToken).ConfigureAwait(false)
+                : await service.ExportManifestAsync(ProfileId.Parse(profile.Id), output, cancellationToken).ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() => ShowMessage(FormatString(
+                    Resource.String.mod_groups_export_result,
+                    Java.Lang.Integer.ValueOf(result.PackagedItems),
+                    Java.Lang.Integer.ValueOf(result.ExcludedConfigFiles),
+                    Java.Lang.Integer.ValueOf(result.MissingItems))));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            TryDeleteDocument(uri);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "profile-export-failed", exception);
+            TryDeleteDocument(uri);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_groups_export_failed));
+        }
+        finally
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => SetBusy(false));
+        }
+    }
+
+    private async Task ImportGroupAsync(global::Android.Net.Uri uri, CancellationToken cancellationToken)
+    {
+        SetBusy(true);
+        try
+        {
+            var service = CreateTransferService();
+            var displayName = ReadDisplayName(uri);
+            var isManifest = displayName?.EndsWith(".json", StringComparison.OrdinalIgnoreCase) == true ||
+                             RequireContext().ContentResolver?.GetType(uri)?.Equals("application/json", StringComparison.OrdinalIgnoreCase) == true;
+            await using var input = RequireContext().ContentResolver?.OpenInputStream(uri)
+                ?? throw new IOException("The selected shared group could not be opened.");
+            if (isManifest)
+            {
+                var result = await service.ImportManifestAsync(input, cancellationToken).ConfigureAwait(false);
+                await RefreshAsync(cancellationToken).ConfigureAwait(false);
+                ShowImportResult(result);
+                return;
+            }
+
+            var transaction = service.CreatePackageImportTransaction(displayName);
+            pendingPackageImport = transaction;
+            await transaction.ScanAsync(input, cancellationToken).ConfigureAwait(false);
+            if (!IsAdded || cancellationToken.IsCancellationRequested)
+                return;
+            Activity?.RunOnUiThread(() => ShowPackageConfirmation(transaction));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await DisposePackageImportAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "profile-import-scan-failed", exception);
+            await DisposePackageImportAsync().ConfigureAwait(false);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_groups_import_failed));
+        }
+        finally
+        {
+            if (IsAdded && pendingPackageImport is null)
+                Activity?.RunOnUiThread(() => SetBusy(false));
+        }
+    }
+
+    private void ShowPackageConfirmation(ModProfilePackageImportTransaction transaction)
+    {
+        if (!ReferenceEquals(transaction, pendingPackageImport) || transaction.Document is not { } document)
+            return;
+        var packaged = document.Members.Count(member => member.PackagedContentId is not null);
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_groups_package_confirm_title);
+        dialog.SetMessage(FormatString(
+            Resource.String.mod_groups_package_confirm_message,
+            new JString(document.DisplayName),
+            Java.Lang.Integer.ValueOf(document.Members.Count),
+            Java.Lang.Integer.ValueOf(packaged)));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
+        {
+            _ = DisposePackageImportAsync();
+            SetBusy(false);
+        });
+        dialog.SetOnCancelListener(new DialogCancelListener(() =>
+        {
+            _ = DisposePackageImportAsync();
+            SetBusy(false);
+        }));
+        dialog.SetPositiveButton(Resource.String.mod_groups_import_action, (_, _) =>
+        {
+            if (viewCancellation is { IsCancellationRequested: false } lifetime)
+                _ = CommitPackageImportAsync(transaction, lifetime.Token);
+        });
+        dialog.Show();
+    }
+
+    private async Task CommitPackageImportAsync(
+        ModProfilePackageImportTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            var result = transaction.ImportResult
+                ?? throw new InvalidDataException("The shared group import result is missing.");
+            Interlocked.CompareExchange(ref pendingPackageImport, null, transaction);
+            await transaction.DisposeAsync().ConfigureAwait(false);
+            await RefreshAsync(cancellationToken).ConfigureAwait(false);
+            ShowImportResult(result);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await DisposePackageImportAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "profile-import-failed", exception);
+            await DisposePackageImportAsync().ConfigureAwait(false);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_groups_import_failed));
+        }
+        finally
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => SetBusy(false));
+        }
+    }
+
+    private void ShowImportResult(ModProfileImportResult result)
+    {
+        if (!IsAdded)
+            return;
+        Activity?.RunOnUiThread(() => ShowMessage(FormatString(
+            Resource.String.mod_groups_import_result,
+            new JString(result.Profile.DisplayName),
+            Java.Lang.Integer.ValueOf(result.AddedItems.Count),
+            Java.Lang.Integer.ValueOf(result.ReusedItems.Count),
+            Java.Lang.Integer.ValueOf(result.MissingMembers),
+            Java.Lang.Integer.ValueOf(result.DistinctContentCandidates))));
+    }
+
+    private async ValueTask DisposePackageImportAsync()
+    {
+        var pending = Interlocked.Exchange(ref pendingPackageImport, null);
+        if (pending is not null)
+            await pending.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private string? ReadDisplayName(global::Android.Net.Uri uri)
+    {
+        ICursor? cursor = null;
+        try
+        {
+            cursor = RequireContext().ContentResolver?.Query(uri, [IOpenableColumns.DisplayName], null, null, null);
+            if (cursor?.MoveToFirst() == true)
+            {
+                var index = cursor.GetColumnIndex(IOpenableColumns.DisplayName);
+                if (index >= 0)
+                    return cursor.GetString(index);
+            }
+        }
+        finally
+        {
+            cursor?.Close();
+            cursor?.Dispose();
+        }
+        return null;
+    }
+
+    private ModProfileTransferService CreateTransferService()
+    {
+        var userData = AndroidPrivateStorage.GetUserDataRoot(RequireContext());
+        return new ModProfileTransferService(
+            new ModLibraryRepository(Path.Combine(userData, "mods")),
+            new ModProfileV2Repository(Path.Combine(userData, "profiles")));
+    }
+
+    private void TryDeleteDocument(global::Android.Net.Uri uri)
+    {
+        try
+        {
+            RequireContext().ContentResolver?.Delete(uri, null, null);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Java.Lang.SecurityException)
+        {
+            Log.Warn("JunimoGate.Mods", "profile-export-cleanup-failed", exception);
+        }
     }
 
     private async Task CreateAsync(string displayName, CancellationToken cancellationToken)
@@ -297,6 +599,8 @@ public sealed class ModGroupsFragment : Fragment
     {
         if (createButton is not null)
             createButton.Enabled = !value;
+        if (importButton is not null)
+            importButton.Enabled = !value;
         if (progress is not null)
             progress.Visibility = value ? ViewStates.Visible : ViewStates.Gone;
     }
@@ -304,9 +608,17 @@ public sealed class ModGroupsFragment : Fragment
     private void ShowMessage(int resourceId) =>
         Toast.MakeText(RequireContext(), resourceId, ToastLength.Long)?.Show();
 
+    private void ShowMessage(string message) =>
+        Toast.MakeText(RequireContext(), message, ToastLength.Long)?.Show();
+
     private string FormatString(int resourceId, params JObject[] arguments) =>
         Resources?.GetString(resourceId, arguments)
         ?? throw new InvalidOperationException("The Mod group string resource is unavailable.");
+
+    private sealed class DialogCancelListener(Action onCancel) : Java.Lang.Object, IDialogInterfaceOnCancelListener
+    {
+        public void OnCancel(IDialogInterface? dialog) => onCancel();
+    }
 }
 
 internal sealed record ModGroupListItem(
@@ -320,6 +632,7 @@ internal sealed class ModGroupAdapter(
     Func<ModGroupListItem, string> formatSummary,
     Action<ModProfileV2> open,
     Action<ModProfileV2> select,
+    Action<ModProfileV2> share,
     Action<ModGroupListItem> delete) : RecyclerView.Adapter
 {
     private IReadOnlyList<ModGroupListItem> items = Array.Empty<ModGroupListItem>();
@@ -336,7 +649,7 @@ internal sealed class ModGroupAdapter(
     {
         var view = LayoutInflater.From(parent.Context)?.Inflate(Resource.Layout.item_mod_group, parent, false)
             ?? throw new InvalidOperationException("The Mod group item layout could not be created.");
-        return new Holder(view, open, select, delete);
+        return new Holder(view, open, select, share, delete);
     }
 
     public override void OnBindViewHolder(RecyclerView.ViewHolder holder, int position)
@@ -351,9 +664,11 @@ internal sealed class ModGroupAdapter(
         private readonly TextView summary;
         private readonly MaterialButton openButton;
         private readonly MaterialButton selectButton;
+        private readonly MaterialButton shareButton;
         private readonly MaterialButton deleteButton;
         private readonly Action<ModProfileV2> open;
         private readonly Action<ModProfileV2> select;
+        private readonly Action<ModProfileV2> share;
         private readonly Action<ModGroupListItem> delete;
         private ModGroupListItem? item;
 
@@ -361,18 +676,22 @@ internal sealed class ModGroupAdapter(
             View view,
             Action<ModProfileV2> open,
             Action<ModProfileV2> select,
+            Action<ModProfileV2> share,
             Action<ModGroupListItem> delete) : base(view)
         {
             this.open = open;
             this.select = select;
+            this.share = share;
             this.delete = delete;
             title = view.FindViewById<TextView>(Resource.Id.mod_group_title)!;
             summary = view.FindViewById<TextView>(Resource.Id.mod_group_summary)!;
             openButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_open)!;
             selectButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_select)!;
+            shareButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_share)!;
             deleteButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_delete)!;
             openButton.Click += (_, _) => { if (item is not null) this.open(item.Profile); };
             selectButton.Click += (_, _) => { if (item is not null) this.select(item.Profile); };
+            shareButton.Click += (_, _) => { if (item is not null) this.share(item.Profile); };
             deleteButton.Click += (_, _) => { if (item is not null) this.delete(item); };
         }
 
