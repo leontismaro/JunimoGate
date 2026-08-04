@@ -129,6 +129,7 @@ public sealed record GameLaunchDescriptor(
     string CapabilityKey,
     int RecoveryLevel,
     ProfileLaunchSelection Profile,
+    string? ModSelectionId,
     DateTimeOffset IssuedAtUtc);
 
 public sealed record ProfileLaunchSelection(
@@ -151,6 +152,16 @@ public sealed record ProfileLaunchSelection(
         ArgumentNullException.ThrowIfNull(profile);
         _ = profile.Validate();
         return new ProfileLaunchSelection(profile.Id, profile.Revision, profile.AssemblyBindingPolicy);
+    }
+
+    public static ProfileLaunchSelection From(ModLaunchSelectionSnapshot selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        _ = selection.Validate();
+        return new ProfileLaunchSelection(
+            selection.ProfileId,
+            selection.ProfileRevision,
+            selection.AssemblyBindingPolicy);
     }
 }
 
@@ -179,7 +190,9 @@ public sealed record ConsumedGameLaunch(
     int RecoveryLevel,
     PreparedGameSnapshot Snapshot,
     ProfileLaunchSelection Profile,
-    string ModsDirectory);
+    ModLaunchSelectionSnapshot? ModSelection,
+    string ModsRoot,
+    IReadOnlyList<string>? ModDirectories);
 
 public sealed record PendingGameLaunchOutcome(
     string AttemptId,
@@ -187,6 +200,7 @@ public sealed record PendingGameLaunchOutcome(
     int RecoveryLevel,
     PreparedGameSnapshot Snapshot,
     ProfileLaunchSelection Profile,
+    ModLaunchSelectionSnapshot? ModSelection,
     GameLaunchOutcomeStatus Status,
     GameStartupStage Stage,
     string Code);
@@ -569,6 +583,7 @@ public static class GameLaunchRegistry
 {
     private const int MaximumSnapshotBytes = 64 * 1024 * 1024;
     private const int MaximumDescriptorBytes = 64 * 1024;
+    private const int MaximumModSelectionBytes = 2 * 1024 * 1024;
     private const int MaximumStateBytes = 64 * 1024;
     private const int MaximumOutcomeBytes = 64 * 1024;
     private static readonly TimeSpan StaleDescriptorAge = TimeSpan.FromDays(1);
@@ -629,14 +644,55 @@ public static class GameLaunchRegistry
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,
-        ProfileLaunchSelection profile,
+        ModLaunchSelectionSnapshot modSelection,
         CancellationToken cancellationToken) =>
-        await TryIssueLaunchAsync(context, preparedGame, profile, recoveryLevel: 0, cancellationToken).ConfigureAwait(false);
+        await TryIssueLaunchAsync(context, preparedGame, modSelection, recoveryLevel: 0, cancellationToken).ConfigureAwait(false);
 
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,
+        ProfileLaunchSelection legacyProfile,
+        CancellationToken cancellationToken) =>
+        await TryIssueLegacyLaunchAsync(
+            context,
+            preparedGame,
+            legacyProfile,
+            recoveryLevel: 0,
+            cancellationToken).ConfigureAwait(false);
+
+    public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
+        Context context,
+        PreparedGameHandle preparedGame,
+        ModLaunchSelectionSnapshot modSelection,
+        int recoveryLevel,
+        CancellationToken cancellationToken)
+        => await TryIssueCoreAsync(
+            context,
+            preparedGame,
+            ProfileLaunchSelection.From(modSelection),
+            modSelection,
+            recoveryLevel,
+            cancellationToken).ConfigureAwait(false);
+
+    public static async ValueTask<GameLaunchIssueResult> TryIssueLegacyLaunchAsync(
+        Context context,
+        PreparedGameHandle preparedGame,
+        ProfileLaunchSelection legacyProfile,
+        int recoveryLevel,
+        CancellationToken cancellationToken) =>
+        await TryIssueCoreAsync(
+            context,
+            preparedGame,
+            legacyProfile,
+            modSelection: null,
+            recoveryLevel,
+            cancellationToken).ConfigureAwait(false);
+
+    private static async ValueTask<GameLaunchIssueResult> TryIssueCoreAsync(
+        Context context,
+        PreparedGameHandle preparedGame,
         ProfileLaunchSelection profile,
+        ModLaunchSelectionSnapshot? modSelection,
         int recoveryLevel,
         CancellationToken cancellationToken)
     {
@@ -644,7 +700,10 @@ public static class GameLaunchRegistry
         ArgumentNullException.ThrowIfNull(profile);
         if (recoveryLevel is < 0 or > 2)
             throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
-        if (!await IsCurrentProfileAsync(context, profile, cancellationToken).ConfigureAwait(false))
+        var isCurrent = modSelection is null
+            ? await IsCurrentLegacyProfileAsync(context, profile, cancellationToken).ConfigureAwait(false)
+            : await IsCurrentModSelectionAsync(context, modSelection, cancellationToken).ConfigureAwait(false);
+        if (!isCurrent || modSelection is not null && ProfileLaunchSelection.From(modSelection) != profile)
             return new GameLaunchIssueResult(GameLaunchIssueStatus.ProfileChanged, null);
         var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
         if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
@@ -657,35 +716,71 @@ public static class GameLaunchRegistry
         var root = GetRoot(context);
         CleanupStaleDescriptors(root);
         var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        var selectionPath = modSelection is null ? null : GetModSelectionPath(context, modSelection.SelectionId);
+        if (selectionPath is not null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(selectionPath)!);
+            if (File.Exists(selectionPath))
+                throw new InvalidDataException("The Mod launch selection identity already exists.");
+            await WriteJsonAsync(selectionPath, modSelection, cancellationToken).ConfigureAwait(false);
+        }
         var descriptor = new GameLaunchDescriptor(
             GameLaunchSchema.Descriptor,
             preparedGame.SnapshotId,
             key,
             recoveryLevel,
             profile,
+            modSelection?.SelectionId,
             DateTimeOffset.UtcNow);
-        await WriteJsonAsync(Path.Combine(root, $"descriptor-{key}.json"), descriptor, cancellationToken)
-            .ConfigureAwait(false);
-        await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
-            if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
-            {
-                TryDeleteFile(Path.Combine(root, $"descriptor-{key}.json"));
-                return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
-            }
-
-            state = state with
-            {
-                Pending = new PendingLaunchAttempt(key, preparedGame.SnapshotId, recoveryLevel, profile, DateTimeOffset.UtcNow),
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
-            };
-            await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+            await WriteJsonAsync(Path.Combine(root, $"descriptor-{key}.json"), descriptor, cancellationToken)
+                .ConfigureAwait(false);
         }
-        finally
+        catch
         {
-            StateLock.Release();
+            if (selectionPath is not null)
+                TryDeleteFile(selectionPath);
+            throw;
+        }
+        try
+        {
+            await StateLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+                if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
+                {
+                    TryDeleteFile(Path.Combine(root, $"descriptor-{key}.json"));
+                    if (selectionPath is not null)
+                        TryDeleteFile(selectionPath);
+                    return new GameLaunchIssueResult(GameLaunchIssueStatus.ActiveSnapshotChanged, null);
+                }
+
+                state = state with
+                {
+                    Pending = new PendingLaunchAttempt(
+                        key,
+                        preparedGame.SnapshotId,
+                        recoveryLevel,
+                        profile,
+                        modSelection?.SelectionId,
+                        DateTimeOffset.UtcNow),
+                    UpdatedAtUtc = DateTimeOffset.UtcNow,
+                };
+                await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                StateLock.Release();
+            }
+        }
+        catch
+        {
+            TryDeleteFile(Path.Combine(root, $"descriptor-{key}.json"));
+            if (selectionPath is not null)
+                TryDeleteFile(selectionPath);
+            throw;
         }
         Log.Info(
             "JunimoGate.LaunchTrace",
@@ -720,11 +815,33 @@ public static class GameLaunchRegistry
                     MaximumDescriptorBytes,
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The launch request is invalid.");
-            if (descriptor.Schema != GameLaunchSchema.Descriptor || descriptor.CapabilityKey != key ||
+            var isLegacyDescriptor = descriptor.Schema == GameLaunchSchema.LegacyDescriptorV4;
+            if (descriptor.Schema != GameLaunchSchema.Descriptor && !isLegacyDescriptor ||
+                isLegacyDescriptor && descriptor.ModSelectionId is not null ||
+                descriptor.CapabilityKey != key ||
                 !IsSnapshotId(descriptor.SnapshotId) || descriptor.RecoveryLevel is < 0 or > 2 ||
-                !await IsCurrentProfileAsync(context, descriptor.Profile, cancellationToken).ConfigureAwait(false))
+                descriptor.ModSelectionId is not null && !IsSnapshotId(descriptor.ModSelectionId))
             {
                 throw new InvalidDataException("The launch request is invalid.");
+            }
+
+            ModLaunchSelectionSnapshot? modSelection = null;
+            if (descriptor.ModSelectionId is not null)
+            {
+                modSelection = await ReadJsonAsync<ModLaunchSelectionSnapshot>(
+                        GetModSelectionPath(context, descriptor.ModSelectionId),
+                        MaximumModSelectionBytes,
+                        cancellationToken)
+                    .ConfigureAwait(false) ?? throw new InvalidDataException("The Mod launch selection is invalid.");
+                if (ProfileLaunchSelection.From(modSelection) != descriptor.Profile ||
+                    !await IsCurrentModSelectionAsync(context, modSelection, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new InvalidDataException("The Mod launch selection changed before it was consumed.");
+                }
+            }
+            else if (!await IsCurrentLegacyProfileAsync(context, descriptor.Profile, cancellationToken).ConfigureAwait(false))
+            {
+                throw new InvalidDataException("The legacy Mod Profile changed before it was consumed.");
             }
 
             var snapshotPath = Path.Combine(root, $"snapshot-{descriptor.SnapshotId}.json");
@@ -734,9 +851,20 @@ public static class GameLaunchRegistry
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The prepared game snapshot is invalid.");
             snapshot.ValidateEnvelope(context);
-            var profileId = descriptor.Profile.Validate();
-            var profileLayout = new ProfileLayout(GetProfilesRoot(context), profileId);
-            Directory.CreateDirectory(profileLayout.EnabledDirectory);
+            string modsRoot;
+            IReadOnlyList<string>? modDirectories;
+            if (modSelection is null)
+            {
+                var profileLayout = new ProfileLayout(GetProfilesRoot(context), descriptor.Profile.Validate());
+                Directory.CreateDirectory(profileLayout.EnabledDirectory);
+                modsRoot = profileLayout.EnabledDirectory;
+                modDirectories = null;
+            }
+            else
+            {
+                modsRoot = GetModsRoot(context);
+                modDirectories = ModLaunchSelectionPathResolver.ResolveExistingRoots(modsRoot, modSelection);
+            }
             Log.Info(
                 "JunimoGate.LaunchTrace",
                 $"descriptor-consumed attempt={key[..8]} level={descriptor.RecoveryLevel} gameSnapshotReads=1");
@@ -746,7 +874,9 @@ public static class GameLaunchRegistry
                 descriptor.RecoveryLevel,
                 snapshot,
                 descriptor.Profile,
-                profileLayout.EnabledDirectory);
+                modSelection,
+                modsRoot,
+                modDirectories);
         }
         finally
         {
@@ -791,14 +921,19 @@ public static class GameLaunchRegistry
         if (pending is null)
             return null;
         if (!IsSnapshotId(pending.AttemptId) || !IsSnapshotId(pending.SnapshotId) ||
-            pending.RecoveryLevel is < 0 or > 2 || pending.Profile is null)
+            pending.RecoveryLevel is < 0 or > 2 || pending.Profile is null ||
+            pending.ModSelectionId is not null && !IsSnapshotId(pending.ModSelectionId))
         {
             await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
             return null;
         }
 
         var snapshot = await TryReadSnapshotAsync(context, pending.SnapshotId, cancellationToken).ConfigureAwait(false);
-        if (snapshot is null)
+        var modSelection = pending.ModSelectionId is null
+            ? null
+            : await TryReadModSelectionAsync(context, pending.ModSelectionId, cancellationToken).ConfigureAwait(false);
+        if (snapshot is null || pending.ModSelectionId is not null &&
+            (modSelection is null || ProfileLaunchSelection.From(modSelection) != pending.Profile))
         {
             await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
             return null;
@@ -825,6 +960,7 @@ public static class GameLaunchRegistry
                 pending.RecoveryLevel,
                 snapshot,
                 pending.Profile,
+                modSelection,
                 GameLaunchOutcomeStatus.Failed,
                 GameStartupStage.LaunchRequest,
                 "launch_interrupted");
@@ -849,6 +985,7 @@ public static class GameLaunchRegistry
                 pending.RecoveryLevel,
                 snapshot,
                 pending.Profile,
+                modSelection,
                 outcome.Status,
                 outcome.Stage,
                 outcome.Code);
@@ -865,10 +1002,28 @@ public static class GameLaunchRegistry
                 pending.RecoveryLevel,
                 snapshot,
                 pending.Profile,
+                modSelection,
                 GameLaunchOutcomeStatus.Failed,
                 GameStartupStage.LaunchRequest,
                 "launch_outcome_invalid");
         }
+    }
+
+    public static async ValueTask<bool> IsLibraryItemInUseAsync(
+        Context context,
+        string libraryItemId,
+        CancellationToken cancellationToken)
+    {
+        if (libraryItemId is not { Length: 64 } || libraryItemId.Any(static character =>
+                character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+            throw new ArgumentException("The Mod library item ID is invalid.", nameof(libraryItemId));
+        if (GameSessionRegistry.IsGameProcessActive(context))
+            return true;
+        var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
+        if (state.Pending?.ModSelectionId is not { } selectionId)
+            return false;
+        var selection = await TryReadModSelectionAsync(context, selectionId, cancellationToken).ConfigureAwait(false);
+        return selection?.Items.Any(item => item.LibraryItemId == libraryItemId) == true;
     }
 
     public static async ValueTask CompletePendingRunningAsync(
@@ -904,7 +1059,7 @@ public static class GameLaunchRegistry
         Log.Info(
             "JunimoGate.Launch",
             $"running-confirmed attempt={pending.AttemptId[..8]} active={(completed.ActiveConfirmed ? 1 : 0)}");
-        CleanupAttemptFiles(context, pending.AttemptId);
+        CleanupAttemptFiles(context, pending.AttemptId, pending.ModSelection?.SelectionId);
         await CleanupRegistryAsync(context, completed, cancellationToken).ConfigureAwait(false);
         await RuntimeCacheMaintenance.PruneAsync(context, completed, cancellationToken).ConfigureAwait(false);
     }
@@ -930,7 +1085,7 @@ public static class GameLaunchRegistry
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             await WriteStateAsync(context, state, cancellationToken).ConfigureAwait(false);
-            CleanupAttemptFiles(context, pending.AttemptId);
+            CleanupAttemptFiles(context, pending.AttemptId, pending.ModSelection?.SelectionId);
             Log.Warn(
                 "JunimoGate.Launch",
                 $"failure-completed attempt={pending.AttemptId[..8]} stage={pending.Stage} code={pending.Code} level={pending.RecoveryLevel}");
@@ -1176,6 +1331,29 @@ public static class GameLaunchRegistry
             // Registry cleanup is best-effort and never changes the selected snapshot.
         }
         CleanupStaleDescriptors(GetRoot(context));
+        if (!GameSessionRegistry.IsGameProcessActive(context))
+        {
+            var retainedSelection = state.Pending?.ModSelectionId;
+            try
+            {
+                var selectionRoot = GetModSelectionRoot(context);
+                if (Directory.Exists(selectionRoot))
+                {
+                    foreach (var path in Directory.EnumerateFiles(selectionRoot, "selection-*.json", SearchOption.TopDirectoryOnly))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var name = Path.GetFileNameWithoutExtension(path);
+                        var id = name.StartsWith("selection-", StringComparison.Ordinal) ? name[10..] : string.Empty;
+                        if (IsSnapshotId(id) && id != retainedSelection)
+                            TryDeleteFile(path);
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Selection cleanup is best-effort; descriptors still validate their own private snapshot.
+            }
+        }
         return ValueTask.CompletedTask;
     }
 
@@ -1207,15 +1385,17 @@ public static class GameLaunchRegistry
             StateLock.Release();
         }
         if (IsSnapshotId(pending.AttemptId))
-            CleanupAttemptFiles(context, pending.AttemptId);
+            CleanupAttemptFiles(context, pending.AttemptId, pending.ModSelectionId);
     }
 
-    private static void CleanupAttemptFiles(Context context, string attemptId)
+    private static void CleanupAttemptFiles(Context context, string attemptId, string? modSelectionId)
     {
         var root = GetRoot(context);
         TryDeleteFile(Path.Combine(root, $"outcome-{attemptId}.json"));
         TryDeleteFile(Path.Combine(root, $"descriptor-{attemptId}.json"));
         TryDeleteFile(Path.Combine(root, $"descriptor-{attemptId}.json.consuming"));
+        if (IsSnapshotId(modSelectionId))
+            TryDeleteFile(GetModSelectionPath(context, modSelectionId!));
     }
 
     private static void CleanupStaleDescriptors(string root)
@@ -1265,7 +1445,78 @@ public static class GameLaunchRegistry
     private static string GetProfilesRoot(Context context) =>
         Path.Combine(AndroidPrivateStorage.GetUserDataRoot(context.ApplicationContext ?? context), "profiles");
 
-    private static async ValueTask<bool> IsCurrentProfileAsync(
+    private static string GetModsRoot(Context context) =>
+        Path.Combine(AndroidPrivateStorage.GetUserDataRoot(context.ApplicationContext ?? context), "mods");
+
+    private static string GetModSelectionRoot(Context context) =>
+        Path.Combine(
+            AndroidPrivateStorage.GetRuntimeRoot(context.ApplicationContext ?? context),
+            "mod-selections");
+
+    private static string GetModSelectionPath(Context context, string selectionId) =>
+        Path.Combine(GetModSelectionRoot(context), $"selection-{selectionId}.json");
+
+    private static async ValueTask<ModLaunchSelectionSnapshot?> TryReadModSelectionAsync(
+        Context context,
+        string selectionId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSnapshotId(selectionId))
+            return null;
+        try
+        {
+            var selection = await ReadJsonAsync<ModLaunchSelectionSnapshot>(
+                    GetModSelectionPath(context, selectionId),
+                    MaximumModSelectionBytes,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            _ = selection?.Validate();
+            return selection;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          JsonException or InvalidDataException)
+        {
+            return null;
+        }
+    }
+
+    private static async ValueTask<bool> IsCurrentModSelectionAsync(
+        Context context,
+        ModLaunchSelectionSnapshot? selection,
+        CancellationToken cancellationToken)
+    {
+        if (selection is null)
+            return false;
+        ProfileId profileId;
+        try
+        {
+            profileId = selection.Validate();
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+
+        try
+        {
+            var profile = await new ModProfileV2Repository(GetProfilesRoot(context))
+                .ReadAsync(profileId, cancellationToken)
+                .ConfigureAwait(false);
+            var library = await new ModLibraryRepository(GetModsRoot(context))
+                .ReadAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var globalSettings = await new ModProfileRepository(GetProfilesRoot(context))
+                .ReadAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
+            return selection.Matches(profile, library, globalSettings.AssemblyBindingPolicy);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return false;
+        }
+    }
+
+    private static async ValueTask<bool> IsCurrentLegacyProfileAsync(
         Context context,
         ProfileLaunchSelection? selection,
         CancellationToken cancellationToken)
@@ -1301,6 +1552,7 @@ public static class GameLaunchRegistry
         string SnapshotId,
         int RecoveryLevel,
         ProfileLaunchSelection Profile,
+        string? ModSelectionId,
         DateTimeOffset IssuedAtUtc);
 
     internal sealed record GameActivationState(

@@ -68,7 +68,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             loader = new SmapiDefaultAssemblyLoader(
                 runtimeFiles,
                 Path.Combine(runtimeRoot, "smapi", "assembly-load-cache-v1", smapiBundle.BundleId),
-                launch.ModsDirectory);
+                launch.ModsRoot);
             loader.Install();
             SmapiContentBridge.Install(runtimeFiles);
             GameHostBridge.Attach(this, snapshot);
@@ -144,7 +144,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             Activity = this,
             GameAssemblyDirectory = snapshot.SourceWorkspacePath,
             ContentDirectory = Path.Combine(snapshot.SourceWorkspacePath, "Content"),
-            ModsDirectory = launch.ModsDirectory,
+            ModsDirectory = launch.ModsRoot,
+            ModDirectories = launch.ModDirectories,
             InternalDirectory = smapiBundle.InternalDirectory,
             ConfigDirectory = snapshot.ConfigDirectory,
             LogDirectory = snapshot.LogDirectory,

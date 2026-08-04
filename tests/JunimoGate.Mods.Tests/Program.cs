@@ -106,6 +106,8 @@ return TestHarness.Run(
         ModLaunchSelectionTests.FreezesOnlyEnabledLibraryItems()),
     ("Mod launch selection rejects missing enabled members", () =>
         ModLaunchSelectionTests.RejectsMissingEnabledMembers()),
+    ("Mod launch selection freezes the global binding policy", () =>
+        ModLaunchSelectionTests.MatchesTheFrozenGlobalBindingPolicy()),
     ("Mod launch selection resolves contained existing roots", () =>
         ModLaunchSelectionTests.ResolvesOnlyContainedExistingRoots()),
     ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
@@ -187,7 +189,9 @@ return TestHarness.Run(
     ("GameHost rejects unsupported snapshot schemas", () =>
         GameLaunchSchemaTests.RejectsUnknownSnapshotSchemas()),
     ("GameHost snapshots omit the SMAPI bundle identity", () =>
-        GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()));
+        GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()),
+    ("GameHost retains pending v4 descriptor compatibility", () =>
+        GameLaunchSchemaTests.RetainsThePreviousDescriptorSchemaForPendingLaunches()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

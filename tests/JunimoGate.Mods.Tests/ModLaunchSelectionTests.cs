@@ -85,6 +85,35 @@ internal static class ModLaunchSelectionTests
             ModAssemblyBindingPolicy.HighestCompatible));
     }
 
+    public static void MatchesTheFrozenGlobalBindingPolicy()
+    {
+        var item = Item("Example.First", 'e');
+        var now = DateTimeOffset.UtcNow;
+        var profile = new ModProfileV2(
+            ModProfileV2.CurrentSchema,
+            "main",
+            "Main",
+            Revision: 2,
+            AssemblyBindingPolicyOverride: null,
+            new[] { ModProfileMember.FromLibraryItem(item, enabled: true) },
+            now,
+            now,
+            null);
+        var library = new ModLibraryIndex(
+            ModLibraryIndex.CurrentSchema,
+            Revision: 3,
+            now,
+            new[] { item });
+
+        var selection = ModLaunchSelectionBuilder.Build(
+            profile,
+            library,
+            ModAssemblyBindingPolicy.FirstLoaded);
+
+        TestHarness.True(selection.Matches(profile, library, ModAssemblyBindingPolicy.FirstLoaded));
+        TestHarness.False(selection.Matches(profile, library, ModAssemblyBindingPolicy.HighestCompatible));
+    }
+
     public static void ResolvesOnlyContainedExistingRoots()
     {
         var root = Path.Combine(Path.GetTempPath(), $"junimogate-selection-{Guid.NewGuid():N}");

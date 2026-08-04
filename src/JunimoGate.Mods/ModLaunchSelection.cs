@@ -48,14 +48,19 @@ public sealed record ModLaunchSelectionSnapshot(
         return profileId;
     }
 
-    public bool Matches(ModProfileV2 profile, ModLibraryIndex library)
+    public bool Matches(
+        ModProfileV2 profile,
+        ModLibraryIndex library,
+        ModAssemblyBindingPolicy defaultBindingPolicy = ModAssemblyBindingPolicy.HighestCompatible)
     {
         ArgumentNullException.ThrowIfNull(profile);
         ArgumentNullException.ThrowIfNull(library);
         _ = Validate();
         _ = profile.Validate();
         library.Validate();
-        if (profile.Id != ProfileId || profile.Revision != ProfileRevision || library.Revision != LibraryRevision)
+        if (!Enum.IsDefined(defaultBindingPolicy) || profile.Id != ProfileId ||
+            profile.Revision != ProfileRevision || library.Revision != LibraryRevision ||
+            AssemblyBindingPolicy != (profile.AssemblyBindingPolicyOverride ?? defaultBindingPolicy))
             return false;
 
         var selected = profile.Members

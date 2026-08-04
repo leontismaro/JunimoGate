@@ -163,6 +163,8 @@ public sealed class ModGroupsFragment : Fragment
             await selection.SetAsync(current.Revision, ProfileId.Parse(profile.Id), cancellationToken)
                 .ConfigureAwait(false);
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => (Activity as ILauncherUiHost)?.RefreshProfile());
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

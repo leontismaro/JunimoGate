@@ -32,6 +32,7 @@ internal static class LauncherTextFormatter
                 context,
                 Resource.String.launcher_ready,
                 state.Detail ?? "—"),
+            LauncherMessageKey.ModConfigurationInvalid => context.GetString(Resource.String.launcher_mod_configuration_invalid)!,
             LauncherMessageKey.Launching => context.GetString(Resource.String.launcher_launching)!,
             _ => throw new InvalidOperationException("The launcher message key is invalid."),
         };

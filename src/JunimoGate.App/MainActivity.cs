@@ -117,6 +117,8 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
     void ILauncherUiHost.UpdateBindingPolicy(ModAssemblyBindingPolicy policy) =>
         _ = UpdateBindingPolicyAsync(policy);
 
+    void ILauncherUiHost.RefreshProfile() => _ = RefreshProfileAsync();
+
     void ILauncherUiHost.OpenEnvironment() => OpenEnvironment();
 
     private async Task LaunchAsync()
@@ -161,6 +163,24 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         {
             Log.Error("JunimoGate.Launcher", "profile-policy-update-failed", exception);
             _ = InitializeAsync(cancellation.Token);
+        }
+    }
+
+    private async Task RefreshProfileAsync()
+    {
+        if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
+            return;
+        try
+        {
+            await coordinator.RefreshProfileAsync(cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Launcher", "profile-refresh-failed", exception);
         }
     }
 
@@ -246,6 +266,8 @@ internal interface ILauncherUiHost
     void RequestLaunch();
 
     void UpdateBindingPolicy(ModAssemblyBindingPolicy policy);
+
+    void RefreshProfile();
 
     void OpenEnvironment();
 }

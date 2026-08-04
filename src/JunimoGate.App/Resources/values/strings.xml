@@ -23,6 +23,7 @@
     <string name="launcher_unsupported">This installed Stardew Valley build is not supported yet.\n\nCode: %1$s</string>
     <string name="launcher_failed">Stardew Valley could not start.\n\nCode: %1$s</string>
     <string name="launcher_ready">Stardew Valley %1$s\n\nReady to launch through SMAPI.</string>
+    <string name="launcher_mod_configuration_invalid">The selected Mod group can’t be launched. Restore its missing Mods or disable their placeholders, then try again.</string>
     <string name="launcher_launching">Starting Stardew Valley through SMAPI…</string>
 
     <string name="home_summary">Overview</string>
@@ -95,6 +96,7 @@
     <string name="mods_delete_message">Delete %1$s %2$s from the global library? Existing game folders are not changed.</string>
     <string name="mods_delete_action">Delete</string>
     <string name="mods_delete_completed">The Mod was removed from the global library.</string>
+    <string name="mods_delete_in_use">Mods can’t be deleted while the selected game session is starting or running.</string>
     <string name="mods_delete_failed">The Mod could not be deleted.</string>
     <plurals name="mods_import_scan_summary">
         <item quantity="one">The archive contains %1$d Mod and will use about %2$s after extraction.</item>

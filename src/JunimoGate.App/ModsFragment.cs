@@ -13,6 +13,7 @@ using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
 using Google.Android.Material.ProgressIndicator;
 using JunimoGate.Android;
+using JunimoGate.GameHost;
 using JunimoGate.Mods;
 using Fragment = AndroidX.Fragment.App.Fragment;
 using Log = JunimoGate.Android.JunimoGateLog;
@@ -468,6 +469,15 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
+            if (await GameLaunchRegistry.IsLibraryItemInUseAsync(
+                    RequireContext(),
+                    item.LibraryItemId,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                if (IsAdded)
+                    Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_in_use));
+                return;
+            }
             await repository.DeleteAsync(item.LibraryItemId, cancellationToken).ConfigureAwait(false);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)

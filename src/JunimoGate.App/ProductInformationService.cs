@@ -99,12 +99,30 @@ internal sealed class ProductInformationService
 
     public HomeSummary ReadHomeSummary()
     {
-        var profile = new ProfileLayout(
-            Path.Combine(AndroidPrivateStorage.GetUserDataRoot(context), "profiles"),
-            ProfileId.Parse("default"));
-        var enabledMods = Directory.Exists(profile.EnabledDirectory)
-            ? Directory.EnumerateFiles(profile.EnabledDirectory, "manifest.json", SearchOption.AllDirectories).Count()
-            : 0;
+        var userData = AndroidPrivateStorage.GetUserDataRoot(context);
+        var profilesRoot = Path.Combine(userData, "profiles");
+        var active = new ActiveModProfileSelectionRepository(profilesRoot)
+            .OpenOrCreateAsync(ProfileId.Parse("default"))
+            .AsTask().GetAwaiter().GetResult();
+        var activeId = active.Validate();
+        int enabledMods;
+        try
+        {
+            var selected = new ModProfileV2Repository(profilesRoot)
+                .ReadAsync(activeId).AsTask().GetAwaiter().GetResult();
+            var library = new ModLibraryRepository(Path.Combine(userData, "mods"))
+                .ReadAsync().AsTask().GetAwaiter().GetResult();
+            var available = library.Items.Select(static item => item.LibraryItemId).ToHashSet(StringComparer.Ordinal);
+            enabledMods = selected.Members.Count(member =>
+                member.Enabled && member.LibraryItemId is not null && available.Contains(member.LibraryItemId));
+        }
+        catch (InvalidDataException) when (activeId.Value == "default")
+        {
+            var legacy = new ProfileLayout(profilesRoot, activeId);
+            enabledMods = Directory.Exists(legacy.EnabledDirectory)
+                ? Directory.EnumerateFiles(legacy.EnabledDirectory, "manifest.json", SearchOption.AllDirectories).Count()
+                : 0;
+        }
 
         var savesRoot = AndroidPrivateStorage.GetGameSaveRoot(context);
         var latest = Directory.Exists(savesRoot)
