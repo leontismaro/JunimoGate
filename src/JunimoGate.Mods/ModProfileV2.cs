@@ -197,6 +197,62 @@ public sealed class ModProfileV2Repository
         }
     }
 
+    public async ValueTask<ModProfileV2> CreateImportedAsync(
+        string displayName,
+        string? description,
+        ModAssemblyBindingPolicy? bindingPolicyOverride,
+        IReadOnlyList<ModProfileMember> members,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(members);
+        var normalizedName = NormalizeDisplayName(displayName);
+        var normalizedDescription = NormalizeDescription(description);
+        if (bindingPolicyOverride is { } policy && !Enum.IsDefined(policy))
+            throw new ArgumentOutOfRangeException(nameof(bindingPolicyOverride));
+
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Directory.CreateDirectory(profilesRoot);
+            await EnsureNoModsUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            while (true)
+            {
+                var profileId = ProfileId.Parse($"group-{Guid.NewGuid():N}"[..30]);
+                var directory = GetProfileDirectory(profileId);
+                if (Directory.Exists(directory))
+                    continue;
+                Directory.CreateDirectory(directory);
+                var now = DateTimeOffset.UtcNow;
+                var profile = new ModProfileV2(
+                    ModProfileV2.CurrentSchema,
+                    profileId.Value,
+                    normalizedName,
+                    Revision: 1,
+                    bindingPolicyOverride,
+                    members.ToArray(),
+                    now,
+                    now,
+                    normalizedDescription);
+                try
+                {
+                    profile.Validate();
+                    await WriteAtomicAsync(GetProfilePath(profileId), profile, overwrite: false, cancellationToken)
+                        .ConfigureAwait(false);
+                    return profile;
+                }
+                catch
+                {
+                    TryDeleteDirectory(directory);
+                    throw;
+                }
+            }
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
     public async ValueTask<ModProfileV2> UpdateAsync(
         ProfileId profileId,
         long expectedRevision,

@@ -96,6 +96,7 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
     public ModInstallTransactionState State { get; private set; }
     public ModArchiveScanResult? ScanResult { get; private set; }
     public ModArchiveImportResult? ImportResult { get; private set; }
+    internal string StoredArchivePath => archivePath;
 
     public async ValueTask ScanAsync(Stream archive, CancellationToken cancellationToken = default)
     {

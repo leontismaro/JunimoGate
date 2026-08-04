@@ -110,6 +110,14 @@ return TestHarness.Run(
         ModLaunchSelectionTests.MatchesTheFrozenGlobalBindingPolicy()),
     ("Mod launch selection resolves contained existing roots", () =>
         ModLaunchSelectionTests.ResolvesOnlyContainedExistingRoots()),
+    ("Mod Profile manifest roundtrip preserves placeholders", () =>
+        ModProfileTransferTests.ManifestRoundtripPreservesPlaceholders()),
+    ("Complete Mod Profile package excludes config and binds content", () =>
+        ModProfileTransferTests.CompletePackageExcludesConfigAndBindsExportedContent()),
+    ("Complete Mod Profile package rejects forged content identity", () =>
+        ModProfileTransferTests.RejectsForgedPackageIdentityWithoutLibraryChanges()),
+    ("Complete Mod Profile package supports an empty group", () =>
+        ModProfileTransferTests.CompletePackageSupportsAnEmptyGroup()),
     ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
         ModLibraryTests.DiscoversMultipleNestedMods()),
     ("Mod archive scanner accepts repeated directory entries", () =>

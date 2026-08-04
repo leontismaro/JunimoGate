@@ -272,6 +272,68 @@ public sealed class ModLibraryRepository
         }
     }
 
+    internal async ValueTask RollbackImportAsync(
+        IReadOnlyCollection<string> addedItemIds,
+        ModLibraryIndex previousIndex,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(addedItemIds);
+        ArgumentNullException.ThrowIfNull(previousIndex);
+        previousIndex.Validate();
+        if (addedItemIds.Count == 0)
+            return;
+        if (addedItemIds.Any(id => !ModContentId.IsValid(id)) || addedItemIds.Distinct(StringComparer.Ordinal).Count() != addedItemIds.Count)
+            throw new InvalidDataException("The Mod import rollback identities are invalid.");
+
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureDirectories();
+            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var remove = addedItemIds.ToHashSet(StringComparer.Ordinal);
+            if (!remove.IsSubsetOf(current.Items.Select(item => item.LibraryItemId)))
+                throw new InvalidDataException("The Mod import rollback no longer matches the library.");
+            var retained = current.Items.Where(item => !remove.Contains(item.LibraryItemId)).ToArray();
+            if (current.Revision != checked(previousIndex.Revision + 1) ||
+                !retained.SequenceEqual(previousIndex.Items))
+            {
+                throw new InvalidOperationException("The Mod library changed after the import and cannot be rolled back safely.");
+            }
+
+            var moved = new List<(string Source, string Staging)>();
+            try
+            {
+                foreach (var id in remove)
+                {
+                    var source = Layout.GetItemDirectory(id);
+                    if (!Directory.Exists(source))
+                        throw new InvalidDataException("A Mod import rollback directory is missing.");
+                    var staging = Path.Combine(Layout.StagingDirectory, $"rollback-{Guid.NewGuid():N}");
+                    Directory.Move(source, staging);
+                    moved.Add((source, staging));
+                }
+
+                await WriteIndexAtomicAsync(previousIndex, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                foreach (var (source, staging) in moved.AsEnumerable().Reverse())
+                {
+                    if (!Directory.Exists(source) && Directory.Exists(staging))
+                        Directory.Move(staging, source);
+                }
+                throw;
+            }
+
+            foreach (var (_, staging) in moved)
+                TryDeleteDirectory(staging);
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
     internal static JsonSerializerOptions SerializerOptions => JsonOptions;
 
     private void EnsureDirectories()
