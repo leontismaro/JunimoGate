@@ -1,11 +1,24 @@
 using JunimoGate.Core;
 using JunimoGate.Tests;
+using JunimoGate.App;
 
 var digest1 = Sha256Digest.Parse(new string('1', 64));
 var digest2 = Sha256Digest.Parse(new string('2', 64));
 var digest3 = Sha256Digest.Parse(new string('3', 64));
 
 return TestHarness.Run(
+    ("Update comparison promotes an equal stable release over a dev build", () =>
+    {
+        TestHarness.True(GitHubUpdateService.IsNewerStableVersion("0.1.0-dev", "v0.1.0"));
+        TestHarness.False(GitHubUpdateService.IsNewerStableVersion("0.1.0", "v0.1.0"));
+    }),
+    ("Update comparison follows semantic version order", () =>
+    {
+        TestHarness.True(GitHubUpdateService.IsNewerStableVersion("0.1.9", "v0.2.0"));
+        TestHarness.False(GitHubUpdateService.IsNewerStableVersion("1.0.0", "v0.9.9"));
+        TestHarness.Throws<InvalidDataException>(() =>
+            GitHubUpdateService.IsNewerStableVersion("development", "latest"));
+    }),
     ("Sha256Digest accepts canonical lowercase hex", () =>
     {
         var text = new string('a', Sha256Digest.HexLength);
