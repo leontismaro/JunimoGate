@@ -46,7 +46,7 @@
     </plurals>
 
     <string name="mods_title">Mods</string>
-    <string name="mods_library_description">Imported files are stored once in the global library. Importing does not add them to the current game group yet.</string>
+    <string name="mods_library_description">Imported files are stored once in the global library. Settings can optionally add unambiguous imports to the active group.</string>
     <string name="mods_group_unavailable">Current Mod group is unavailable.</string>
     <string name="mods_group_summary">%1$s · %2$d enabled · %3$d missing</string>
     <string name="mods_manage_groups">Manage groups</string>
@@ -125,6 +125,9 @@
         <item quantity="one">Imported %1$d Mod into the global library. It has not been added to the current game group.</item>
         <item quantity="other">Imported %1$d Mods into the global library. They have not been added to the current game group.</item>
     </plurals>
+    <string name="mods_import_completed_auto_group">Imported %1$d Mods; added %2$d to the active group. %3$d ambiguous IDs remain library-only.</string>
+    <string name="mods_import_completed_no_mods_group">Imported %1$d Mods. The read-only No Mods group was not changed.</string>
+    <string name="mods_import_completed_group_failed">Imported %1$d Mods, but the active group changed before it could be updated.</string>
     <plurals name="mods_version_count">
         <item quantity="one">%1$d installed version</item>
         <item quantity="other">%1$d installed versions</item>
@@ -180,6 +183,10 @@
     <string name="binding_highest_compatible">Highest compatible</string>
     <string name="binding_strict">Strict</string>
     <string name="binding_first_loaded">First loaded</string>
+    <string name="settings_add_imported_mods">Add imports to the active group</string>
+    <string name="settings_add_imported_mods_summary">Keeps an existing selected version. If one archive contains multiple candidates for the same ID, choose one manually.</string>
+    <string name="settings_confirm_mod_deletion">Confirm before deleting a Mod</string>
+    <string name="settings_confirm_mod_deletion_summary">Running or starting game sessions remain protected even when confirmation is off.</string>
     <string name="settings_more">More settings</string>
     <string name="settings_more_description">Saves, appearance, diagnostics and About will be added here.</string>
 

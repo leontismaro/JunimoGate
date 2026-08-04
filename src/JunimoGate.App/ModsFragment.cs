@@ -37,6 +37,8 @@ public sealed class ModsFragment : Fragment
     private ModLibraryRepository? repository;
     private ModProfileV2Repository? profiles;
     private ActiveModProfileSelectionRepository? activeProfile;
+    private LauncherSettingsRepository? settingsRepository;
+    private LauncherSettings? launcherSettings;
     private CancellationTokenSource? cancellation;
     private IModArchiveInstallTransaction? pendingTransaction;
     private bool busy;
@@ -78,6 +80,9 @@ public sealed class ModsFragment : Fragment
         var profilesRoot = Path.Combine(AndroidPrivateStorage.GetUserDataRoot(RequireContext()), "profiles");
         profiles = new ModProfileV2Repository(profilesRoot);
         activeProfile = new ActiveModProfileSelectionRepository(profilesRoot);
+        settingsRepository = new LauncherSettingsRepository(Path.Combine(
+            AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
+            "settings"));
         _ = InitializeContentAsync(profilesRoot, cancellation.Token);
     }
 
@@ -92,6 +97,8 @@ public sealed class ModsFragment : Fragment
         repository = null;
         profiles = null;
         activeProfile = null;
+        settingsRepository = null;
+        launcherSettings = null;
         SetBusy(false);
         base.OnStop();
     }
@@ -169,6 +176,8 @@ public sealed class ModsFragment : Fragment
                     "JunimoGate.Mods",
                     $"profile-migration already={(migration.AlreadyMigrated ? 1 : 0)} imported={migration.ImportedItems} reused={migration.ReusedItems} enabled={migration.EnabledMembers} disabled={migration.DisabledMembers}");
             }
+            if (settingsRepository is not null)
+                launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -278,6 +287,30 @@ public sealed class ModsFragment : Fragment
                 ?? throw new InvalidDataException("The Mod import result is missing.");
             Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
+            ModProfileAutoAssignmentResult? assignment = null;
+            var assignmentFailed = false;
+            if (settingsRepository is not null)
+            {
+                launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
+                if (launcherSettings.AddImportedModsToActiveProfile && profiles is not null && activeProfile is not null)
+                {
+                    try
+                    {
+                        assignment = await ModProfileAutoAssignment.AddImportedToActiveProfileAsync(
+                                activeProfile,
+                                profiles,
+                                result.AllItems,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                      UnauthorizedAccessException or InvalidOperationException)
+                    {
+                        assignmentFailed = true;
+                        Log.Error("JunimoGate.Mods", "archive-profile-assignment-failed", exception);
+                    }
+                }
+            }
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -285,10 +318,7 @@ public sealed class ModsFragment : Fragment
                 {
                     SetBusy(false);
                     var count = result.AllItems.Count;
-                    ShowMessage(Resources?.GetQuantityString(
-                        Resource.Plurals.mods_import_completed,
-                        count,
-                        [Java.Lang.Integer.ValueOf(count)]) ?? GetString(Resource.String.mods_import_failed));
+                    ShowMessage(FormatImportResult(count, assignment, assignmentFailed));
                 });
             }
         }
@@ -447,6 +477,12 @@ public sealed class ModsFragment : Fragment
     {
         if (busy || repository is null)
             return;
+        if (launcherSettings?.ConfirmLibraryDeletion == false)
+        {
+            if (cancellation is { IsCancellationRequested: false } directLifetime)
+                _ = DeleteAsync(item, directLifetime.Token);
+            return;
+        }
         var deleteDialog = new MaterialAlertDialogBuilder(RequireContext());
         deleteDialog.SetTitle(Resource.String.mods_delete_title);
         deleteDialog.SetMessage(FormatString(
@@ -460,6 +496,29 @@ public sealed class ModsFragment : Fragment
                 _ = DeleteAsync(item, lifetime.Token);
         });
         deleteDialog.Show();
+    }
+
+    private string FormatImportResult(
+        int importedCount,
+        ModProfileAutoAssignmentResult? assignment,
+        bool assignmentFailed)
+    {
+        if (assignmentFailed)
+            return GetString(Resource.String.mods_import_completed_group_failed, importedCount);
+        if (assignment?.BlockedByReadOnlyProfile == true)
+            return GetString(Resource.String.mods_import_completed_no_mods_group, importedCount);
+        if (assignment is not null)
+        {
+            return GetString(
+                Resource.String.mods_import_completed_auto_group,
+                importedCount,
+                assignment.AddedMembers,
+                assignment.AmbiguousUniqueIds);
+        }
+        return Resources?.GetQuantityString(
+            Resource.Plurals.mods_import_completed,
+            importedCount,
+            [Java.Lang.Integer.ValueOf(importedCount)]) ?? GetString(Resource.String.mods_import_failed);
     }
 
     private async Task DeleteAsync(ModLibraryItem item, CancellationToken cancellationToken)

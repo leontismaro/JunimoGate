@@ -46,7 +46,7 @@
     </plurals>
 
     <string name="mods_title">Mod</string>
-    <string name="mods_library_description">导入文件只在全局库保存一份。当前阶段导入后不会自动加入正在运行的 Mod 分组。</string>
+    <string name="mods_library_description">导入文件只在全局库保存一份。可在设置中选择把没有歧义的导入项加入当前分组。</string>
     <string name="mods_group_unavailable">当前 Mod 分组不可用。</string>
     <string name="mods_group_summary">%1$s · 启用 %2$d · 缺失 %3$d</string>
     <string name="mods_manage_groups">管理分组</string>
@@ -126,6 +126,9 @@
         <item quantity="one">已向全局库导入 %1$d 个 Mod；它尚未加入当前游戏分组。</item>
         <item quantity="other">已向全局库导入 %1$d 个 Mod；它们尚未加入当前游戏分组。</item>
     </plurals>
+    <string name="mods_import_completed_auto_group">已导入 %1$d 个 Mod；%2$d 个已加入当前分组。%3$d 个存在多版本歧义，只保留在库中。</string>
+    <string name="mods_import_completed_no_mods_group">已导入 %1$d 个 Mod；只读的“无 Mod”分组没有改变。</string>
+    <string name="mods_import_completed_group_failed">已导入 %1$d 个 Mod，但当前分组发生变化，未能自动加入。</string>
     <plurals name="mods_version_count">
         <item quantity="one">已安装 %1$d 个版本</item>
         <item quantity="other">已安装 %1$d 个版本</item>
@@ -181,6 +184,10 @@
     <string name="binding_highest_compatible">最高兼容版本</string>
     <string name="binding_strict">严格模式</string>
     <string name="binding_first_loaded">首个加载版本</string>
+    <string name="settings_add_imported_mods">导入后加入当前分组</string>
+    <string name="settings_add_imported_mods_summary">保留分组中已经选择的版本；同一压缩包内有同 ID 多个候选时，需要手动选择。</string>
+    <string name="settings_confirm_mod_deletion">删除 Mod 前确认</string>
+    <string name="settings_confirm_mod_deletion_summary">即使关闭确认，正在启动或运行的游戏会话仍受保护。</string>
     <string name="settings_more">更多设置</string>
     <string name="settings_more_description">存档、外观、诊断和关于信息将在这里提供。</string>
 

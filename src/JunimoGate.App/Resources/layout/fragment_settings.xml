@@ -94,6 +94,38 @@
                 android:inputType="none" />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/settings_add_imported_mods"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:minHeight="48dp"
+            android:text="@string/settings_add_imported_mods"
+            android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/settings_add_imported_mods_summary"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/settings_confirm_mod_deletion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:minHeight="48dp"
+            android:text="@string/settings_confirm_mod_deletion"
+            android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/settings_confirm_mod_deletion_summary"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -3,12 +3,16 @@ using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using AndroidX.AppCompat.App;
+using AndroidX.AppCompat.Widget;
 using AndroidX.Core.OS;
 using AndroidX.Fragment.App;
 using AndroidX.Navigation.Fragment;
 using Google.Android.Material.TextField;
+using JunimoGate.Android;
 using JunimoGate.Mods;
 using Fragment = AndroidX.Fragment.App.Fragment;
+using Log = JunimoGate.Android.JunimoGateLog;
+using OperationCanceledException = System.OperationCanceledException;
 
 namespace JunimoGate.App;
 
@@ -21,6 +25,10 @@ public sealed class SettingsFragment : Fragment
     private bool syncing;
     private View? environmentCard;
     private View? saveBackupsCard;
+    private SwitchCompat? addImportedMods;
+    private SwitchCompat? confirmDeletion;
+    private LauncherSettingsRepository? settingsRepository;
+    private CancellationTokenSource? settingsCancellation;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_settings, container, false)
@@ -55,6 +63,12 @@ public sealed class SettingsFragment : Fragment
         environmentCard!.Click += OnEnvironmentClicked;
         saveBackupsCard = view.FindViewById(Resource.Id.settings_save_backups_card);
         saveBackupsCard!.Click += OnSaveBackupsClicked;
+        addImportedMods = view.FindViewById<SwitchCompat>(Resource.Id.settings_add_imported_mods)
+            ?? throw new InvalidOperationException("The imported Mod setting is unavailable.");
+        confirmDeletion = view.FindViewById<SwitchCompat>(Resource.Id.settings_confirm_mod_deletion)
+            ?? throw new InvalidOperationException("The Mod deletion setting is unavailable.");
+        addImportedMods.CheckedChange += OnAddImportedModsChanged;
+        confirmDeletion.CheckedChange += OnConfirmDeletionChanged;
     }
 
     public override void OnStart()
@@ -65,6 +79,11 @@ public sealed class SettingsFragment : Fragment
         host.LauncherStateChanged += OnStateChanged;
         Render(host.CurrentState);
         RenderLanguage();
+        settingsCancellation = new CancellationTokenSource();
+        settingsRepository = new LauncherSettingsRepository(Path.Combine(
+            AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
+            "settings"));
+        _ = LoadSettingsAsync(settingsCancellation.Token);
     }
 
     public override void OnStop()
@@ -72,6 +91,10 @@ public sealed class SettingsFragment : Fragment
         if (host is not null)
             host.LauncherStateChanged -= OnStateChanged;
         host = null;
+        settingsCancellation?.Cancel();
+        settingsCancellation?.Dispose();
+        settingsCancellation = null;
+        settingsRepository = null;
         base.OnStop();
     }
 
@@ -85,10 +108,16 @@ public sealed class SettingsFragment : Fragment
             environmentCard.Click -= OnEnvironmentClicked;
         if (saveBackupsCard is not null)
             saveBackupsCard.Click -= OnSaveBackupsClicked;
+        if (addImportedMods is not null)
+            addImportedMods.CheckedChange -= OnAddImportedModsChanged;
+        if (confirmDeletion is not null)
+            confirmDeletion.CheckedChange -= OnConfirmDeletionChanged;
         bindingPolicy = null;
         language = null;
         environmentCard = null;
         saveBackupsCard = null;
+        addImportedMods = null;
+        confirmDeletion = null;
         base.OnDestroyView();
     }
 
@@ -126,6 +155,80 @@ public sealed class SettingsFragment : Fragment
     private void OnEnvironmentClicked(object? sender, EventArgs eventArgs) => host?.OpenEnvironment();
 
     private void OnSaveBackupsClicked(object? sender, EventArgs eventArgs) => host?.OpenSaveBackups();
+
+    private void OnAddImportedModsChanged(object? sender, CompoundButton.CheckedChangeEventArgs eventArgs)
+    {
+        if (!syncing && settingsCancellation is { IsCancellationRequested: false } lifetime)
+            _ = UpdateSettingsAsync(addImported: eventArgs.IsChecked, confirmDelete: null, lifetime.Token);
+    }
+
+    private void OnConfirmDeletionChanged(object? sender, CompoundButton.CheckedChangeEventArgs eventArgs)
+    {
+        if (!syncing && settingsCancellation is { IsCancellationRequested: false } lifetime)
+            _ = UpdateSettingsAsync(addImported: null, confirmDelete: eventArgs.IsChecked, lifetime.Token);
+    }
+
+    private async Task LoadSettingsAsync(CancellationToken cancellationToken)
+    {
+        if (settingsRepository is null)
+            return;
+        try
+        {
+            var settings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (IsAdded && !cancellationToken.IsCancellationRequested)
+                Activity?.RunOnUiThread(() => RenderSettings(settings));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            Log.Error("JunimoGate.Settings", "settings-read-failed", exception);
+        }
+    }
+
+    private async Task UpdateSettingsAsync(
+        bool? addImported,
+        bool? confirmDelete,
+        CancellationToken cancellationToken)
+    {
+        if (settingsRepository is null)
+            return;
+        try
+        {
+            var current = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var updated = await settingsRepository.UpdateAsync(
+                    current.Revision,
+                    value => value with
+                    {
+                        AddImportedModsToActiveProfile = addImported ?? value.AddImportedModsToActiveProfile,
+                        ConfirmLibraryDeletion = confirmDelete ?? value.ConfirmLibraryDeletion,
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (IsAdded && !cancellationToken.IsCancellationRequested)
+                Activity?.RunOnUiThread(() => RenderSettings(updated));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Settings", "settings-update-failed", exception);
+            await LoadSettingsAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void RenderSettings(LauncherSettings settings)
+    {
+        if (addImportedMods is null || confirmDeletion is null)
+            return;
+        syncing = true;
+        addImportedMods.Checked = settings.AddImportedModsToActiveProfile;
+        confirmDeletion.Checked = settings.ConfirmLibraryDeletion;
+        syncing = false;
+    }
 
     private void RenderLanguage()
     {

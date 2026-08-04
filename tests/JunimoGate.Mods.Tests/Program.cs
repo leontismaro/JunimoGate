@@ -110,6 +110,14 @@ return TestHarness.Run(
         ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
     ("Active Profile selection uses revision-checked updates", () =>
         ModProfileV2Tests.PersistsActiveProfileWithRevisionChecks()),
+    ("Imported Mods join the active group without replacing versions", () =>
+        ModProfileAutoAssignmentTests.AddsUniqueImportsWithoutReplacingExistingVersions()),
+    ("Ambiguous imported versions remain library-only", () =>
+        ModProfileAutoAssignmentTests.LeavesAmbiguousVersionsInTheLibraryOnly()),
+    ("An exact imported version reconnects a missing group member", () =>
+        ModProfileAutoAssignmentTests.ReconnectsAnExactMissingVersion()),
+    ("Imported Mods cannot modify the no-Mods group", () =>
+        ModProfileAutoAssignmentTests.DoesNotModifyTheNoModsProfile()),
     ("Mod launch selection freezes enabled library items", () =>
         ModLaunchSelectionTests.FreezesOnlyEnabledLibraryItems()),
     ("Mod launch selection rejects missing enabled members", () =>
