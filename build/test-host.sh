@@ -31,6 +31,12 @@ fi
 
 "$dotnet_command" build "$root/JunimoGate.Host.slnf" --configuration "$configuration" -m:1
 
+"$dotnet_command" run \
+  --project "$root/tools/JunimoGate.RuntimePack/JunimoGate.RuntimePack.csproj" \
+  --configuration "$configuration" \
+  -- \
+  --self-test
+
 for project in \
   JunimoGate.Core.Tests \
   JunimoGate.Extraction.Tests \

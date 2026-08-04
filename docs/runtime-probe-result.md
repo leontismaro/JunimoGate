@@ -12,7 +12,7 @@ The validated report conclusion is:
 application-local-mono-with-harmony-monomod-fix
 ```
 
-This is not a claim that unmodified upstream Harmony 2.4.2 works on Android. The build starts from the `libmonosgen-2.0.so` supplied by the local .NET Android runtime pack, patches the two Mono access-decision functions by ELF symbol location, and packages that copy with the App and RuntimeProbe. The SDK pack is not changed. JunimoGate also uses its reproducible `Lib.Harmony 2.4.2-junimogate.11` package and ARM64 instruction-cache helper.
+This is not a claim that unmodified upstream Harmony 2.4.2 works on Android. The build starts from the `libmonosgen-2.0.so` supplied by the local .NET Android runtime pack, applies the bounded recipes documented in [`mono-android-runtime-maintenance.md`](mono-android-runtime-maintenance.md) by ELF symbol location, and packages that copy with the App and RuntimeProbe. The SDK pack is not changed. JunimoGate also uses its reproducible Android `Lib.Harmony` package and ARM64 instruction-cache helper.
 
 ## Validation environment
 
@@ -24,7 +24,7 @@ This is not a claim that unmodified upstream Harmony 2.4.2 works on Android. The
 | Device ABI | `arm64-v8a` |
 | Probe RID | `android-arm64` |
 | Runtime input | `.NET 9.0.17` Android ARM64 runtime pack |
-| Runtime in APK | Application-local Mono copy with two access-policy functions patched |
+| Runtime in APK | Application-local Mono copy with bounded access, diagnostic, and Reflection.Emit recipes |
 | Execution mode | JIT, interpreter disabled, AOT disabled |
 | Harmony assembly version | `2.4.2.0` |
 | Harmony informational version | `2.4.2.0-junimogate.11` |

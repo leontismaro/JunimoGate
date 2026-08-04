@@ -382,6 +382,10 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "singleApplicationMonoRuntime": mono_runtime_entries == ["lib/arm64-v8a/libmonosgen-2.0.so"],
         "monoAccessPolicyPatched": patched_mono_runtime is not None
         and patched_mono_runtime.count(b"\x20\x00\x80\x52\xc0\x03\x5f\xd6") >= 2,
+        "monoReflectionEmitFallbackPatched": patched_mono_runtime is not None
+        and patched_mono_runtime.count(
+            b"\x1f\x01\x00\xf1\x20\x01\x88\x9a\xfd\x7b\xc1\xa8\xc0\x03\x5f\xd6"
+        ) == 1,
         "signatureV2": v2,
         "signatureV3": v3,
         "manifestPermissionsAgreeWithBadging": sorted(manifest.permissions) == sorted(badging_permissions),
@@ -429,6 +433,10 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "singleApplicationMonoRuntime": mono_runtime_entries == ["lib/arm64-v8a/libmonosgen-2.0.so"],
         "monoAccessPolicyPatched": patched_mono_runtime is not None
         and patched_mono_runtime.count(b"\x20\x00\x80\x52\xc0\x03\x5f\xd6") >= 2,
+        "monoReflectionEmitFallbackPatched": patched_mono_runtime is not None
+        and patched_mono_runtime.count(
+            b"\x1f\x01\x00\xf1\x20\x01\x88\x9a\xfd\x7b\xc1\xa8\xc0\x03\x5f\xd6"
+        ) == 1,
         "compressedNativeEntries": compressed_native_entries,
         "publicRuntimeProviders": {
             "monoGameEntry": mono_game_entries[0] if len(mono_game_entries) == 1 else None,

@@ -162,7 +162,7 @@ The script builds, installs, clears old probe-app state, launches each configura
 
 Set `ANDROID_SERIAL` when multiple devices are attached. Output is stored under ignored `artifacts/runtime-probe/`.
 
-M1 and M2 are complete. A ARM64 test device running Android 16/API 36 installed and launched the probe, and final Debug and Release reports passed all ten hard cases in explicit application-local Mono JIT/no-interpreter/no-AOT mode. The runtime input is the project-local .NET Android pack; only the two Mono access-decision functions are patched in the ignored APK copy. The pinned Harmony/MonoMod library patch and cache helper remain separate required inputs. See [`runtime-probe-result.md`](runtime-probe-result.md) for report hashes and scope.
+M1 and M2 are complete. A ARM64 test device running Android 16/API 36 installed and launched the probe, and final Debug and Release reports passed all ten hard cases in explicit application-local Mono JIT/no-interpreter/no-AOT mode. The runtime input is the project-local .NET Android pack; the ignored APK copy receives only the bounded recipes documented in [`mono-android-runtime-maintenance.md`](mono-android-runtime-maintenance.md). The pinned Harmony/MonoMod library patch and cache helper remain separate required inputs. See [`runtime-probe-result.md`](runtime-probe-result.md) for report hashes and scope.
 
 ## Local game inspection
 
@@ -180,6 +180,6 @@ Never write or copy APKs, game assets, DLLs, native libraries, decompiled source
 
 ## Runtime boundary
 
-M2 uses the project-local .NET Android Mono runtime pack as an input, then creates an ignored application-local ARM64 copy with only the two Mono access-decision functions patched. `build/build-mono-android.sh` performs this once before an APK build; it does not alter the global pack and does not copy the original game's AOT images. Harmony/MonoMod remains a separate pinned library patch.
+M2 uses the project-local .NET Android Mono runtime pack as an input, then creates an ignored application-local ARM64 copy with narrow symbol- and instruction-guarded patches. `build/build-mono-android.sh` performs this once before an APK build; it does not alter the global pack and does not copy the original game's AOT images. Harmony/MonoMod remains a separate pinned library patch. The exact recipes and runtime-upgrade procedure are in [`mono-android-runtime-maintenance.md`](mono-android-runtime-maintenance.md).
 
 External baseline: [`../../ARCHITECTURE_PLAN.md`](../../ARCHITECTURE_PLAN.md) and [`../../TECHNICAL_FINDINGS.md`](../../TECHNICAL_FINDINGS.md).

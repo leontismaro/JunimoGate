@@ -1,6 +1,6 @@
 # Harmony Android patch 维护手册
 
-本文是 `Lib.Harmony 2.4.2-junimogate.11` 下游补丁的操作与维护手册。Mono 访问策略补丁另由 `build/build-mono-android.sh` 处理：它只在构建阶段从本地 .NET runtime pack 生成应用副本，不属于 Harmony patch，也不进入启动热路径。
+本文是 Android `Lib.Harmony` 下游补丁的操作与维护手册。Mono 应用副本由 `build/build-mono-android.sh` 单独生成，其配方和升级边界见 [`mono-android-runtime-maintenance.md`](mono-android-runtime-maintenance.md)；它不属于 Harmony patch，也不进入启动热路径。
 
 权威证据与边界见 [`runtime-probe-result.md`](runtime-probe-result.md)；通用 Android 工具链见 [`build-environment.md`](build-environment.md)。
 
@@ -63,7 +63,7 @@ Lib.Harmony/Lib.Harmony.csproj
 
 ### 2.3 Harmony 修 library，Mono 只生成应用副本
 
-Harmony/MonoMod 继续只维护 Android library fix。普通 Mod 的跨程序集非公开成员访问由应用内 Mono 副本统一处理；该副本来自 `.toolchains/dotnet/packs/Microsoft.NETCore.App.Runtime.Mono.android-arm64`，只改写 `mono_method_can_access_field` 和 `mono_method_can_access_method` 的 ARM64 函数入口。不会修改全局 runtime pack，也不维护完整 Mono 源码 fork。
+Harmony/MonoMod 继续只维护 Android library fix。普通 Mod 的跨程序集非公开成员访问由应用内 Mono 副本统一处理；该副本来自 `.toolchains/dotnet/packs/Microsoft.NETCore.App.Runtime.Mono.android-arm64`。除两个访问策略入口外，当前仅保留已由真实故障证明的 null-GUID 诊断保护和 Reflection.Emit fatal-default 回退。不会修改全局 runtime pack，也不维护完整 Mono 源码 fork；具体指令边界见独立 Mono 维护文档。
 
 ### 2.4 版本不可变
 

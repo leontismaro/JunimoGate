@@ -3,10 +3,17 @@ using System.Buffers.Binary;
 const string FieldAccessSymbol = "mono_method_can_access_field";
 const string MethodAccessSymbol = "mono_method_can_access_method";
 const string GuidFormatterSymbol = "mono_guid_to_string_minimal";
+const string ReflectionTypeSymbol = "mono_class_from_mono_type_internal";
 ReadOnlySpan<byte> allowAccess = [
     0x20, 0x00, 0x80, 0x52, // mov w0, #1
     0xc0, 0x03, 0x5f, 0xd6, // ret
 ];
+
+if (args is ["--self-test"])
+{
+    RunSelfTests();
+    return 0;
+}
 
 if (args.Length != 2)
 {
@@ -35,6 +42,7 @@ foreach (string symbolName in new[] { FieldAccessSymbol, MethodAccessSymbol })
 }
 
 PatchNullGuidFormatting(image, elf, GuidFormatterSymbol);
+PatchInvalidReflectionTypeFallback(image, elf, ReflectionTypeSymbol);
 
 string? destinationDirectory = Path.GetDirectoryName(destinationPath);
 if (string.IsNullOrEmpty(destinationDirectory))
@@ -120,6 +128,130 @@ static void PatchNullGuidFormatting(byte[] image, Elf64Arm64Image elf, string sy
         throw new InvalidDataException($"ELF symbol '{symbolName}' did not retain the expected patched body.");
 
     Console.WriteLine($"Patched {symbolName} null-GUID handling at ELF file offset 0x{fileOffset:x}.");
+}
+
+static void PatchInvalidReflectionTypeFallback(byte[] image, Elf64Arm64Image elf, string symbolName)
+{
+    // Some Reflection.Emit methods expose a zero-initialized MonoType while
+    // RuntimeMethodInfo.GetParameters() inspects their generated signature. Mono's
+    // default switch arm aborts the process for that value. Preserve every normal
+    // type case and return the fallback class already held by this function only for
+    // the otherwise-fatal default arm.
+    const int FunctionSize = 0x24c;
+    ElfSymbol symbol = elf.FindFunction(symbolName);
+    if (symbol.Size != FunctionSize)
+    {
+        throw new InvalidDataException(
+            $"ELF symbol '{symbolName}' has unsupported size 0x{symbol.Size:x}; expected 0x{FunctionSize:x}. " +
+            "Review the Mono runtime update before changing the patch recipe.");
+    }
+
+    int fileOffset = elf.MapVirtualAddressToFileOffset(symbol.VirtualAddress, FunctionSize);
+    Span<byte> function = image.AsSpan(fileOffset, FunctionSize);
+    PatchInvalidReflectionTypeFallbackFunction(function, symbolName);
+
+    Console.WriteLine($"Patched {symbolName} invalid Reflection.Emit type fallback at ELF file offset 0x{fileOffset + 0x23c:x}.");
+}
+
+static void PatchInvalidReflectionTypeFallbackFunction(Span<byte> function, string symbolName)
+{
+    const int FunctionSize = 0x24c;
+    const int PatchOffset = 0x23c;
+    if (function.Length != FunctionSize)
+    {
+        throw new InvalidDataException(
+            $"ELF symbol '{symbolName}' has unsupported size 0x{function.Length:x}; expected 0x{FunctionSize:x}. " +
+            "Review the Mono runtime update before changing the patch recipe.");
+    }
+
+    uint[] original = ReadInstructions(function);
+    int patchIndex = PatchOffset / 4;
+    uint[] expectedTail =
+    [
+        0xaa1f03e0, // mov x0, xzr
+        0x52800201, // mov w1, #0x10
+        0,          // bl g_strdup_printf
+        0,          // adrp x0, assertion-message page
+        0x911cd800, // add x0, x0, assertion-message offset
+        0x52812281, // mov w1, #0x914
+        0,          // bl monoeg_g_log
+    ];
+    int tailStart = patchIndex - 3;
+    for (int index = 0; index < expectedTail.Length; index++)
+    {
+        uint instruction = original[tailStart + index];
+        bool matches = index switch
+        {
+            2 or 6 => (instruction & 0xfc000000) == 0x94000000,
+            3 => (instruction & 0x9f00001f) == 0x90000000,
+            _ => instruction == expectedTail[index],
+        };
+        if (!matches)
+        {
+            throw new InvalidDataException(
+                $"ELF symbol '{symbolName}' no longer matches the supported Mono recipe at instruction " +
+                $"{tailStart + index} (0x{instruction:x8}). Review the runtime update before patching it.");
+        }
+    }
+
+    uint[] fallback =
+    [
+        0xf100011f, // cmp x8, #0
+        0x9a880120, // csel x0, x9, x8, eq
+        0xa8c17bfd, // ldp x29, x30, [sp], #0x10
+        0xd65f03c0, // ret
+    ];
+    WriteInstructions(function.Slice(PatchOffset, fallback.Length * 4), fallback);
+    if (!ReadInstructions(function.Slice(PatchOffset, fallback.Length * 4)).SequenceEqual(fallback))
+        throw new InvalidDataException($"ELF symbol '{symbolName}' did not retain the expected fallback body.");
+}
+
+static void RunSelfTests()
+{
+    const int FunctionSize = 0x24c;
+    const int PatchOffset = 0x23c;
+    const int PatchIndex = PatchOffset / 4;
+    const int TailStart = PatchIndex - 3;
+    uint[] expectedTail =
+    [
+        0xaa1f03e0,
+        0x52800201,
+        0x94000000,
+        0x90000000,
+        0x911cd800,
+        0x52812281,
+        0x94000000,
+    ];
+
+    byte[] supportedFunction = new byte[FunctionSize];
+    WriteInstructions(supportedFunction.AsSpan(TailStart * 4, expectedTail.Length * 4), expectedTail);
+    PatchInvalidReflectionTypeFallbackFunction(supportedFunction, ReflectionTypeSymbol);
+
+    uint[] expectedFallback = [0xf100011f, 0x9a880120, 0xa8c17bfd, 0xd65f03c0];
+    if (!ReadInstructions(supportedFunction.AsSpan(PatchOffset, expectedFallback.Length * 4)).SequenceEqual(expectedFallback))
+        throw new InvalidDataException("Reflection.Emit fallback self-test did not produce the expected ARM64 instructions.");
+
+    byte[] changedRecipe = new byte[FunctionSize];
+    WriteInstructions(changedRecipe.AsSpan(TailStart * 4, expectedTail.Length * 4), expectedTail);
+    BinaryPrimitives.WriteUInt32LittleEndian(changedRecipe.AsSpan(TailStart * 4, 4), 0xd503201f);
+    ExpectInvalidData(() => PatchInvalidReflectionTypeFallbackFunction(changedRecipe, ReflectionTypeSymbol));
+    ExpectInvalidData(() => PatchInvalidReflectionTypeFallbackFunction(new byte[FunctionSize - 4], ReflectionTypeSymbol));
+
+    Console.WriteLine("RuntimePack self-test passed: supported Reflection.Emit recipe patches exactly; changed recipes fail closed.");
+}
+
+static void ExpectInvalidData(Action action)
+{
+    try
+    {
+        action();
+    }
+    catch (InvalidDataException)
+    {
+        return;
+    }
+
+    throw new InvalidDataException("RuntimePack self-test expected an InvalidDataException.");
 }
 
 static void ValidateGuidFormatterRecipe(IReadOnlyList<uint> instructions, string symbolName)
