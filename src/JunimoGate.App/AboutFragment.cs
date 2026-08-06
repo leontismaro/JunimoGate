@@ -1,5 +1,4 @@
 using Android.Content;
-using Android.Content.PM;
 using Android.OS;
 using Android.Runtime;
 using Android.Views;
@@ -60,7 +59,7 @@ public sealed class AboutFragment : Fragment
         settings = new LauncherSettingsRepository(Path.Combine(
             AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
             "settings"));
-        _ = LoadAsync(cancellation.Token);
+        LoadVersion();
     }
 
     public override void OnStop()
@@ -88,42 +87,24 @@ public sealed class AboutFragment : Fragment
         base.OnDestroyView();
     }
 
-    private async Task LoadAsync(CancellationToken cancellationToken)
+    private void LoadVersion()
     {
         try
         {
             var context = RequireContext();
-            var info = await new ProductInformationService(context)
-                .ReadEnvironmentAsync(cancellationToken)
-                .ConfigureAwait(false);
-            var package = context.PackageManager?.GetPackageInfo(context.PackageName!, (PackageInfoFlags)0)
+            var package = context.PackageManager?.GetPackageInfo(
+                              context.PackageName!,
+                              (global::Android.Content.PM.PackageInfoFlags)0)
                 ?? throw new InvalidOperationException("JunimoGate package metadata is unavailable.");
-            appVersion = info.AppVersion;
-            var game = info.Games.FirstOrDefault(candidate => candidate.IsInstalled);
-            var gameValue = game is null
-                ? GetString(Resource.String.about_game_not_installed)
-                : $"{game.PackageName} {game.VersionName} ({game.VersionCode})";
-            var text = FormatString(
-                Resource.String.about_versions_value,
-                new JString(info.AppVersion),
-                Java.Lang.Long.ValueOf(GetLongVersionCode(package)),
-                new JString(info.Smapi.SmapiApiVersion),
-                new JString(info.Smapi.SmapiImplementationVersion),
-                new JString(info.Smapi.BuildId),
-                new JString(info.Smapi.BundleId),
-                new JString(gameValue));
-            if (IsAdded && !cancellationToken.IsCancellationRequested)
-                Activity?.RunOnUiThread(() => versions!.Text = text);
+            appVersion = package.VersionName ?? "—";
+            if (versions is not null)
+                versions.Text = FormatString(Resource.String.about_version_value, new JString(appVersion));
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException)
+        catch (Exception exception) when (exception is InvalidOperationException or
+                                          global::Android.Content.PM.PackageManager.NameNotFoundException)
         {
             Log.Error("JunimoGate.About", "about-read-failed", exception);
-            if (IsAdded)
-                Activity?.RunOnUiThread(() => versions?.SetText(Resource.String.about_read_failed));
+            versions?.SetText(Resource.String.about_read_failed);
         }
     }
 
@@ -253,12 +234,4 @@ public sealed class AboutFragment : Fragment
         Resources?.GetString(resourceId, arguments)
         ?? throw new InvalidOperationException("The About string resource is unavailable.");
 
-    private static long GetLongVersionCode(PackageInfo package)
-    {
-        if (OperatingSystem.IsAndroidVersionAtLeast(28))
-            return package.LongVersionCode;
-#pragma warning disable CA1422
-        return package.VersionCode;
-#pragma warning restore CA1422
-    }
 }
