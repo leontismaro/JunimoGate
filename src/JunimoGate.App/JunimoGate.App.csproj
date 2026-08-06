@@ -46,6 +46,7 @@
     <PackageReference Include="Xamarin.AndroidX.Navigation.Fragment" Version="2.9.8.1" />
     <PackageReference Include="Xamarin.AndroidX.Navigation.UI" Version="2.9.8.1" />
     <PackageReference Include="Xamarin.AndroidX.RecyclerView" Version="1.4.0.6" />
+    <PackageReference Include="Xamarin.AndroidX.ViewPager2" Version="1.1.0.11" />
     <PackageReference Include="Xamarin.Google.Android.Material" Version="1.14.0.6" />
     <ProjectReference Include="../JunimoGate.Android/JunimoGate.Android.csproj" />
     <ProjectReference Include="../JunimoGate.Mods/JunimoGate.Mods.csproj" />

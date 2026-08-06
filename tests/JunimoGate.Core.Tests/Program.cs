@@ -302,7 +302,15 @@ return TestHarness.Run(
     ("Save backup catalog exports one exact backup", () =>
         SaveBackupCatalogTests.ExportsOneExactBackup()),
     ("Save backup catalog rejects traversal and incomplete files", () =>
-        SaveBackupCatalogTests.RejectsTraversalAndIncompleteSelections()));
+        SaveBackupCatalogTests.RejectsTraversalAndIncompleteSelections()),
+    ("Live save catalog reads user metadata without nested name confusion", () =>
+        SaveGameManagementTests.ReadsLiveSaveMetadataWithoutNestedNameConfusion()),
+    ("Save archive inspector finds nested and root save packages", () =>
+        SaveGameManagementTests.FindsNestedAndRootSaveArchives()),
+    ("Save import protects replacements with a safety backup", () =>
+        SaveGameManagementTests.ImportsNewSavesAndProtectsReplacements()),
+    ("Save import rejects traversal and preserves Mod sidecars", () =>
+        SaveGameManagementTests.RejectsTraversalAndPreservesSidecarFiles()));
 
 sealed class RuntimeInventoryFixture : IDisposable
 {
