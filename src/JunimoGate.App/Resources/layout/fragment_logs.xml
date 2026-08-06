@@ -4,22 +4,19 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="20dp">
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/logs_title"
-        android:textAppearance="?attr/textAppearanceHeadlineMedium" />
+    android:paddingStart="16dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="12dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
         android:orientation="horizontal"
         android:weightSum="2">
 
         <com.google.android.material.textfield.TextInputLayout
+            style="@style/JunimoGate.TextInput.Dropdown"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginEnd="6dp"
@@ -35,6 +32,7 @@
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
+            style="@style/JunimoGate.TextInput.Dropdown"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="6dp"
@@ -66,7 +64,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/logs_copy"
-            style="@style/Widget.Material3.Button.TextButton"
+            style="@style/JunimoGate.Button.Secondary"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:enabled="false"
@@ -74,15 +72,15 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/logs_share"
-            style="@style/Widget.Material3.Button.TextButton"
+            style="@style/JunimoGate.Button.Secondary"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:enabled="false"
-            android:text="@string/logs_share" />
+            android:text="@string/logs_share_current" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/logs_export_diagnostics"
-            style="@style/Widget.Material3.Button.TextButton"
+            style="@style/JunimoGate.Button.Secondary"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/logs_export_diagnostics" />
@@ -93,7 +91,7 @@
         android:layout_height="0dp"
         android:layout_marginTop="8dp"
         android:layout_weight="1"
-        android:background="?attr/colorSurfaceContainer"
+        android:background="@drawable/junimo_log_surface"
         android:fillViewport="true"
         android:padding="12dp">
 

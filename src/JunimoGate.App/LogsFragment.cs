@@ -5,6 +5,7 @@ using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Fragment.App;
+using AndroidX.Core.Content;
 using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
 using Google.Android.Material.TextField;
@@ -46,22 +47,9 @@ public sealed class LogsFragment : Fragment
         shareButton = view.FindViewById<MaterialButton>(Resource.Id.logs_share);
         diagnosticsButton = view.FindViewById<MaterialButton>(Resource.Id.logs_export_diagnostics);
 
-        sourcePicker!.Adapter = new ArrayAdapter<string>(
-            RequireContext(),
-            global::Android.Resource.Layout.SimpleListItem1,
-            [
-                GetString(Resource.String.logs_source_launcher),
-                GetString(Resource.String.logs_source_game),
-                GetString(Resource.String.logs_source_smapi),
-            ]);
-        generationPicker!.Adapter = new ArrayAdapter<string>(
-            RequireContext(),
-            global::Android.Resource.Layout.SimpleListItem1,
-            [GetString(Resource.String.logs_current), GetString(Resource.String.logs_previous)]);
-        sourcePicker.SetText(GetString(Resource.String.logs_source_launcher), filter: false);
-        generationPicker.SetText(GetString(Resource.String.logs_current), filter: false);
-        sourcePicker.ItemClick += OnSourceSelected;
-        generationPicker.ItemClick += OnGenerationSelected;
+        ResetPickerAdapters();
+        sourcePicker!.ItemClick += OnSourceSelected;
+        generationPicker!.ItemClick += OnGenerationSelected;
         copyButton!.Click += OnCopyClicked;
         shareButton!.Click += OnShareClicked;
         diagnosticsButton!.Click += OnDiagnosticsClicked;
@@ -70,6 +58,9 @@ public sealed class LogsFragment : Fragment
     public override void OnStart()
     {
         base.OnStart();
+        // AutoCompleteTextView filters its ArrayAdapter to the selected label. Recreate the
+        // adapters when returning from another screen so every source remains selectable.
+        ResetPickerAdapters();
         cancellation = new CancellationTokenSource();
         _ = LoadAsync(cancellation.Token);
     }
@@ -132,6 +123,7 @@ public sealed class LogsFragment : Fragment
             2 => ProductLogKind.Smapi,
             _ => throw new InvalidOperationException("The selected log source is invalid."),
         };
+        ResetSourcePickerAdapter();
         Reload();
     }
 
@@ -143,6 +135,7 @@ public sealed class LogsFragment : Fragment
             1 => ProductLogGeneration.Previous,
             _ => throw new InvalidOperationException("The selected log generation is invalid."),
         };
+        ResetGenerationPickerAdapter();
         Reload();
     }
 
@@ -205,13 +198,124 @@ public sealed class LogsFragment : Fragment
 
     private void OnShareClicked(object? sender, EventArgs eventArgs)
     {
-        if (string.IsNullOrEmpty(currentText))
+        if (string.IsNullOrEmpty(currentText) ||
+            cancellation is not { IsCancellationRequested: false } lifetime)
             return;
-        var intent = new Intent(Intent.ActionSend);
-        intent.SetType("text/plain");
-        intent.PutExtra(Intent.ExtraText, currentText);
-        StartActivity(Intent.CreateChooser(intent, GetString(Resource.String.logs_share))
-            ?? throw new InvalidOperationException("The log share chooser is unavailable."));
+        _ = ShareCurrentLogAsync(lifetime.Token);
+    }
+
+    private async Task ShareCurrentLogAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (shareButton is not null)
+                shareButton.Enabled = false;
+            var source = new ProductLogService(RequireContext()).GetSource(selectedKind, selectedGeneration);
+            var directory = Path.Combine(RequireContext().CacheDir?.AbsolutePath
+                ?? throw new IOException("The application cache directory is unavailable."), "shared-logs");
+            Directory.CreateDirectory(directory);
+            CleanupExpiredShareFiles(directory);
+            var stem = Path.GetFileNameWithoutExtension(source.EntryName);
+            var path = Path.Combine(directory, $"{stem}-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            await File.WriteAllTextAsync(path, currentText, new System.Text.UTF8Encoding(false), cancellationToken)
+                .ConfigureAwait(false);
+            if (!IsAdded || cancellationToken.IsCancellationRequested)
+                return;
+
+            Activity?.RunOnUiThread(() =>
+            {
+                var context = RequireContext();
+                var authority = $"{context.PackageName}.fileprovider";
+                var uri = FileProvider.GetUriForFile(context, authority, new Java.IO.File(path));
+                var intent = new Intent(Intent.ActionSend);
+                intent.SetType("text/plain");
+                intent.PutExtra(Intent.ExtraStream, uri);
+                intent.PutExtra(Intent.ExtraSubject, source.EntryName);
+                intent.ClipData = ClipData.NewRawUri(source.EntryName, uri);
+                intent.AddFlags(ActivityFlags.GrantReadUriPermission);
+                StartActivity(Intent.CreateChooser(intent, GetString(Resource.String.logs_share_current))
+                    ?? throw new InvalidOperationException("The log share chooser is unavailable."));
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or Java.Lang.IllegalArgumentException)
+        {
+            Log.Error("JunimoGate.Logs", "log-share-failed", exception);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.logs_share_failed));
+        }
+        finally
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() =>
+                {
+                    if (shareButton is not null)
+                        shareButton.Enabled = currentText.Length > 0;
+                });
+        }
+    }
+
+    private static void CleanupExpiredShareFiles(string directory)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-1);
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(directory, "*.txt", SearchOption.TopDirectoryOnly))
+            {
+                if (File.GetLastWriteTimeUtc(path) < cutoff)
+                    File.Delete(path);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("JunimoGate.Logs", "shared-log-cleanup-failed", exception);
+        }
+    }
+
+    private void ResetPickerAdapters()
+    {
+        ResetSourcePickerAdapter();
+        ResetGenerationPickerAdapter();
+    }
+
+    private void ResetSourcePickerAdapter()
+    {
+        if (sourcePicker is null)
+            return;
+        sourcePicker.Adapter = new ArrayAdapter<string>(
+            RequireContext(),
+            global::Android.Resource.Layout.SimpleListItem1,
+            [
+                GetString(Resource.String.logs_source_launcher),
+                GetString(Resource.String.logs_source_game),
+                GetString(Resource.String.logs_source_smapi),
+            ]);
+        sourcePicker.SetText(GetString(selectedKind switch
+        {
+            ProductLogKind.Launcher => Resource.String.logs_source_launcher,
+            ProductLogKind.GameHost => Resource.String.logs_source_game,
+            ProductLogKind.Smapi => Resource.String.logs_source_smapi,
+            _ => throw new ArgumentOutOfRangeException(nameof(selectedKind)),
+        }), filter: false);
+    }
+
+    private void ResetGenerationPickerAdapter()
+    {
+        if (generationPicker is null)
+            return;
+        generationPicker.Adapter = new ArrayAdapter<string>(
+            RequireContext(),
+            global::Android.Resource.Layout.SimpleListItem1,
+            [GetString(Resource.String.logs_current), GetString(Resource.String.logs_previous)]);
+        generationPicker.SetText(GetString(selectedGeneration switch
+        {
+            ProductLogGeneration.Current => Resource.String.logs_current,
+            ProductLogGeneration.Previous => Resource.String.logs_previous,
+            _ => throw new ArgumentOutOfRangeException(nameof(selectedGeneration)),
+        }), filter: false);
     }
 
     private void OnDiagnosticsClicked(object? sender, EventArgs eventArgs)
