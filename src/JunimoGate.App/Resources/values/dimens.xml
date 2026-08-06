@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="junimo_space_xs">4dp</dimen>
+    <dimen name="junimo_space_sm">8dp</dimen>
+    <dimen name="junimo_space_md">12dp</dimen>
+    <dimen name="junimo_space_lg">16dp</dimen>
+    <dimen name="junimo_space_xl">20dp</dimen>
+    <dimen name="junimo_space_2xl">24dp</dimen>
+    <dimen name="junimo_space_3xl">32dp</dimen>
+
+    <dimen name="junimo_page_padding">16dp</dimen>
+    <dimen name="junimo_drawer_width">272dp</dimen>
+    <dimen name="junimo_section_gap">24dp</dimen>
+    <dimen name="junimo_list_row_padding_horizontal">12dp</dimen>
+    <dimen name="junimo_list_row_padding_vertical">10dp</dimen>
+
+    <dimen name="junimo_radius_sm">10dp</dimen>
+    <dimen name="junimo_radius_md">16dp</dimen>
+    <dimen name="junimo_radius_lg">20dp</dimen>
+    <dimen name="junimo_radius_pill">32dp</dimen>
+
+    <dimen name="junimo_touch_target">48dp</dimen>
+    <dimen name="junimo_card_elevation">1dp</dimen>
+</resources>

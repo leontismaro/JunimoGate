@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:checkableBehavior="single">
+        <item
+            android:id="@id/navigation_environment"
+            android:icon="@drawable/ic_gamepad_24"
+            android:title="@string/environment_title" />
+        <item
+            android:id="@id/navigation_save_backups"
+            android:icon="@drawable/ic_archive_24"
+            android:title="@string/save_backups_title" />
+        <item
+            android:id="@id/navigation_logs"
+            android:icon="@drawable/ic_description_24"
+            android:title="@string/nav_logs" />
+        <item
+            android:id="@id/navigation_settings"
+            android:icon="@drawable/ic_settings_24"
+            android:title="@string/nav_settings" />
+        <item
+            android:id="@id/navigation_about"
+            android:icon="@drawable/ic_info_24"
+            android:title="@string/about_title" />
+    </group>
+</menu>

@@ -8,12 +8,4 @@
         android:id="@id/navigation_mods"
         android:icon="@drawable/ic_extension_24"
         android:title="@string/nav_mods" />
-    <item
-        android:id="@id/navigation_logs"
-        android:icon="@drawable/ic_description_24"
-        android:title="@string/nav_logs" />
-    <item
-        android:id="@id/navigation_settings"
-        android:icon="@drawable/ic_settings_24"
-        android:title="@string/nav_settings" />
 </menu>

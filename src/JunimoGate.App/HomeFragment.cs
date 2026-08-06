@@ -1,15 +1,16 @@
+using Android.Content.PM;
 using Android.OS;
 using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Fragment.App;
-using Google.Android.Material.Button;
+using AndroidX.Navigation.Fragment;
 using Google.Android.Material.ProgressIndicator;
-using AndroidDateFormat = Android.Text.Format.DateFormat;
+using JunimoGate.Android;
+using AndroidDateUtils = Android.Text.Format.DateUtils;
+using AndroidFormatStyleFlags = Android.Text.Format.FormatStyleFlags;
 using Fragment = AndroidX.Fragment.App.Fragment;
 using JInteger = Java.Lang.Integer;
-using JObject = Java.Lang.Object;
-using JString = Java.Lang.String;
 using OperationCanceledException = System.OperationCanceledException;
 
 namespace JunimoGate.App;
@@ -20,9 +21,11 @@ public sealed class HomeFragment : Fragment
     private ILauncherUiHost? host;
     private TextView? statusText;
     private LinearProgressIndicator? progress;
-    private MaterialButton? launchButton;
+    private ImageView? gameIcon;
     private TextView? playTimeText;
+    private View? lastSaveCard;
     private TextView? lastSaveText;
+    private TextView? lastSaveTimeText;
     private TextView? modCountText;
     private CancellationTokenSource? summaryCancellation;
 
@@ -35,11 +38,15 @@ public sealed class HomeFragment : Fragment
         base.OnViewCreated(view, savedInstanceState);
         statusText = view.FindViewById<TextView>(Resource.Id.home_status);
         progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.home_progress);
-        launchButton = view.FindViewById<MaterialButton>(Resource.Id.home_launch_button);
+        gameIcon = view.FindViewById<ImageView>(Resource.Id.home_game_icon);
         playTimeText = view.FindViewById<TextView>(Resource.Id.home_play_time);
+        lastSaveCard = view.FindViewById(Resource.Id.home_last_save_card);
         lastSaveText = view.FindViewById<TextView>(Resource.Id.home_last_save);
+        lastSaveTimeText = view.FindViewById<TextView>(Resource.Id.home_last_save_time);
         modCountText = view.FindViewById<TextView>(Resource.Id.home_mod_count);
-        launchButton!.Click += OnLaunchClicked;
+        if (lastSaveCard is not null)
+            lastSaveCard.Click += OnLastSaveClicked;
+        TrySetInstalledGameIcon();
     }
 
     public override void OnStart()
@@ -66,18 +73,18 @@ public sealed class HomeFragment : Fragment
 
     public override void OnDestroyView()
     {
-        if (launchButton is not null)
-            launchButton.Click -= OnLaunchClicked;
+        if (lastSaveCard is not null)
+            lastSaveCard.Click -= OnLastSaveClicked;
         statusText = null;
         progress = null;
-        launchButton = null;
+        gameIcon = null;
         playTimeText = null;
+        lastSaveCard = null;
         lastSaveText = null;
+        lastSaveTimeText = null;
         modCountText = null;
         base.OnDestroyView();
     }
-
-    private void OnLaunchClicked(object? sender, EventArgs eventArgs) => host?.RequestLaunch();
 
     private void OnStateChanged(LauncherState state) => Render(state);
 
@@ -95,14 +102,11 @@ public sealed class HomeFragment : Fragment
                     if (playTimeText is not null)
                         playTimeText.Text = FormatPlayTime(summary.TotalPlayTime);
                     if (lastSaveText is not null)
-                    {
-                        lastSaveText.Text = summary.LatestSaveTimeUtc is null
-                            ? GetString(Resource.String.last_save_empty)
-                            : FormatString(
-                                Resource.String.last_save_value,
-                                new JString(summary.LatestSaveName ?? "—"),
-                                new JString(FormatDateTime(summary.LatestSaveTimeUtc.Value)));
-                    }
+                        lastSaveText.Text = summary.LatestSaveName ?? GetString(Resource.String.last_save_empty);
+                    if (lastSaveTimeText is not null)
+                        lastSaveTimeText.Text = summary.LatestSaveTimeUtc is null
+                            ? string.Empty
+                            : FormatRelativeTime(summary.LatestSaveTimeUtc.Value);
                     if (modCountText is not null)
                     {
                         modCountText.Text = FormatQuantity(
@@ -124,29 +128,56 @@ public sealed class HomeFragment : Fragment
 
     private void Render(LauncherState state)
     {
-        if (statusText is null || progress is null || launchButton is null)
+        if (statusText is null || progress is null)
             return;
         statusText.Text = LauncherTextFormatter.Format(RequireContext(), state);
         progress.Visibility = state.ShowProgress ? ViewStates.Visible : ViewStates.Gone;
-        launchButton.Enabled = state.CanLaunch;
-        launchButton.Text = GetString(LauncherTextFormatter.GetActionTextResource(state));
     }
 
-    private string FormatDateTime(DateTimeOffset value)
+    private void OnLastSaveClicked(object? sender, EventArgs eventArgs) =>
+        NavHostFragment.FindNavController(this).Navigate(Resource.Id.navigation_save_backups);
+
+    private void TrySetInstalledGameIcon()
     {
-        var context = RequireContext();
-        using var date = new Java.Util.Date(value.ToUnixTimeMilliseconds());
-        var dateFormatter = AndroidDateFormat.GetMediumDateFormat(context)
-            ?? throw new InvalidOperationException("The localized date formatter is unavailable.");
-        var timeFormatter = AndroidDateFormat.GetTimeFormat(context)
-            ?? throw new InvalidOperationException("The localized time formatter is unavailable.");
-        var dateText = dateFormatter.Format(date) ?? "—";
-        var timeText = timeFormatter.Format(date) ?? "—";
-        return FormatString(
-            Resource.String.date_time_value,
-            new JString(dateText),
-            new JString(timeText));
+        if (gameIcon is null)
+            return;
+        var manager = RequireContext().PackageManager;
+        if (manager is null)
+            return;
+        foreach (var packageName in new[]
+                 {
+                     AndroidPlatformBoundary.PlayPackageName,
+                     AndroidPlatformBoundary.SamsungPackageName,
+                 })
+        {
+            try
+            {
+                var application = OperatingSystem.IsAndroidVersionAtLeast(33)
+                    ? manager.GetApplicationInfo(
+                        packageName,
+                        PackageManager.ApplicationInfoFlags.Of(0L))
+                    : manager.GetApplicationInfo(packageName, (PackageInfoFlags)0);
+                var drawable = application?.LoadIcon(manager);
+                if (drawable is null)
+                    continue;
+                gameIcon.SetImageDrawable(drawable);
+                return;
+            }
+            catch (PackageManager.NameNotFoundException)
+            {
+                // Try the other supported store package; the fallback game icon remains otherwise.
+            }
+        }
     }
+
+    private static string FormatRelativeTime(DateTimeOffset value) =>
+        AndroidDateUtils.GetRelativeTimeSpanString(
+                value.ToUnixTimeMilliseconds(),
+                DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                AndroidDateUtils.MinuteInMillis,
+                AndroidFormatStyleFlags.AbbrevRelative)
+            ?.ToString()
+        ?? "—";
 
     private string FormatQuantity(int resourceId, int quantity) =>
         Resources?.GetQuantityString(resourceId, quantity, [JInteger.ValueOf(quantity)])
@@ -166,7 +197,4 @@ public sealed class HomeFragment : Fragment
             ?? throw new InvalidOperationException("The play-time resource is unavailable.");
     }
 
-    private string FormatString(int resourceId, params JObject[] arguments) =>
-        Resources?.GetString(resourceId, arguments)
-        ?? throw new InvalidOperationException("The home string resource is unavailable.");
 }

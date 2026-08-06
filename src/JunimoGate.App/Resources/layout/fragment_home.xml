@@ -3,58 +3,118 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:background="@android:color/transparent"
+    android:fillViewport="true"
+    android:overScrollMode="never">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingStart="20dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="24dp">
 
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:cardBackgroundColor="?attr/colorPrimaryContainer">
+            app:cardBackgroundColor="@android:color/transparent"
+            app:cardCornerRadius="22dp"
+            app:cardElevation="8dp">
 
-            <LinearLayout
+            <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
+                android:background="@drawable/home_hero_background"
+                android:minHeight="152dp"
                 android:padding="20dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/game_title"
-                    android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+                <ImageView
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_gravity="top|end"
+                    android:alpha="0.9"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_leaf_cluster" />
 
-                <TextView
-                    android:id="@+id/home_status"
+                <ImageView
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:layout_gravity="bottom|start"
+                    android:alpha="0.72"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:rotation="180"
+                    android:src="@drawable/ic_leaf_cluster" />
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/launcher_checking_game"
-                    android:textAppearance="?attr/textAppearanceBodyLarge" />
+                    android:layout_gravity="center_vertical"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp">
 
-                <com.google.android.material.progressindicator.LinearProgressIndicator
-                    android:id="@+id/home_progress"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:indeterminate="true" />
+                    <com.google.android.material.card.MaterialCardView
+                        android:layout_width="72dp"
+                        android:layout_height="72dp"
+                        android:layout_marginEnd="16dp"
+                        app:cardBackgroundColor="@color/junimo_hero_icon_surface"
+                        app:cardCornerRadius="18dp"
+                        app:cardElevation="4dp"
+                        app:strokeColor="@color/junimo_hero_inner_border"
+                        app:strokeWidth="2dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/home_launch_button"
-                    android:layout_width="match_parent"
-                    android:layout_height="56dp"
-                    android:layout_marginTop="20dp"
-                    android:enabled="false"
-                    android:text="@string/launch_game"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    app:cornerRadius="16dp" />
-            </LinearLayout>
+                        <ImageView
+                            android:id="@+id/home_game_icon"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:contentDescription="@string/home_game_icon_description"
+                            android:padding="7dp"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/ic_gamepad_24" />
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:paddingEnd="18dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/game_title"
+                            android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                            android:textColor="@color/junimo_hero_title"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/home_status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="5dp"
+                            android:maxLines="3"
+                            android:text="@string/launcher_checking_game"
+                            android:textAppearance="?attr/textAppearanceBodyMedium"
+                            android:textColor="@color/junimo_hero_body" />
+
+                        <com.google.android.material.progressindicator.LinearProgressIndicator
+                            android:id="@+id/home_progress"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:indeterminate="true"
+                            app:indicatorColor="@color/junimo_primary"
+                            app:trackColor="@color/junimo_hero_track"
+                            app:trackThickness="4dp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </FrameLayout>
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
@@ -68,35 +128,148 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:orientation="horizontal"
-            android:weightSum="3">
+            android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/home_play_time"
+            <com.google.android.material.card.MaterialCardView
+                style="@style/JunimoGate.Card.Section"
                 android:layout_width="0dp"
-                android:layout_height="96dp"
+                android:layout_height="92dp"
+                android:layout_marginEnd="6dp"
                 android:layout_weight="1"
-                android:gravity="center"
-                android:text="@string/play_time_empty"
-                android:textAppearance="?attr/textAppearanceBodyMedium" />
+                app:cardBackgroundColor="@color/junimo_home_compact_glass_surface"
+                >
 
-            <TextView
-                android:id="@+id/home_last_save"
-                android:layout_width="0dp"
-                android:layout_height="96dp"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="@string/last_save_empty"
-                android:textAppearance="?attr/textAppearanceBodyMedium" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-            <TextView
-                android:id="@+id/home_mod_count"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/home_play_time_label"
+                        android:textAppearance="?attr/textAppearanceLabelLarge"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <TextView
+                        android:id="@+id/home_play_time"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:maxLines="1"
+                        android:text="@string/home_value_empty"
+                        android:textAppearance="?attr/textAppearanceTitleLarge" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/JunimoGate.Card.Section"
                 android:layout_width="0dp"
-                android:layout_height="96dp"
+                android:layout_height="92dp"
+                android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:gravity="center"
-                android:text="@string/enabled_mods_empty"
-                android:textAppearance="?attr/textAppearanceBodyMedium" />
+                app:cardBackgroundColor="@color/junimo_home_compact_glass_surface"
+                >
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/home_enabled_mods_label"
+                        android:textAppearance="?attr/textAppearanceLabelLarge"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <TextView
+                        android:id="@+id/home_mod_count"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:maxLines="1"
+                        android:text="@string/home_value_empty"
+                        android:textAppearance="?attr/textAppearanceTitleLarge" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/home_last_save_card"
+            style="@style/JunimoGate.Card.Interactive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:clickable="true"
+            android:contentDescription="@string/home_open_saves"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
+            app:cardBackgroundColor="@color/junimo_home_glass_surface"
+            >
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="12dp">
+
+                <ImageView
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/home_save_icon_background"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_archive_24" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/home_last_save_label"
+                        android:textAppearance="?attr/textAppearanceLabelMedium"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <TextView
+                        android:id="@+id/home_last_save"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="@string/last_save_empty"
+                        android:textAppearance="?attr/textAppearanceTitleMedium" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/home_last_save_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:maxLines="1"
+                    android:textAppearance="?attr/textAppearanceLabelMedium"
+                    android:textColor="?attr/colorOnSurfaceVariant" />
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    android:rotation="180"
+                    android:src="@drawable/ic_chevron_left_24" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 </ScrollView>

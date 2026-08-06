@@ -6,13 +6,23 @@
 
     <fragment
         android:id="@+id/navigation_home"
-        android:name="org.junimogate.app.HomeFragment"
-        android:label="@string/nav_home" />
+        android:name="org.junimogate.app.MainPagerFragment"
+        android:label="@string/nav_home">
+        <argument
+            android:name="initialPage"
+            android:defaultValue="0"
+            app:argType="integer" />
+    </fragment>
 
     <fragment
         android:id="@+id/navigation_mods"
-        android:name="org.junimogate.app.ModsFragment"
-        android:label="@string/nav_mods" />
+        android:name="org.junimogate.app.MainPagerFragment"
+        android:label="@string/nav_mods">
+        <argument
+            android:name="initialPage"
+            android:defaultValue="1"
+            app:argType="integer" />
+    </fragment>
 
     <fragment
         android:id="@+id/navigation_logs"
@@ -38,11 +48,6 @@
         android:id="@+id/navigation_about"
         android:name="org.junimogate.app.AboutFragment"
         android:label="@string/about_title" />
-
-    <fragment
-        android:id="@+id/navigation_mod_groups"
-        android:name="org.junimogate.app.ModGroupsFragment"
-        android:label="@string/mod_groups_title" />
 
     <fragment
         android:id="@+id/navigation_mod_group_editor"
