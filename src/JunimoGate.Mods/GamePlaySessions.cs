@@ -140,7 +140,6 @@ public sealed class GamePlaySessionRepository
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-
             var session = new GamePlaySession(
                 GamePlaySession.CurrentSchema,
                 Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)),
@@ -319,6 +318,11 @@ public sealed class GamePlaySessionRepository
         await WriteAtomicAsync(Path.Combine(historyRoot, $"session-{ended.SessionId}.json"), ended, cancellationToken)
             .ConfigureAwait(false);
         File.Delete(currentPath);
+        PruneHistoryUnlocked();
+    }
+
+    private void PruneHistoryUnlocked()
+    {
         foreach (var stale in Directory.EnumerateFiles(historyRoot, "session-*.json")
                      .Select(static path => new FileInfo(path))
                      .OrderByDescending(static file => file.LastWriteTimeUtc)

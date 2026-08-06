@@ -30,7 +30,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     public const string LaunchKeyExtra = "org.junimogate.extra.LAUNCH_KEY";
     private SmapiDefaultAssemblyLoader? loader;
     private SmapiSession? session;
-    private TextView? status;
+    private FrameLayout? gameViewContainer;
+    private View? loadingOverlay;
     private BackInvokedCallback? backInvokedCallback;
     private long lastBackHandledUptime;
     private bool destroyed;
@@ -41,6 +42,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private string? playSessionId;
     private CancellationTokenSource? checkpointCancellation;
     private Task? checkpointTask;
+    private CancellationTokenSource? backgroundPersistenceCancellation;
+    private Task? backgroundPersistenceTask;
+    private static readonly TimeSpan BackgroundPersistenceDelay = TimeSpan.FromMilliseconds(250);
+    private const long LoadingFadeDurationMilliseconds = 180L;
 
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
@@ -48,8 +53,11 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         Log.Initialize(this, "game", GameHostRuntimeIdentity.BuildId);
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
             RegisterBackInvokedCallback();
-        status = new TextView(this) { Text = "JunimoGate SMAPI\n\nStarting prepared session…", TextSize = 16 };
-        SetContentView(status);
+        SetContentView(Resource.Layout.activity_smapi_game);
+        gameViewContainer = FindViewById<FrameLayout>(Resource.Id.smapi_game_view_container)
+            ?? throw new InvalidOperationException("The SMAPI game view container is unavailable.");
+        loadingOverlay = FindViewById(Resource.Id.smapi_loading_overlay)
+            ?? throw new InvalidOperationException("The SMAPI loading overlay is unavailable.");
         if (savedInstanceState is not null)
         {
             Log.Warn("JunimoGate.SMAPI", "session-recreation-returning-to-launcher");
@@ -174,6 +182,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 snapshot.AppliedWorkspaceKey),
             MainThread = new ActivityDispatcher(this),
             AssemblyLoader = assemblyLoader,
+            ShowLoadingLogsOnScreen = false,
             AssemblyBindingPolicy = launch.Profile.AssemblyBindingPolicy switch
             {
                 JunimoGate.Mods.ModAssemblyBindingPolicy.Strict => StardewModdingAPI.AndroidHost.ModAssemblyBindingPolicy.Strict,
@@ -181,12 +190,13 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 JunimoGate.Mods.ModAssemblyBindingPolicy.HighestCompatible => StardewModdingAPI.AndroidHost.ModAssemblyBindingPolicy.HighestCompatible,
                 _ => throw new InvalidDataException("The launch Profile binding policy is invalid."),
             },
-            AttachGameView = view => RunOnUiThread(() => SetContentView(view)),
+            AttachGameView = view => RunOnUiThread(() => AttachGameView(view)),
             ReportModLoadingReady = () =>
             {
                 Log.Info("JunimoGate.SMAPI", "mod-loading-ready");
                 startupCompletion.TrySetResult(null);
             },
+            ReportGameViewReady = () => RunOnUiThread(RevealGameView),
             ReportFailure = failure =>
             {
                 lastSmapiFailureCode = failure.Code;
@@ -201,11 +211,51 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         session.Run();
     }
 
+    private void AttachGameView(View gameView)
+    {
+        if (destroyed || IsFinishing)
+            return;
+        var container = gameViewContainer
+            ?? throw new InvalidOperationException("The SMAPI game view container is unavailable.");
+        if (ReferenceEquals(gameView.Parent, container))
+            return;
+        if (gameView.Parent is ViewGroup parent)
+            parent.RemoveView(gameView);
+        container.RemoveAllViews();
+        container.AddView(
+            gameView,
+            new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MatchParent,
+                ViewGroup.LayoutParams.MatchParent));
+    }
+
+    private void RevealGameView()
+    {
+        if (destroyed || IsFinishing || loadingOverlay is not { } overlay)
+            return;
+        overlay.Animate()?.Cancel();
+        overlay.Animate()
+            ?.Alpha(0f)
+            .SetDuration(LoadingFadeDurationMilliseconds)
+            .Start();
+        overlay.PostDelayed(
+            () =>
+            {
+                if (!ReferenceEquals(loadingOverlay, overlay))
+                    return;
+                overlay.Visibility = ViewStates.Gone;
+                loadingOverlay = null;
+            },
+            LoadingFadeDurationMilliseconds);
+        Log.Info("JunimoGate.SMAPI", "game-view-ready");
+    }
+
     protected override void OnResume()
     {
         base.OnResume();
         activityResumed = true;
         Log.Info("JunimoGate.SMAPI", $"activity-resumed sessionCreated={(session is null ? 0 : 1)}");
+        CancelPendingBackgroundPersistence();
         TryMarkPlaySessionForeground();
         session?.OnResume();
         SetImmersive();
@@ -214,9 +264,12 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     protected override void OnPause()
     {
         activityResumed = false;
-        Log.Info("JunimoGate.SMAPI", $"activity-paused sessionCreated={(session is null ? 0 : 1)}");
-        TryMarkPlaySessionBackground();
+        var finishing = IsFinishing;
+        Log.Info(
+            "JunimoGate.SMAPI",
+            $"activity-paused sessionCreated={(session is null ? 0 : 1)} finishing={(finishing ? 1 : 0)}");
         session?.OnPause();
+        QueuePlaySessionBackgroundPersistence();
         base.OnPause();
     }
     protected override void OnNewIntent(global::Android.Content.Intent? intent) { base.OnNewIntent(intent); Log.Info("JunimoGate.SMAPI", "session-routed-to-front"); }
@@ -237,6 +290,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         CompletePlaySession(GamePlaySessionOutcomes.Completed, failureCode: null);
         session?.Dispose();
         session = null;
+        loadingOverlay = null;
+        gameViewContainer = null;
         GameSessionRegistry.ClearCurrentProcess(this);
         ReleaseRuntimeHooks();
         base.OnDestroy();
@@ -348,13 +403,43 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             () => repository.MarkForegroundAsync(sessionId, cancellationToken: CancellationToken.None));
     }
 
-    private void TryMarkPlaySessionBackground()
+    private void QueuePlaySessionBackgroundPersistence()
     {
         if (!playSessionRunning || playSessions is not { } repository || playSessionId is not { } sessionId)
             return;
-        TryPersistPlaySession(
-            "session-background-failed",
-            () => repository.MarkBackgroundAsync(sessionId, cancellationToken: CancellationToken.None));
+        CancelPendingBackgroundPersistence();
+        var cancellation = new CancellationTokenSource();
+        backgroundPersistenceCancellation = cancellation;
+        backgroundPersistenceTask = PersistPlaySessionBackgroundAsync(
+            repository,
+            sessionId,
+            DateTimeOffset.UtcNow,
+            cancellation.Token);
+    }
+
+    private static async Task PersistPlaySessionBackgroundAsync(
+        GamePlaySessionRepository repository,
+        string sessionId,
+        DateTimeOffset pausedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(BackgroundPersistenceDelay, cancellationToken).ConfigureAwait(false);
+            await repository.MarkBackgroundAsync(
+                    sessionId,
+                    pausedAtUtc,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A quick resume or final Activity destruction supersedes this intermediate checkpoint.
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", "session-background-failed", exception);
+        }
     }
 
     private void StartCheckpointLoop()
@@ -395,6 +480,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private void CompletePlaySession(string outcome, string? failureCode)
     {
         StopCheckpointLoop();
+        WaitForBackgroundPersistence();
         var repository = playSessions;
         var sessionId = playSessionId;
         playSessions = null;
@@ -409,6 +495,32 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 outcome,
                 failureCode,
                 cancellationToken: CancellationToken.None));
+    }
+
+    private void WaitForBackgroundPersistence()
+    {
+        backgroundPersistenceCancellation?.Cancel();
+        try
+        {
+            backgroundPersistenceTask?.GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            Log.Error("JunimoGate.Sessions", "session-background-await-failed", exception);
+        }
+        finally
+        {
+            backgroundPersistenceCancellation?.Dispose();
+            backgroundPersistenceCancellation = null;
+            backgroundPersistenceTask = null;
+        }
+    }
+
+    private void CancelPendingBackgroundPersistence()
+    {
+        if (backgroundPersistenceTask is null)
+            return;
+        WaitForBackgroundPersistence();
     }
 
     private void StopCheckpointLoop()

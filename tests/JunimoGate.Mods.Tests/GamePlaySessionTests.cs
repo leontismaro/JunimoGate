@@ -117,6 +117,25 @@ internal static class GamePlaySessionTests
         TestHarness.True(history.Contains("\"failureCode\":\"mod_loading_failed\"", StringComparison.Ordinal));
     }
 
+    public static void PrunesHistoryAfterCompletingEachSession()
+    {
+        using var fixture = new Fixture();
+        for (var index = 0; index < 513; index++)
+        {
+            var timestamp = Epoch.AddMinutes(index);
+            var session = fixture.Repository.BeginAsync(Metadata(), timestamp).AsTask().GetAwaiter().GetResult();
+            fixture.Repository.EndAsync(
+                session.SessionId,
+                GamePlaySessionOutcomes.Completed,
+                now: timestamp.AddSeconds(1)).AsTask().GetAwaiter().GetResult();
+        }
+
+        TestHarness.Equal(512, Directory.EnumerateFiles(fixture.HistoryRoot, "session-*.json").Count());
+        var summary = fixture.Repository.ReadSummaryAsync(gameProcessActive: false)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(512, summary.CompletedSessions);
+    }
+
     public static void RejectsMalformedSessionJson()
     {
         using var fixture = new Fixture();

@@ -192,6 +192,8 @@ return TestHarness.Run(
         GamePlaySessionTests.ArchivesAStaleSessionBeforeBeginningAnother()),
     ("Game play sessions record failures atomically", () =>
         GamePlaySessionTests.RecordsFailureAndRemovesCurrentSession()),
+    ("Game play sessions prune history after completion", () =>
+        GamePlaySessionTests.PrunesHistoryAfterCompletingEachSession()),
     ("Game play sessions reject malformed JSON", () =>
         GamePlaySessionTests.RejectsMalformedSessionJson()),
     ("SMAPI binding planner ignores files outside the real dependency closure", () =>
