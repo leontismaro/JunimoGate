@@ -84,6 +84,64 @@ internal static class ModProfileV2Tests
             .AsTask().GetAwaiter().GetResult());
     }
 
+    public static void MutatesProfileMembersAtomically()
+    {
+        using var fixture = new Fixture();
+        var profile = fixture.Repository.CreateAsync("Main").AsTask().GetAwaiter().GetResult();
+        var profileId = ProfileId.Parse(profile.Id);
+        var service = new ModProfileMemberMutationService(fixture.Repository);
+        var first = LibraryItem("Example.First", "1.0.0", 'a');
+        var second = LibraryItem("Example.Second", "1.0.0", 'b');
+        var added = service.AddOrReplaceAsync(profileId, new[] { first, second }, enabled: true)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(2, added.AddedMembers);
+        TestHarness.Equal(0, added.ReplacedMembers);
+        TestHarness.Equal(2L, added.Profile.Revision);
+
+        var newer = LibraryItem("Example.First", "2.0.0", 'c');
+        var replaced = service.AddOrReplaceAsync(profileId, new[] { newer }, enabled: true)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(0, replaced.AddedMembers);
+        TestHarness.Equal(1, replaced.ReplacedMembers);
+        TestHarness.Equal(2, replaced.Profile.Members.Count);
+        TestHarness.Equal("2.0.0", replaced.Profile.Members.Single(member =>
+            member.UniqueId == "Example.First").ExpectedVersion);
+
+        var disabled = service.SetEnabledAsync(
+                profileId,
+                new[] { "Example.First", "Example.Second" },
+                enabled: false)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(2, disabled.ChangedMembers);
+        TestHarness.True(disabled.Profile.Members.All(member => !member.Enabled));
+        TestHarness.Equal(replaced.Profile.Revision + 1, disabled.Profile.Revision);
+
+        var removed = service.RemoveAsync(profileId, new[] { "Example.First" })
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(1, removed.ChangedMembers);
+        TestHarness.Equal(1, removed.Profile.Members.Count);
+        TestHarness.Equal("Example.Second", removed.Profile.Members[0].UniqueId);
+    }
+
+    public static void RejectsInvalidMemberMutations()
+    {
+        using var fixture = new Fixture();
+        var profile = fixture.Repository.CreateAsync("Main").AsTask().GetAwaiter().GetResult();
+        var service = new ModProfileMemberMutationService(fixture.Repository);
+        var first = LibraryItem("Example.Shared", "1.0.0", 'd');
+        var second = LibraryItem("Example.Shared", "2.0.0", 'e');
+        TestHarness.Throws<ArgumentException>(() => service.AddOrReplaceAsync(
+                ProfileId.Parse(profile.Id),
+                new[] { first, second },
+                enabled: true)
+            .AsTask().GetAwaiter().GetResult());
+        TestHarness.Throws<InvalidOperationException>(() => service.AddOrReplaceAsync(
+                ProfileId.Parse(ModProfileV2.NoModsId),
+                new[] { first },
+                enabled: true)
+            .AsTask().GetAwaiter().GetResult());
+    }
+
     public static void MigratesLegacyDirectoriesWithoutRemovingFallback()
     {
         using var fixture = new Fixture();

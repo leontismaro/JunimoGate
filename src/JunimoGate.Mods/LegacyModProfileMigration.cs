@@ -251,7 +251,7 @@ public sealed class LegacyModProfileMigrator
             await metadata.FlushAsync(cancellationToken).ConfigureAwait(false);
             metadata.Flush(flushToDisk: true);
         }
-        return new PreparedLegacyMod(candidate, new PreparedModLibraryItem(item, candidateDirectory));
+        return new PreparedLegacyMod(candidate, new PreparedModLibraryItem(item, candidateDirectory, candidate.RelativeSourcePath));
     }
 
     private static ModProfileMember SelectMember(

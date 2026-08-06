@@ -36,6 +36,55 @@ public sealed record ModProfileTransferMember(
     }
 }
 
+public sealed record ModProfileTransferBundleMember(
+    string UniqueId,
+    string? SourceLibraryItemId,
+    string? PackagedContentId)
+{
+    public void Validate(ModProfileTransferKind kind)
+    {
+        if (string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
+            SourceLibraryItemId is not null && !ModContentId.IsValid(SourceLibraryItemId) ||
+            PackagedContentId is not null && !ModContentId.IsValid(PackagedContentId) ||
+            kind == ModProfileTransferKind.Manifest && PackagedContentId is not null ||
+            kind == ModProfileTransferKind.Complete && PackagedContentId is null)
+        {
+            throw new InvalidDataException("A shared Mod bundle member is malformed.");
+        }
+    }
+}
+
+public sealed record ModProfileTransferBundle(
+    string PortableBundleId,
+    string FamilyKey,
+    string DisplayName,
+    IReadOnlyList<ModProfileTransferBundleMember> Members)
+{
+    public void Validate(
+        ModProfileTransferKind kind,
+        IReadOnlyDictionary<string, ModProfileTransferMember> documentMembers)
+    {
+        if (!ModContentId.IsValid(PortableBundleId) || !ModContentId.IsValid(FamilyKey) ||
+            string.IsNullOrWhiteSpace(DisplayName) || DisplayName.Length > 256 ||
+            Members is null || Members.Count < 2)
+        {
+            throw new InvalidDataException("A shared Mod bundle is malformed.");
+        }
+        var uniqueIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var member in Members)
+        {
+            member?.Validate(kind);
+            if (member is null || !uniqueIds.Add(member.UniqueId) ||
+                !documentMembers.TryGetValue(member.UniqueId, out var documentMember) ||
+                member.SourceLibraryItemId != documentMember.SourceLibraryItemId ||
+                member.PackagedContentId != documentMember.PackagedContentId)
+            {
+                throw new InvalidDataException("A shared Mod bundle contains a duplicate or unmatched member.");
+            }
+        }
+    }
+}
+
 public sealed record ModProfileTransferDocument(
     string Schema,
     ModProfileTransferKind Kind,
@@ -44,6 +93,7 @@ public sealed record ModProfileTransferDocument(
     string? Description,
     ModAssemblyBindingPolicy? AssemblyBindingPolicyOverride,
     IReadOnlyList<ModProfileTransferMember> Members,
+    IReadOnlyList<ModProfileTransferBundle> Bundles,
     DateTimeOffset ExportedAtUtc)
 {
     public const string CurrentSchema = "junimogate-mod-profile-transfer/v1";
@@ -57,7 +107,8 @@ public sealed record ModProfileTransferDocument(
             string.IsNullOrWhiteSpace(DisplayName) || DisplayName.Length > 80 ||
             Description?.Length > 1_024 ||
             AssemblyBindingPolicyOverride is { } policy && !Enum.IsDefined(policy) ||
-            Members is null || Members.Count > ModProfileV2.MaximumMembers || ExportedAtUtc == default)
+            Members is null || Members.Count > ModProfileV2.MaximumMembers ||
+            Bundles is null || Bundles.Count > ModProfileV2.MaximumMembers / 2 || ExportedAtUtc == default)
         {
             throw new InvalidDataException("The shared Mod Profile document is malformed.");
         }
@@ -68,6 +119,18 @@ public sealed record ModProfileTransferDocument(
             member?.Validate(Kind);
             if (member is null || !uniqueIds.Add(member.UniqueId))
                 throw new InvalidDataException("The shared Mod Profile contains duplicate or null members.");
+        }
+        var indexedMembers = Members.ToDictionary(member => member.UniqueId, StringComparer.OrdinalIgnoreCase);
+        var bundleIds = new HashSet<string>(StringComparer.Ordinal);
+        var assignedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bundle in Bundles)
+        {
+            bundle?.Validate(Kind, indexedMembers);
+            if (bundle is null || !bundleIds.Add(bundle.PortableBundleId) ||
+                bundle.Members.Any(member => !assignedMembers.Add(member.UniqueId)))
+            {
+                throw new InvalidDataException("The shared Mod Profile contains duplicate bundle membership.");
+            }
         }
     }
 }
@@ -109,7 +172,8 @@ public sealed class ModProfileTransferService
     {
         ArgumentNullException.ThrowIfNull(destination);
         var profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
-        var document = CreateDocument(profile, ModProfileTransferKind.Manifest, packagedIds: null);
+        var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var document = CreateDocument(profile, ModProfileTransferKind.Manifest, packagedIds: null, index);
         await JsonSerializer.SerializeAsync(destination, document, JsonOptions, cancellationToken).ConfigureAwait(false);
         await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
         var missing = profile.Members.Count(member => member.LibraryItemId is null);
@@ -124,6 +188,41 @@ public sealed class ModProfileTransferService
         ArgumentNullException.ThrowIfNull(destination);
         var profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
         var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return await ExportPackageCoreAsync(profile, index, destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask<ModProfileExportResult> ExportBundlePackageAsync(
+        string bundleId,
+        Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!ModContentId.IsValid(bundleId))
+            throw new ArgumentException("The Mod bundle ID is invalid.", nameof(bundleId));
+        var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var bundle = ModManagementProjection.Create(index).Items.FirstOrDefault(item =>
+            item.Bundle?.BundleId == bundleId)
+            ?? throw new KeyNotFoundException("The Mod bundle is not currently visible.");
+        var now = DateTimeOffset.UtcNow;
+        var profile = new ModProfileV2(
+            ModProfileV2.CurrentSchema,
+            "default",
+            bundle.DisplayName,
+            Revision: 1,
+            AssemblyBindingPolicyOverride: null,
+            bundle.Members.Select(item => ModProfileMember.FromLibraryItem(item, enabled: true)).ToArray(),
+            now,
+            now,
+            Description: null);
+        return await ExportPackageCoreAsync(profile, index, destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<ModProfileExportResult> ExportPackageCoreAsync(
+        ModProfileV2 profile,
+        ModLibraryIndex index,
+        Stream destination,
+        CancellationToken cancellationToken)
+    {
         var indexed = index.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
         var packagedIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var packagedItems = 0;
@@ -202,14 +301,14 @@ public sealed class ModProfileTransferService
                 packagedItems++;
             }
 
-            var document = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds);
+            var document = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds, index);
             var metadataEntry = archive.CreateEntry(ModProfileTransferDocument.PackageEntryName, CompressionLevel.Fastest);
             await using var metadata = metadataEntry.Open();
             await JsonSerializer.SerializeAsync(metadata, document, JsonOptions, cancellationToken).ConfigureAwait(false);
         }
 
         await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
-        var resultDocument = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds);
+        var resultDocument = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds, index);
         return new ModProfileExportResult(
             resultDocument,
             packagedItems,
@@ -251,9 +350,20 @@ public sealed class ModProfileTransferService
     private static ModProfileTransferDocument CreateDocument(
         ModProfileV2 profile,
         ModProfileTransferKind kind,
-        IReadOnlyDictionary<string, string>? packagedIds)
+        IReadOnlyDictionary<string, string>? packagedIds,
+        ModLibraryIndex library)
     {
         profile.Validate();
+        library.Validate();
+        var transferMembers = profile.Members.Select(member => new ModProfileTransferMember(
+            member.UniqueId,
+            member.LibraryItemId,
+            packagedIds is not null && packagedIds.TryGetValue(member.UniqueId, out var packagedId) ? packagedId : null,
+            member.Enabled,
+            member.ExpectedName,
+            member.ExpectedVersion,
+            member.ExpectedAuthor,
+            member.AddedAtUtc)).ToArray();
         var document = new ModProfileTransferDocument(
             ModProfileTransferDocument.CurrentSchema,
             kind,
@@ -261,18 +371,47 @@ public sealed class ModProfileTransferService
             profile.DisplayName,
             profile.Description,
             profile.AssemblyBindingPolicyOverride,
-            profile.Members.Select(member => new ModProfileTransferMember(
-                member.UniqueId,
-                member.LibraryItemId,
-                packagedIds is not null && packagedIds.TryGetValue(member.UniqueId, out var packagedId) ? packagedId : null,
-                member.Enabled,
-                member.ExpectedName,
-                member.ExpectedVersion,
-                member.ExpectedAuthor,
-                member.AddedAtUtc)).ToArray(),
+            transferMembers,
+            CreateTransferBundles(profile, library, kind, packagedIds),
             DateTimeOffset.UtcNow);
         document.Validate();
         return document;
+    }
+
+    private static IReadOnlyList<ModProfileTransferBundle> CreateTransferBundles(
+        ModProfileV2 profile,
+        ModLibraryIndex library,
+        ModProfileTransferKind kind,
+        IReadOnlyDictionary<string, string>? packagedIds)
+    {
+        var profileMembers = profile.Members.ToDictionary(member => member.UniqueId, StringComparer.OrdinalIgnoreCase);
+        return ModManagementProjection.Create(library).Items
+            .Where(item => item.Bundle is not null)
+            .Select(item =>
+            {
+                var members = item.Members
+                    .Where(member => profileMembers.TryGetValue(member.Manifest.UniqueId, out var profileMember) &&
+                                     profileMember.LibraryItemId == member.LibraryItemId &&
+                                     (kind == ModProfileTransferKind.Manifest ||
+                                      packagedIds?.ContainsKey(member.Manifest.UniqueId) == true))
+                    .Select(member => new ModProfileTransferBundleMember(
+                        member.Manifest.UniqueId,
+                        member.LibraryItemId,
+                        packagedIds is not null && packagedIds.TryGetValue(member.Manifest.UniqueId, out var packagedId)
+                            ? packagedId
+                            : null))
+                    .ToArray();
+                return members.Length < 2
+                    ? null
+                    : new ModProfileTransferBundle(
+                        item.Bundle!.BundleId,
+                        item.Bundle.FamilyKey,
+                        item.DisplayName,
+                        members);
+            })
+            .Where(bundle => bundle is not null)
+            .Cast<ModProfileTransferBundle>()
+            .ToArray();
     }
 
     internal static async ValueTask<ModProfileTransferDocument> ReadDocumentAsync(
@@ -292,8 +431,9 @@ public sealed class ModProfileTransferService
         }
         try
         {
-            var document = JsonSerializer.Deserialize<ModProfileTransferDocument>(memory.ToArray(), JsonOptions)
-                ?? throw new InvalidDataException("The shared Mod Profile document is empty.");
+            var document = NormalizeLegacyDocument(
+                JsonSerializer.Deserialize<ModProfileTransferDocument>(memory.ToArray(), JsonOptions)
+                ?? throw new InvalidDataException("The shared Mod Profile document is empty."));
             document.Validate();
             return document;
         }
@@ -302,6 +442,11 @@ public sealed class ModProfileTransferService
             throw new InvalidDataException("The shared Mod Profile JSON is malformed.", exception);
         }
     }
+
+    internal static ModProfileTransferDocument NormalizeLegacyDocument(ModProfileTransferDocument document) =>
+        document.Bundles is null
+            ? document with { Bundles = Array.Empty<ModProfileTransferBundle>() }
+            : document;
 
     internal static IReadOnlyList<ModProfileMember> BindMembers(
         ModProfileTransferDocument document,
@@ -410,7 +555,11 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
 
         var previousIndex = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
         if (hasPackagedMods)
-            await mods.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await mods.CommitAsync(
+                    CreateTransferredBundles(Document, mods.ScanResult!),
+                    ModBundleOrigin.Transfer,
+                    cancellationToken)
+                .ConfigureAwait(false);
         var imported = hasPackagedMods
             ? mods.ImportResult ?? throw new InvalidDataException("The Mod package import result is missing.")
             : new ModArchiveImportResult(Array.Empty<ModLibraryItem>(), Array.Empty<ModLibraryItem>());
@@ -467,11 +616,12 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
     {
         try
         {
-            var document = await JsonSerializer.DeserializeAsync<ModProfileTransferDocument>(
-                    stream,
-                    jsonOptions,
-                    cancellationToken)
-                .ConfigureAwait(false) ?? throw new InvalidDataException("The Mod Profile package metadata is empty.");
+            var document = ModProfileTransferService.NormalizeLegacyDocument(
+                await JsonSerializer.DeserializeAsync<ModProfileTransferDocument>(
+                        stream,
+                        jsonOptions,
+                        cancellationToken)
+                    .ConfigureAwait(false) ?? throw new InvalidDataException("The Mod Profile package metadata is empty."));
             document.Validate();
             return document;
         }
@@ -479,5 +629,28 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         {
             throw new InvalidDataException("The Mod Profile package metadata is malformed.", exception);
         }
+    }
+
+    private static IReadOnlyList<DetectedModBundle> CreateTransferredBundles(
+        ModProfileTransferDocument document,
+        ModArchiveScanResult scan)
+    {
+        var candidates = scan.Candidates.ToDictionary(
+            candidate => candidate.Manifest.UniqueId,
+            StringComparer.OrdinalIgnoreCase);
+        return document.Bundles.Select(bundle =>
+        {
+            var members = bundle.Members.Select(member =>
+            {
+                if (!candidates.TryGetValue(member.UniqueId, out var candidate))
+                    throw new InvalidDataException("A shared Mod bundle file is missing from the package.");
+                return candidate;
+            }).ToArray();
+            return new DetectedModBundle(
+                bundle.FamilyKey,
+                bundle.DisplayName,
+                ProductDirectory: null,
+                members);
+        }).ToArray();
     }
 }

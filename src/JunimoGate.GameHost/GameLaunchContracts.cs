@@ -1027,16 +1027,38 @@ public static class GameLaunchRegistry
         string libraryItemId,
         CancellationToken cancellationToken)
     {
-        if (libraryItemId is not { Length: 64 } || libraryItemId.Any(static character =>
-                character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
-            throw new ArgumentException("The Mod library item ID is invalid.", nameof(libraryItemId));
+        var result = await FindLibraryItemsInUseAsync(context, new[] { libraryItemId }, cancellationToken)
+            .ConfigureAwait(false);
+        return result.Count != 0;
+    }
+
+    public static async ValueTask<IReadOnlySet<string>> FindLibraryItemsInUseAsync(
+        Context context,
+        IReadOnlyCollection<string> libraryItemIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(libraryItemIds);
+        var requested = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var libraryItemId in libraryItemIds)
+        {
+            if (libraryItemId is not { Length: 64 } || libraryItemId.Any(static character =>
+                    character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+                throw new ArgumentException("A Mod library item ID is invalid.", nameof(libraryItemIds));
+            requested.Add(libraryItemId);
+        }
+        if (requested.Count == 0)
+            return requested;
         if (GameSessionRegistry.IsGameProcessActive(context))
-            return true;
+            return requested;
         var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
         if (state.Pending?.ModSelectionId is not { } selectionId)
-            return false;
+            return new HashSet<string>(StringComparer.Ordinal);
         var selection = await TryReadModSelectionAsync(context, selectionId, cancellationToken).ConfigureAwait(false);
-        return selection?.Items.Any(item => item.LibraryItemId == libraryItemId) == true;
+        if (selection is null)
+            return new HashSet<string>(StringComparer.Ordinal);
+        requested.IntersectWith(selection.Items.Select(item => item.LibraryItemId));
+        return requested;
     }
 
     public static async ValueTask CompletePendingRunningAsync(

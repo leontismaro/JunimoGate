@@ -104,6 +104,10 @@ return TestHarness.Run(
         ModProfileV2Tests.UpdatesMembersAtomically()),
     ("Profile v2 repository rejects duplicate members and deletes exactly", () =>
         ModProfileV2Tests.RejectsDuplicateMembersAndDeletesExactly()),
+    ("Profile member mutations add replace and batch update atomically", () =>
+        ModProfileV2Tests.MutatesProfileMembersAtomically()),
+    ("Profile member mutations reject ambiguous versions and no-Mods", () =>
+        ModProfileV2Tests.RejectsInvalidMemberMutations()),
     ("Profile v2 migration preserves the legacy fallback", () =>
         ModProfileV2Tests.MigratesLegacyDirectoriesWithoutRemovingFallback()),
     ("Profile v2 migration rejects ambiguous enabled Mods", () =>
@@ -128,14 +132,30 @@ return TestHarness.Run(
         ModLaunchSelectionTests.ResolvesOnlyContainedExistingRoots()),
     ("Mod Profile manifest roundtrip preserves placeholders", () =>
         ModProfileTransferTests.ManifestRoundtripPreservesPlaceholders()),
+    ("Mod Profile v1 manifest without bundles remains importable", () =>
+        ModProfileTransferTests.ImportsLegacyV1ManifestWithoutBundles()),
     ("Complete Mod Profile package excludes config and binds content", () =>
         ModProfileTransferTests.CompletePackageExcludesConfigAndBindsExportedContent()),
     ("Complete Mod Profile package rejects forged content identity", () =>
         ModProfileTransferTests.RejectsForgedPackageIdentityWithoutLibraryChanges()),
     ("Complete Mod Profile package supports an empty group", () =>
         ModProfileTransferTests.CompletePackageSupportsAnEmptyGroup()),
+    ("Complete Mod Profile package preserves bundled Mods", () =>
+        ModProfileTransferTests.CompletePackagePreservesBundles()),
     ("Mod archive scanner accepts common SMAPI JSON in nested Mods", () =>
         ModLibraryTests.DiscoversMultipleNestedMods()),
+    ("Mod bundle detector separates SVE products and frameworks", () =>
+        ModBundleDetectorTests.SeparatesSveProductsAndFrameworks()),
+    ("Mod bundle detector groups Ridgeside without shared dependencies", () =>
+        ModBundleDetectorTests.GroupsRidgesideWithoutAbsorbingDependencies()),
+    ("Mod bundle detector leaves a user collection flat", () =>
+        ModBundleDetectorTests.LeavesUserCollectionsFlat()),
+    ("Mod bundle detector excludes an unrelated East Scarp add-on", () =>
+        ModBundleDetectorTests.GroupsEastScarpButLeavesBarberShopStandalone()),
+    ("Mod bundle detector compares complete valid update keys", () =>
+        ModBundleDetectorTests.UsesOnlyCompleteValidUpdateKeys()),
+    ("Mod bundle detector leaves duplicate UniqueID versions standalone", () =>
+        ModBundleDetectorTests.LeavesDuplicateUniqueIdVersionsStandalone()),
     ("Mod archive scanner accepts repeated directory entries", () =>
         ModLibraryTests.AllowsRepeatedDirectoryEntries()),
     ("Mod archive scanner rejects traversal and overlapping roots", () =>
@@ -144,10 +164,24 @@ return TestHarness.Run(
         ModLibraryTests.ImportsAndReusesContent()),
     ("Mod library keeps same-version different-content items", () =>
         ModLibraryTests.KeepsDistinctContentCandidates()),
+    ("Mod library persists bundles and unlock overrides", () =>
+        ModLibraryTests.PersistsBundlesAndUnlocksMembers()),
+    ("Mod bundle Profile operations mutate once without dependencies", () =>
+        ModLibraryTests.MutatesBundleProfileMembersAtomically()),
+    ("Mod management projects bundles and unlocked members", () =>
+        ModManagementProjectionTests.ProjectsBundlesAndUnlockedMembers()),
+    ("Mod management diagnoses dependencies without blocking", () =>
+        ModManagementProjectionTests.DiagnosesDependenciesWithoutBlocking()),
     ("Mod library repairs missing and orphaned item directories", () =>
         ModLibraryTests.RepairsRecoverableLibraryState()),
     ("Mod library deletes one exact item", () =>
         ModLibraryTests.DeletesExactItem()),
+    ("Mod library deletes many in one revision", () =>
+        ModLibraryTests.DeletesManyInOneRevision()),
+    ("Mod library rolls back incomplete batch", () =>
+        ModLibraryTests.RollsBackBatchWhenAnItemDirectoryIsMissing()),
+    ("Mod library deletion preserves Profile placeholders", () =>
+        ModLibraryTests.DeletionPreservesProfileMetadataPlaceholders()),
     ("Game play sessions exclude startup time", () =>
         GamePlaySessionTests.DoesNotCountStartupTime()),
     ("Game play sessions count only running foreground intervals", () =>

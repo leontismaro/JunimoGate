@@ -68,6 +68,7 @@ public sealed record ModArchiveImportResult(
     IReadOnlyList<ModLibraryItem> ReusedItems)
 {
     public IReadOnlyList<ModLibraryItem> AllItems => AddedItems.Concat(ReusedItems).ToArray();
+    public IReadOnlyList<ModBundleDefinition> Bundles { get; init; } = Array.Empty<ModBundleDefinition>();
 }
 
 public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
@@ -122,6 +123,22 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
     }
 
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
+        => await CommitCoreAsync(explicitBundles: null, ModBundleOrigin.Detected, cancellationToken)
+            .ConfigureAwait(false);
+
+    internal async ValueTask CommitAsync(
+        IReadOnlyList<DetectedModBundle> explicitBundles,
+        ModBundleOrigin origin,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(explicitBundles);
+        await CommitCoreAsync(explicitBundles, origin, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask CommitCoreAsync(
+        IReadOnlyList<DetectedModBundle>? explicitBundles,
+        ModBundleOrigin origin,
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (State != ModInstallTransactionState.AwaitingConfirmation || ScanResult is null)
@@ -142,7 +159,9 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
             }
 
             State = ModInstallTransactionState.Validated;
-            ImportResult = await repository.CommitAsync(prepared, cancellationToken).ConfigureAwait(false);
+            var bundles = explicitBundles ?? ModBundleDetector.Detect(ScanResult.Candidates).Bundles;
+            ImportResult = await repository.CommitAsync(prepared, cancellationToken, bundles, origin)
+                .ConfigureAwait(false);
             State = ModInstallTransactionState.Committed;
             ModLibraryRepository.TryDeleteDirectory(transactionDirectory);
         }
@@ -404,7 +423,7 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
             await metadata.FlushAsync(cancellationToken).ConfigureAwait(false);
             metadata.Flush(flushToDisk: true);
         }
-        return new PreparedModLibraryItem(item, candidateDirectory);
+        return new PreparedModLibraryItem(item, candidateDirectory, candidate.RootPath);
     }
 
     private async ValueTask<ModManifestSummary> ReadManifestAsync(

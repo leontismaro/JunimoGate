@@ -11,11 +11,14 @@ using AndroidX.RecyclerView.Widget;
 using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
 using Google.Android.Material.ProgressIndicator;
+using Google.Android.Material.RadioButton;
+using Google.Android.Material.TextField;
 using JunimoGate.Android;
 using JunimoGate.Mods;
 using Fragment = AndroidX.Fragment.App.Fragment;
 using Log = JunimoGate.Android.JunimoGateLog;
 using OperationCanceledException = System.OperationCanceledException;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using JObject = Java.Lang.Object;
 using JString = Java.Lang.String;
 
@@ -24,6 +27,7 @@ namespace JunimoGate.App;
 [Register("org.junimogate.app.ModGroupsFragment")]
 public sealed class ModGroupsFragment : Fragment
 {
+    private static readonly TimeSpan MinimumExportProgressDuration = TimeSpan.FromMilliseconds(500);
     private const int ImportGroupRequestCode = 4710;
     private const int ExportManifestRequestCode = 4711;
     private const int ExportPackageRequestCode = 4712;
@@ -32,11 +36,15 @@ public sealed class ModGroupsFragment : Fragment
     private ModProfileV2Repository? profiles;
     private ActiveModProfileSelectionRepository? selection;
     private ModLibraryRepository? library;
+    private ModManagementUiSession? modManagement;
     private ModGroupAdapter? adapter;
+    private RecyclerView? list;
     private MaterialButton? createButton;
     private MaterialButton? importButton;
     private LinearProgressIndicator? progress;
+    private TextView? progressLabel;
     private TextView? empty;
+    private int exportProgressText;
     private ModProfileV2? pendingExportProfile;
     private ModProfilePackageImportTransaction? pendingPackageImport;
 
@@ -54,9 +62,11 @@ public sealed class ModGroupsFragment : Fragment
             ?? throw new InvalidOperationException("The import-group action is unavailable.");
         progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.mod_groups_progress)
             ?? throw new InvalidOperationException("The group progress indicator is unavailable.");
+        progressLabel = view.FindViewById<TextView>(Resource.Id.mod_groups_progress_label)
+            ?? throw new InvalidOperationException("The group progress label is unavailable.");
         empty = view.FindViewById<TextView>(Resource.Id.mod_groups_empty)
             ?? throw new InvalidOperationException("The group empty state is unavailable.");
-        var list = view.FindViewById<RecyclerView>(Resource.Id.mod_groups_list)
+        list = view.FindViewById<RecyclerView>(Resource.Id.mod_groups_list)
             ?? throw new InvalidOperationException("The group list is unavailable.");
         adapter = new ModGroupAdapter(FormatSummary, OpenProfile, SelectProfile, RequestShare, RequestDelete);
         list.SetLayoutManager(new LinearLayoutManager(RequireContext()));
@@ -69,12 +79,18 @@ public sealed class ModGroupsFragment : Fragment
     {
         base.OnStart();
         cancellation = new CancellationTokenSource();
-        var userData = AndroidPrivateStorage.GetUserDataRoot(RequireContext());
-        var profilesRoot = Path.Combine(userData, "profiles");
-        profiles = new ModProfileV2Repository(profilesRoot);
-        selection = new ActiveModProfileSelectionRepository(profilesRoot);
-        library = new ModLibraryRepository(Path.Combine(userData, "mods"));
-        _ = RefreshAsync(cancellation.Token);
+        modManagement = ((MainActivity)RequireActivity()).ModManagement;
+        modManagement.Changed += OnModManagementChanged;
+        profiles = modManagement.Profiles;
+        selection = modManagement.ActiveProfile;
+        library = modManagement.Library;
+    }
+
+    public override void OnResume()
+    {
+        base.OnResume();
+        if (cancellation is { IsCancellationRequested: false } lifetime)
+            _ = RefreshAsync(lifetime.Token);
     }
 
     public override void OnStop()
@@ -82,9 +98,13 @@ public sealed class ModGroupsFragment : Fragment
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = null;
+        if (modManagement is not null)
+            modManagement.Changed -= OnModManagementChanged;
+        modManagement = null;
         profiles = null;
         selection = null;
         library = null;
+        exportProgressText = 0;
         SetBusy(false);
         base.OnStop();
     }
@@ -102,10 +122,13 @@ public sealed class ModGroupsFragment : Fragment
             createButton.Click -= OnCreateClicked;
         if (importButton is not null)
             importButton.Click -= OnImportClicked;
+        list?.SetAdapter(null);
         createButton = null;
         importButton = null;
         progress = null;
+        progressLabel = null;
         empty = null;
+        list = null;
         adapter = null;
         base.OnDestroyView();
     }
@@ -138,22 +161,31 @@ public sealed class ModGroupsFragment : Fragment
 
     private void OnCreateClicked(object? sender, EventArgs eventArgs)
     {
-        var input = new EditText(RequireContext())
-        {
-            Hint = GetString(Resource.String.mod_groups_name_hint),
-        };
-        input.SetSingleLine(true);
-        input.SetPadding(48, 0, 48, 0);
+        var content = LayoutInflater.From(RequireContext())?.Inflate(
+            Resource.Layout.dialog_mod_group_name,
+            null,
+            false)
+            ?? throw new InvalidOperationException("The create-group dialog layout could not be created.");
+        var input = content.FindViewById<TextInputEditText>(Resource.Id.mod_group_name_input)
+            ?? throw new InvalidOperationException("The create-group name input is unavailable.");
         var dialog = new MaterialAlertDialogBuilder(RequireContext());
         dialog.SetTitle(Resource.String.mod_groups_create_title);
-        dialog.SetView(input);
+        dialog.SetView(content);
         dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
         dialog.SetPositiveButton(Resource.String.mod_groups_create_action, (_, _) =>
         {
             if (cancellation is { IsCancellationRequested: false } lifetime)
                 _ = CreateAsync(input.Text ?? string.Empty, lifetime.Token);
         });
-        dialog.Show();
+        var shown = dialog.Show()
+            ?? throw new InvalidOperationException("The create-group dialog could not be shown.");
+        var create = shown.GetButton((int)DialogButtonType.Positive)
+            ?? throw new InvalidOperationException("The create-group action is unavailable.");
+        void UpdateCreateState() => create.Enabled = !string.IsNullOrWhiteSpace(input.Text);
+        input.TextChanged += (_, _) => UpdateCreateState();
+        UpdateCreateState();
+        input.RequestFocus();
+        shown.Window?.SetSoftInputMode(SoftInput.StateAlwaysVisible);
     }
 
     private void OnImportClicked(object? sender, EventArgs eventArgs)
@@ -201,7 +233,11 @@ public sealed class ModGroupsFragment : Fragment
         ModProfileTransferKind kind,
         CancellationToken cancellationToken)
     {
+        exportProgressText = kind == ModProfileTransferKind.Complete
+            ? Resource.String.mod_groups_exporting_package
+            : Resource.String.mod_groups_exporting_manifest;
         SetBusy(true);
+        var progressDuration = Stopwatch.StartNew();
         try
         {
             var service = CreateTransferService();
@@ -210,6 +246,9 @@ public sealed class ModGroupsFragment : Fragment
             var result = kind == ModProfileTransferKind.Complete
                 ? await service.ExportPackageAsync(ProfileId.Parse(profile.Id), output, cancellationToken).ConfigureAwait(false)
                 : await service.ExportManifestAsync(ProfileId.Parse(profile.Id), output, cancellationToken).ConfigureAwait(false);
+            var remainingProgressDuration = MinimumExportProgressDuration - progressDuration.Elapsed;
+            if (remainingProgressDuration > TimeSpan.Zero)
+                await Task.Delay(remainingProgressDuration, cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() => ShowMessage(FormatString(
@@ -233,6 +272,7 @@ public sealed class ModGroupsFragment : Fragment
         }
         finally
         {
+            exportProgressText = 0;
             if (IsAdded)
                 Activity?.RunOnUiThread(() => SetBusy(false));
         }
@@ -252,6 +292,7 @@ public sealed class ModGroupsFragment : Fragment
             if (isManifest)
             {
                 var result = await service.ImportManifestAsync(input, cancellationToken).ConfigureAwait(false);
+                modManagement?.NotifyProfilesChanged();
                 await RefreshAsync(cancellationToken).ConfigureAwait(false);
                 ShowImportResult(result);
                 return;
@@ -324,6 +365,8 @@ public sealed class ModGroupsFragment : Fragment
                 ?? throw new InvalidDataException("The shared group import result is missing.");
             Interlocked.CompareExchange(ref pendingPackageImport, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
+            modManagement?.NotifyLibraryChanged();
+            modManagement?.NotifyProfilesChanged();
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
             ShowImportResult(result);
         }
@@ -387,13 +430,8 @@ public sealed class ModGroupsFragment : Fragment
         return null;
     }
 
-    private ModProfileTransferService CreateTransferService()
-    {
-        var userData = AndroidPrivateStorage.GetUserDataRoot(RequireContext());
-        return new ModProfileTransferService(
-            new ModLibraryRepository(Path.Combine(userData, "mods")),
-            new ModProfileV2Repository(Path.Combine(userData, "profiles")));
-    }
+    private ModProfileTransferService CreateTransferService() => modManagement?.Transfers
+        ?? throw new InvalidOperationException("The Mod management UI session is unavailable.");
 
     private void TryDeleteDocument(global::Android.Net.Uri uri)
     {
@@ -416,6 +454,7 @@ public sealed class ModGroupsFragment : Fragment
         {
             var profile = await profiles.CreateAsync(displayName, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+            modManagement?.NotifyProfilesChanged();
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -460,13 +499,17 @@ public sealed class ModGroupsFragment : Fragment
         SetBusy(true);
         try
         {
-            var current = await selection.OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
-                .ConfigureAwait(false);
+            var current = modManagement is null
+                ? await selection.OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken).ConfigureAwait(false)
+                : await modManagement.GetActiveProfileAsync(cancellationToken).ConfigureAwait(false);
             await selection.SetAsync(current.Revision, ProfileId.Parse(profile.Id), cancellationToken)
                 .ConfigureAwait(false);
-            await RefreshAsync(cancellationToken).ConfigureAwait(false);
+            modManagement?.NotifyActiveProfileChanged();
+            await ((MainActivity)RequireActivity())
+                .RefreshLauncherProfileAsync(cancellationToken)
+                .ConfigureAwait(false);
             if (IsAdded)
-                Activity?.RunOnUiThread(() => (Activity as ILauncherUiHost)?.RefreshProfile());
+                Activity?.RunOnUiThread(() => adapter?.SetActiveProfile(profile.Id));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -512,6 +555,7 @@ public sealed class ModGroupsFragment : Fragment
         try
         {
             await profiles.DeleteAsync(ProfileId.Parse(profile.Id), cancellationToken).ConfigureAwait(false);
+            modManagement?.NotifyProfilesChanged();
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -539,10 +583,15 @@ public sealed class ModGroupsFragment : Fragment
         SetBusy(true);
         try
         {
-            var groups = await profiles.ListAsync(cancellationToken).ConfigureAwait(false);
-            var active = await selection.OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
-                .ConfigureAwait(false);
-            var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var groups = modManagement is null
+                ? await profiles.ListAsync(cancellationToken).ConfigureAwait(false)
+                : await modManagement.GetProfilesAsync(cancellationToken).ConfigureAwait(false);
+            var active = modManagement is null
+                ? await selection.OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken).ConfigureAwait(false)
+                : await modManagement.GetActiveProfileAsync(cancellationToken).ConfigureAwait(false);
+            var index = modManagement is null
+                ? await library.ReadAsync(cancellationToken).ConfigureAwait(false)
+                : await modManagement.GetLibraryAsync(cancellationToken).ConfigureAwait(false);
             var ids = index.Items.Select(item => item.LibraryItemId).ToHashSet(StringComparer.Ordinal);
             var rows = groups.Select(profile => new ModGroupListItem(
                     profile,
@@ -586,23 +635,45 @@ public sealed class ModGroupsFragment : Fragment
 
     private string FormatSummary(ModGroupListItem item)
     {
-        var active = item.IsActive ? GetString(Resource.String.mod_groups_active) : GetString(Resource.String.mod_groups_inactive);
         return FormatString(
             Resource.String.mod_groups_item_summary,
             Java.Lang.Integer.ValueOf(item.Profile.Members.Count(member => member.Enabled)),
             Java.Lang.Integer.ValueOf(item.Profile.Members.Count(member => !member.Enabled)),
-            Java.Lang.Integer.ValueOf(item.MissingCount),
-            new JString(active));
+            Java.Lang.Integer.ValueOf(item.MissingCount));
+    }
+
+    private void OnModManagementChanged(object? sender, ModManagementChangedEventArgs eventArgs)
+    {
+        if (eventArgs.Kind is ModManagementChangeKind.Library or ModManagementChangeKind.Profiles or
+            ModManagementChangeKind.ActiveProfile)
+        {
+            Activity?.RunOnUiThread(() =>
+            {
+                if (cancellation is { IsCancellationRequested: false } lifetime)
+                    _ = RefreshAsync(lifetime.Token);
+            });
+        }
     }
 
     private void SetBusy(bool value)
     {
+        var isExporting = exportProgressText != 0;
         if (createButton is not null)
-            createButton.Enabled = !value;
+            createButton.Enabled = !value && !isExporting;
         if (importButton is not null)
-            importButton.Enabled = !value;
+            importButton.Enabled = !value && !isExporting;
         if (progress is not null)
-            progress.Visibility = value ? ViewStates.Visible : ViewStates.Gone;
+            progress.Visibility = isExporting || value && (adapter?.ItemCount ?? 0) == 0
+                ? ViewStates.Visible
+                : ViewStates.Gone;
+        if (progressLabel is not null)
+        {
+            progressLabel.Visibility = isExporting
+                ? ViewStates.Visible
+                : ViewStates.Gone;
+            if (isExporting)
+                progressLabel.SetText(exportProgressText);
+        }
     }
 
     private void ShowMessage(int resourceId) =>
@@ -635,14 +706,40 @@ internal sealed class ModGroupAdapter(
     Action<ModProfileV2> share,
     Action<ModGroupListItem> delete) : RecyclerView.Adapter
 {
-    private IReadOnlyList<ModGroupListItem> items = Array.Empty<ModGroupListItem>();
+    private List<ModGroupListItem> items = [];
 
     public override int ItemCount => items.Count;
 
     public void SetItems(IReadOnlyList<ModGroupListItem> value)
     {
-        items = value;
+        items = [.. value];
         NotifyDataSetChanged();
+    }
+
+    public void SetActiveProfile(string profileId)
+    {
+        var activeIndex = items.FindIndex(item => item.IsActive);
+        var selectedIndex = items.FindIndex(item => item.Profile.Id == profileId);
+        if (selectedIndex < 0 || activeIndex == selectedIndex)
+            return;
+
+        if (activeIndex >= 0)
+        {
+            var previous = items[activeIndex];
+            items[activeIndex] = previous with
+            {
+                IsActive = false,
+                CanDelete = previous.Profile.Id is not (ModProfileV2.NoModsId or "default"),
+            };
+            NotifyItemChanged(activeIndex);
+        }
+
+        items[selectedIndex] = items[selectedIndex] with
+        {
+            IsActive = true,
+            CanDelete = false,
+        };
+        NotifyItemChanged(selectedIndex);
     }
 
     public override RecyclerView.ViewHolder OnCreateViewHolder(ViewGroup parent, int viewType)
@@ -663,7 +760,7 @@ internal sealed class ModGroupAdapter(
         private readonly TextView title;
         private readonly TextView summary;
         private readonly MaterialButton openButton;
-        private readonly MaterialButton selectButton;
+        private readonly MaterialRadioButton activeButton;
         private readonly MaterialButton shareButton;
         private readonly MaterialButton deleteButton;
         private readonly Action<ModProfileV2> open;
@@ -686,11 +783,12 @@ internal sealed class ModGroupAdapter(
             title = view.FindViewById<TextView>(Resource.Id.mod_group_title)!;
             summary = view.FindViewById<TextView>(Resource.Id.mod_group_summary)!;
             openButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_open)!;
-            selectButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_select)!;
+            activeButton = view.FindViewById<MaterialRadioButton>(Resource.Id.mod_group_active)!;
             shareButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_share)!;
             deleteButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_delete)!;
             openButton.Click += (_, _) => { if (item is not null) this.open(item.Profile); };
-            selectButton.Click += (_, _) => { if (item is not null) this.select(item.Profile); };
+            activeButton.Click += (_, _) => SelectCurrent();
+            ItemView.Click += (_, _) => SelectCurrent();
             shareButton.Click += (_, _) => { if (item is not null) this.share(item.Profile); };
             deleteButton.Click += (_, _) => { if (item is not null) this.delete(item); };
         }
@@ -700,9 +798,18 @@ internal sealed class ModGroupAdapter(
             item = value;
             title.Text = value.DisplayName;
             summary.Text = detail;
-            selectButton.Enabled = !value.IsActive;
-            selectButton.SetText(value.IsActive ? Resource.String.mod_groups_selected : Resource.String.mod_groups_select);
+            activeButton.Checked = value.IsActive;
+            var selectLabel = ItemView.Context?.GetString(
+                value.IsActive ? Resource.String.mod_groups_selected : Resource.String.mod_groups_select);
+            activeButton.ContentDescription = selectLabel;
+            activeButton.TooltipText = selectLabel;
             deleteButton.Visibility = value.CanDelete ? ViewStates.Visible : ViewStates.Gone;
+        }
+
+        private void SelectCurrent()
+        {
+            if (item is { IsActive: false } value)
+                select(value.Profile);
         }
     }
 }

@@ -44,6 +44,23 @@ internal static class ModImportUtilities
                 }
             }
 
+            var updateKeys = new List<string>();
+            if (TryGetProperty(root, "UpdateKeys", out var updateKeyArray) &&
+                updateKeyArray.ValueKind != JsonValueKind.Null)
+            {
+                if (updateKeyArray.ValueKind != JsonValueKind.Array)
+                    throw new InvalidDataException("UpdateKeys must be an array.");
+                foreach (var updateKey in updateKeyArray.EnumerateArray())
+                {
+                    if (updateKey.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(updateKey.GetString()))
+                        throw new InvalidDataException("Each UpdateKeys entry must be a non-empty string.");
+                    var value = updateKey.GetString()!.Trim();
+                    if (value.Length > 4096)
+                        throw new InvalidDataException("A Mod UpdateKeys entry is too long.");
+                    updateKeys.Add(value);
+                }
+            }
+
             return new ModManifestSummary(
                 ReadRequiredString(root, "Name"),
                 ReadRequiredString(root, "Author"),
@@ -52,7 +69,10 @@ internal static class ModImportUtilities
                 ReadOptionalString(root, "Description"),
                 ReadOptionalString(root, "EntryDll"),
                 contentPackFor,
-                dependencies);
+                dependencies)
+            {
+                UpdateKeys = updateKeys,
+            };
         }
         catch (JsonException exception)
         {

@@ -16,7 +16,10 @@ public sealed record ModManifestSummary(
     string? Description,
     string? EntryDll,
     string? ContentPackForUniqueId,
-    IReadOnlyList<ModDependencySummary> Dependencies);
+    IReadOnlyList<ModDependencySummary> Dependencies)
+{
+    public IReadOnlyList<string> UpdateKeys { get; init; } = Array.Empty<string>();
+}
 
 public sealed record ModLibraryItem(
     string Schema,
@@ -42,13 +45,15 @@ public sealed record ModLibraryItem(
             throw new InvalidDataException("The Mod library item is malformed.");
         }
 
-        if (Manifest.Dependencies is null)
-            throw new InvalidDataException("The Mod dependency metadata is missing.");
+        if (Manifest.Dependencies is null || Manifest.UpdateKeys is null)
+            throw new InvalidDataException("The Mod manifest collection metadata is missing.");
         foreach (var dependency in Manifest.Dependencies)
         {
             if (string.IsNullOrWhiteSpace(dependency.UniqueId))
                 throw new InvalidDataException("The Mod dependency metadata is malformed.");
         }
+        if (Manifest.UpdateKeys.Any(key => string.IsNullOrWhiteSpace(key) || key.Length > 4096))
+            throw new InvalidDataException("The Mod update-key metadata is malformed.");
     }
 }
 
@@ -59,10 +64,11 @@ public sealed record ModLibraryIndex(
     IReadOnlyList<ModLibraryItem> Items)
 {
     public const string CurrentSchema = "junimogate-mod-library/v1";
+    public ModBundleCatalog BundleCatalog { get; init; } = ModBundleCatalog.CreateEmpty();
 
     public void Validate()
     {
-        if (Schema != CurrentSchema || Revision < 1 || UpdatedAtUtc == default || Items is null)
+        if (Schema != CurrentSchema || Revision < 1 || UpdatedAtUtc == default || Items is null || BundleCatalog is null)
             throw new InvalidDataException("The Mod library index is malformed.");
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -72,8 +78,14 @@ public sealed record ModLibraryIndex(
             if (item is null || !ids.Add(item.LibraryItemId))
                 throw new InvalidDataException("The Mod library index contains a duplicate or null item.");
         }
+        BundleCatalog.Validate(Items);
     }
 }
+
+public sealed record ModLibraryDeleteResult(
+    IReadOnlyList<ModLibraryItem> DeletedItems,
+    IReadOnlyList<string> MissingItemIds,
+    long Revision);
 
 public sealed class ModLibraryLayout
 {
@@ -142,43 +154,81 @@ public sealed class ModLibraryRepository
         string libraryItemId,
         CancellationToken cancellationToken = default)
     {
-        if (!ModContentId.IsValid(libraryItemId))
-            throw new ArgumentException("The Mod library item ID is invalid.", nameof(libraryItemId));
+        var result = await DeleteManyAsync(new[] { libraryItemId }, cancellationToken).ConfigureAwait(false);
+        return result.DeletedItems.Count == 1;
+    }
+
+    public async ValueTask<ModLibraryDeleteResult> DeleteManyAsync(
+        IReadOnlyCollection<string> libraryItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(libraryItemIds);
+        var requestedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var libraryItemId in libraryItemIds)
+        {
+            if (!ModContentId.IsValid(libraryItemId))
+                throw new ArgumentException("A Mod library item ID is invalid.", nameof(libraryItemIds));
+            requestedIds.Add(libraryItemId);
+        }
 
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
-            var item = current.Items.FirstOrDefault(candidate => candidate.LibraryItemId == libraryItemId);
-            if (item is null)
-                return false;
+            if (requestedIds.Count == 0)
+                return new ModLibraryDeleteResult(Array.Empty<ModLibraryItem>(), Array.Empty<string>(), current.Revision);
 
-            var source = Layout.GetItemDirectory(libraryItemId);
-            var trash = Path.Combine(Layout.StagingDirectory, $"delete-{Guid.NewGuid():N}");
-            if (!Directory.Exists(source))
-                throw new InvalidDataException("The Mod library item directory is missing.");
+            var itemsById = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
+            var deletedItems = requestedIds
+                .Where(itemsById.ContainsKey)
+                .Select(id => itemsById[id])
+                .ToArray();
+            var missingItemIds = requestedIds
+                .Where(id => !itemsById.ContainsKey(id))
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            if (deletedItems.Length == 0)
+                return new ModLibraryDeleteResult(Array.Empty<ModLibraryItem>(), missingItemIds, current.Revision);
 
-            Directory.Move(source, trash);
+            var moved = new List<(string Source, string Trash)>(deletedItems.Length);
             try
             {
+                foreach (var item in deletedItems)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var source = Layout.GetItemDirectory(item.LibraryItemId);
+                    if (!Directory.Exists(source))
+                        throw new InvalidDataException("A Mod library item directory is missing.");
+                    var trash = Path.Combine(Layout.StagingDirectory, $"delete-{Guid.NewGuid():N}");
+                    Directory.Move(source, trash);
+                    moved.Add((source, trash));
+                }
+
+                var updatedCatalog = RemoveBundleMembers(current.BundleCatalog, requestedIds);
                 var updated = current with
                 {
                     Revision = checked(current.Revision + 1),
                     UpdatedAtUtc = DateTimeOffset.UtcNow,
-                    Items = current.Items.Where(candidate => candidate.LibraryItemId != libraryItemId).ToArray(),
+                    Items = current.Items.Where(item => !requestedIds.Contains(item.LibraryItemId)).ToArray(),
+                    BundleCatalog = updatedCatalog,
                 };
                 await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                if (!Directory.Exists(source) && Directory.Exists(trash))
-                    Directory.Move(trash, source);
+                for (var index = moved.Count - 1; index >= 0; index--)
+                {
+                    var (source, trash) = moved[index];
+                    if (!Directory.Exists(source) && Directory.Exists(trash))
+                        Directory.Move(trash, source);
+                }
                 throw;
             }
 
-            TryDeleteDirectory(trash);
-            return true;
+            foreach (var (_, trash) in moved)
+                TryDeleteDirectory(trash);
+            return new ModLibraryDeleteResult(deletedItems, missingItemIds, checked(current.Revision + 1));
         }
         finally
         {
@@ -188,7 +238,9 @@ public sealed class ModLibraryRepository
 
     internal async ValueTask<ModArchiveImportResult> CommitAsync(
         IReadOnlyList<PreparedModLibraryItem> preparedItems,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<DetectedModBundle>? detectedBundles = null,
+        ModBundleOrigin bundleOrigin = ModBundleOrigin.Detected)
     {
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -241,23 +293,49 @@ public sealed class ModLibraryRepository
                     added.Add(prepared.Item);
                 }
 
-                if (added.Count > 0 || recoveredItems.Count > 0)
+                var preparedByRoot = preparedItems.ToDictionary(item => item.RootPath, StringComparer.Ordinal);
+                var importedBundles = CreateImportedBundles(
+                    current.BundleCatalog,
+                    detectedBundles ?? Array.Empty<DetectedModBundle>(),
+                    preparedByRoot,
+                    bundleOrigin);
+                var catalogChanged = importedBundles.Any(bundle =>
+                    current.BundleCatalog.Bundles.All(existing => existing.BundleId != bundle.BundleId));
+                if (added.Count > 0 || recoveredItems.Count > 0 || catalogChanged)
                 {
+                    var now = DateTimeOffset.UtcNow;
+                    var catalog = catalogChanged
+                        ? current.BundleCatalog with
+                        {
+                            Revision = checked(current.BundleCatalog.Revision + 1),
+                            UpdatedAtUtc = now,
+                            Bundles = current.BundleCatalog.Bundles
+                                .Concat(importedBundles)
+                                .DistinctBy(bundle => bundle.BundleId, StringComparer.Ordinal)
+                                .OrderBy(bundle => bundle.DisplayName, StringComparer.OrdinalIgnoreCase)
+                                .ThenBy(bundle => bundle.BundleId, StringComparer.Ordinal)
+                                .ToArray(),
+                        }
+                        : current.BundleCatalog;
                     var updated = current with
                     {
                         Revision = checked(current.Revision + 1),
-                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        UpdatedAtUtc = now,
                         Items = known.Values
                             .OrderBy(item => item.Manifest.Name, StringComparer.OrdinalIgnoreCase)
                             .ThenBy(item => item.Manifest.UniqueId, StringComparer.OrdinalIgnoreCase)
                             .ThenBy(item => item.Manifest.Version, StringComparer.OrdinalIgnoreCase)
                             .ThenBy(item => item.LibraryItemId, StringComparer.Ordinal)
                             .ToArray(),
+                        BundleCatalog = catalog,
                     };
                     await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
                 }
 
-                return new ModArchiveImportResult(added, reused);
+                return new ModArchiveImportResult(added, reused)
+                {
+                    Bundles = importedBundles,
+                };
             }
             catch
             {
@@ -280,8 +358,6 @@ public sealed class ModLibraryRepository
         ArgumentNullException.ThrowIfNull(addedItemIds);
         ArgumentNullException.ThrowIfNull(previousIndex);
         previousIndex.Validate();
-        if (addedItemIds.Count == 0)
-            return;
         if (addedItemIds.Any(id => !ModContentId.IsValid(id)) || addedItemIds.Distinct(StringComparer.Ordinal).Count() != addedItemIds.Count)
             throw new InvalidDataException("The Mod import rollback identities are invalid.");
 
@@ -290,12 +366,14 @@ public sealed class ModLibraryRepository
         {
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            if (current.Revision == previousIndex.Revision)
+                return;
             var remove = addedItemIds.ToHashSet(StringComparer.Ordinal);
             if (!remove.IsSubsetOf(current.Items.Select(item => item.LibraryItemId)))
                 throw new InvalidDataException("The Mod import rollback no longer matches the library.");
             var retained = current.Items.Where(item => !remove.Contains(item.LibraryItemId)).ToArray();
             if (current.Revision != checked(previousIndex.Revision + 1) ||
-                !retained.SequenceEqual(previousIndex.Items))
+                !LibraryItemsEqual(retained, previousIndex.Items))
             {
                 throw new InvalidOperationException("The Mod library changed after the import and cannot be rolled back safely.");
             }
@@ -334,7 +412,112 @@ public sealed class ModLibraryRepository
         }
     }
 
+    private static bool LibraryItemsEqual(
+        IReadOnlyList<ModLibraryItem> left,
+        IReadOnlyList<ModLibraryItem> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+        for (var index = 0; index < left.Count; index++)
+        {
+            var first = left[index];
+            var second = right[index];
+            if (first.Schema != second.Schema ||
+                first.LibraryItemId != second.LibraryItemId ||
+                first.ContentId != second.ContentId ||
+                first.RelativeStoragePath != second.RelativeStoragePath ||
+                first.ImportedAtUtc != second.ImportedAtUtc ||
+                first.SourceArchiveName != second.SourceArchiveName ||
+                first.FileCount != second.FileCount ||
+                first.TotalBytes != second.TotalBytes ||
+                !ManifestsEqual(first.Manifest, second.Manifest))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool ManifestsEqual(ModManifestSummary left, ModManifestSummary right) =>
+        left.Name == right.Name &&
+        left.Author == right.Author &&
+        left.Version == right.Version &&
+        left.UniqueId == right.UniqueId &&
+        left.Description == right.Description &&
+        left.EntryDll == right.EntryDll &&
+        left.ContentPackForUniqueId == right.ContentPackForUniqueId &&
+        left.Dependencies.Count == right.Dependencies.Count &&
+        left.Dependencies.Zip(right.Dependencies).All(pair =>
+            pair.First.UniqueId == pair.Second.UniqueId &&
+            pair.First.IsRequired == pair.Second.IsRequired &&
+            pair.First.MinimumVersion == pair.Second.MinimumVersion) &&
+        left.UpdateKeys.SequenceEqual(right.UpdateKeys, StringComparer.Ordinal);
+
     internal static JsonSerializerOptions SerializerOptions => JsonOptions;
+
+    public async ValueTask<ModBundleMutationResult> SetBundleMemberUnlockedAsync(
+        string bundleId,
+        string uniqueId,
+        bool unlocked,
+        CancellationToken cancellationToken = default)
+    {
+        if (!ModContentId.IsValid(bundleId))
+            throw new ArgumentException("The Mod bundle ID is invalid.", nameof(bundleId));
+        if (string.IsNullOrWhiteSpace(uniqueId) || uniqueId.Length > 256)
+            throw new ArgumentException("The Mod UniqueID is invalid.", nameof(uniqueId));
+
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureDirectories();
+            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var bundle = current.BundleCatalog.Bundles.FirstOrDefault(candidate => candidate.BundleId == bundleId)
+                         ?? throw new KeyNotFoundException("The Mod bundle does not exist.");
+            if (!bundle.Members.Any(member => member.UniqueId.Equals(uniqueId, StringComparison.OrdinalIgnoreCase)))
+                throw new KeyNotFoundException("The Mod is not a member of the selected bundle.");
+
+            var overrides = current.BundleCatalog.UnlockOverrides.ToList();
+            var index = overrides.FindIndex(value =>
+                value.FamilyKey == bundle.FamilyKey && value.UniqueId.Equals(uniqueId, StringComparison.OrdinalIgnoreCase));
+            if (unlocked == index >= 0)
+            {
+                return new ModBundleMutationResult(
+                    current,
+                    Changed: false,
+                    BundleRemainsVisible: CountActiveMembers(bundle, overrides) >= 2);
+            }
+            if (unlocked)
+                overrides.Add(new ModBundleUnlockOverride(bundle.FamilyKey, uniqueId));
+            else
+                overrides.RemoveAt(index);
+
+            var now = DateTimeOffset.UtcNow;
+            var catalog = current.BundleCatalog with
+            {
+                Revision = checked(current.BundleCatalog.Revision + 1),
+                UpdatedAtUtc = now,
+                UnlockOverrides = overrides
+                    .OrderBy(value => value.FamilyKey, StringComparer.Ordinal)
+                    .ThenBy(value => value.UniqueId, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+            };
+            var updated = current with
+            {
+                Revision = checked(current.Revision + 1),
+                UpdatedAtUtc = now,
+                BundleCatalog = catalog,
+            };
+            await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+            return new ModBundleMutationResult(
+                updated,
+                Changed: true,
+                BundleRemainsVisible: CountActiveMembers(bundle, overrides) >= 2);
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
 
     private void EnsureDirectories()
     {
@@ -378,6 +561,69 @@ public sealed class ModLibraryRepository
         {
             throw new InvalidDataException("The Mod library index JSON is malformed.", exception);
         }
+    }
+
+    private static IReadOnlyList<ModBundleDefinition> CreateImportedBundles(
+        ModBundleCatalog current,
+        IReadOnlyList<DetectedModBundle> detected,
+        IReadOnlyDictionary<string, PreparedModLibraryItem> preparedByRoot,
+        ModBundleOrigin origin)
+    {
+        var occupied = current.Bundles
+            .SelectMany(bundle => bundle.Members)
+            .Select(member => member.LibraryItemId)
+            .ToHashSet(StringComparer.Ordinal);
+        var result = new List<ModBundleDefinition>();
+        foreach (var bundle in detected)
+        {
+            var available = bundle.Members.Count(member =>
+                preparedByRoot.TryGetValue(member.RootPath, out var prepared) &&
+                !occupied.Contains(prepared.Item.LibraryItemId));
+            if (available < 2)
+                continue;
+            var created = ModBundleFactory.Create(bundle, preparedByRoot, occupied, origin);
+            result.Add(created);
+            foreach (var member in created.Members)
+                occupied.Add(member.LibraryItemId);
+        }
+        return result;
+    }
+
+    private static ModBundleCatalog RemoveBundleMembers(
+        ModBundleCatalog catalog,
+        IReadOnlySet<string> removedLibraryItemIds)
+    {
+        var changed = false;
+        var bundles = new List<ModBundleDefinition>();
+        foreach (var bundle in catalog.Bundles)
+        {
+            var members = bundle.Members
+                .Where(member => !removedLibraryItemIds.Contains(member.LibraryItemId))
+                .ToArray();
+            if (members.Length != bundle.Members.Count)
+                changed = true;
+            if (members.Length >= 2)
+                bundles.Add(bundle with { Members = members });
+        }
+        if (!changed)
+            return catalog;
+        return catalog with
+        {
+            Revision = checked(catalog.Revision + 1),
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Bundles = bundles,
+        };
+    }
+
+    private static int CountActiveMembers(
+        ModBundleDefinition bundle,
+        IReadOnlyList<ModBundleUnlockOverride> overrides)
+    {
+        var unlocked = overrides
+            .Where(value => value.FamilyKey == bundle.FamilyKey)
+            .Select(value => value.UniqueId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return bundle.Members.Count(member => !unlocked.Contains(member.UniqueId));
     }
 
     private async ValueTask WriteIndexAtomicAsync(
@@ -459,7 +705,7 @@ public sealed class ModLibraryRepository
     }
 }
 
-internal sealed record PreparedModLibraryItem(ModLibraryItem Item, string Directory);
+internal sealed record PreparedModLibraryItem(ModLibraryItem Item, string Directory, string RootPath = "");
 
 internal static class ModContentId
 {

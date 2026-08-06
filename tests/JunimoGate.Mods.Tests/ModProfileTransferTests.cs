@@ -39,11 +39,36 @@ internal static class ModProfileTransferTests
 
         TestHarness.False(imported.Profile.Id == source.Id);
         TestHarness.Equal("Shared group", imported.Profile.DisplayName);
+        TestHarness.Equal("Roundtrip", imported.Profile.Description);
         TestHarness.Equal(ModAssemblyBindingPolicy.Strict, imported.Profile.AssemblyBindingPolicyOverride);
         TestHarness.Equal(2, imported.Profile.Members.Count);
-        TestHarness.Equal(item.LibraryItemId, imported.Profile.Members.Single(member => member.UniqueId == "Example.Manifest").LibraryItemId);
-        TestHarness.Equal(null, imported.Profile.Members.Single(member => member.UniqueId == "Example.Missing").LibraryItemId);
+        var installedMember = imported.Profile.Members.Single(member => member.UniqueId == "Example.Manifest");
+        var missingMember = imported.Profile.Members.Single(member => member.UniqueId == "Example.Missing");
+        TestHarness.Equal(item.LibraryItemId, installedMember.LibraryItemId);
+        TestHarness.True(installedMember.Enabled);
+        TestHarness.Equal(null, missingMember.LibraryItemId);
+        TestHarness.False(missingMember.Enabled);
         TestHarness.Equal(1, imported.MissingMembers);
+    }
+
+    public static void ImportsLegacyV1ManifestWithoutBundles()
+    {
+        using var fixture = new TransferFixture();
+        var service = new ModProfileTransferService(fixture.Library, fixture.Profiles);
+        using var manifest = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("""
+            {
+              "schema": "junimogate-mod-profile-transfer/v1",
+              "kind": "Manifest",
+              "displayName": "Legacy shared group",
+              "members": [],
+              "exportedAtUtc": "2026-08-01T00:00:00+00:00"
+            }
+            """));
+
+        var imported = service.ImportManifestAsync(manifest).AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal("Legacy shared group", imported.Profile.DisplayName);
+        TestHarness.Equal(0, imported.Profile.Members.Count);
     }
 
     public static void CompletePackageExcludesConfigAndBindsExportedContent()
@@ -52,9 +77,9 @@ internal static class ModProfileTransferTests
         var sourceItem = sourceFixture.ImportMod("Example.Package", includeConfig: true);
         var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
                 "Complete group",
-                null,
-                null,
-                new[] { ModProfileMember.FromLibraryItem(sourceItem, enabled: true) })
+                "Complete package description",
+                ModAssemblyBindingPolicy.FirstLoaded,
+                new[] { ModProfileMember.FromLibraryItem(sourceItem, enabled: false) })
             .AsTask().GetAwaiter().GetResult();
         var sourceService = new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles);
         using var package = new MemoryStream();
@@ -85,6 +110,10 @@ internal static class ModProfileTransferTests
         TestHarness.Equal(1, imported.AddedItems.Count);
         TestHarness.Equal(packagedId, imported.AddedItems[0].LibraryItemId);
         TestHarness.Equal(packagedId, imported.Profile.Members.Single().LibraryItemId);
+        TestHarness.Equal("Complete group", imported.Profile.DisplayName);
+        TestHarness.Equal("Complete package description", imported.Profile.Description);
+        TestHarness.Equal(ModAssemblyBindingPolicy.FirstLoaded, imported.Profile.AssemblyBindingPolicyOverride);
+        TestHarness.False(imported.Profile.Members.Single().Enabled);
         TestHarness.Equal(0, imported.MissingMembers);
     }
 
@@ -130,6 +159,49 @@ internal static class ModProfileTransferTests
         TestHarness.Equal(0, destinationFixture.Library.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
     }
 
+    public static void CompletePackagePreservesBundles()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItems = sourceFixture.ImportBundle();
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Bundled group",
+                "Bundle roundtrip",
+                null,
+                sourceItems.Select((item, index) => ModProfileMember.FromLibraryItem(item, enabled: index == 0)).ToArray())
+            .AsTask().GetAwaiter().GetResult();
+        var sourceService = new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles);
+        using var package = new MemoryStream();
+
+        var exported = sourceService.ExportPackageAsync(ProfileId.Parse(sourceProfile.Id), package)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(1, exported.Document.Bundles.Count);
+        TestHarness.Equal(2, exported.Document.Bundles[0].Members.Count);
+        using var singleBundle = new MemoryStream();
+        var bundleExport = sourceService.ExportBundlePackageAsync(
+                exported.Document.Bundles[0].PortableBundleId,
+                singleBundle)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(2, bundleExport.PackagedItems);
+        TestHarness.Equal(1, bundleExport.Document.Bundles.Count);
+        TestHarness.Equal(2, bundleExport.Document.Members.Count);
+
+        using var destinationFixture = new TransferFixture();
+        var destinationService = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles);
+        package.Position = 0;
+        using var transaction = new AsyncTransactionScope(destinationService.CreatePackageImportTransaction("bundle.zip"));
+        transaction.Value.ScanAsync(package).AsTask().GetAwaiter().GetResult();
+        transaction.Value.CommitAsync().AsTask().GetAwaiter().GetResult();
+
+        var imported = transaction.Value.ImportResult ?? throw new InvalidOperationException("The bundled import result is missing.");
+        TestHarness.Equal(2, imported.Profile.Members.Count);
+        TestHarness.Equal(1, imported.Profile.Members.Count(member => member.Enabled));
+        var library = destinationFixture.Library.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(1, library.BundleCatalog.Bundles.Count);
+        TestHarness.Equal(ModBundleOrigin.Transfer, library.BundleCatalog.Bundles[0].Origin);
+        TestHarness.Equal("Example Product", library.BundleCatalog.Bundles[0].DisplayName);
+        TestHarness.Equal(2, ModManagementProjection.Create(library).Items.Single().Members.Count);
+    }
+
     private static MemoryStream CreateForgedPackage()
     {
         var stream = new MemoryStream();
@@ -159,6 +231,7 @@ internal static class ModProfileTransferTests
                         "Test",
                         now),
                 },
+                Array.Empty<ModProfileTransferBundle>(),
                 now);
             var metadata = archive.CreateEntry(ModProfileTransferDocument.PackageEntryName);
             using var output = metadata.Open();
@@ -202,6 +275,35 @@ internal static class ModProfileTransferTests
                 transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
                 return transaction.ImportResult?.AllItems.Single()
                     ?? throw new InvalidOperationException("The test Mod import failed.");
+            }
+            finally
+            {
+                transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
+
+        public IReadOnlyList<ModLibraryItem> ImportBundle()
+        {
+            using var archive = new MemoryStream();
+            using (var zip = new ZipArchive(archive, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                WriteEntry(zip, "Example Product/Code/manifest.json", """
+                    {"Name":"Example Product Code","Author":"Test","Version":"1.0.0","UniqueID":"Example.Product.Code","EntryDll":"Code.dll","UpdateKeys":["Nexus:12345"]}
+                    """);
+                WriteEntry(zip, "Example Product/Code/Code.dll", "code");
+                WriteEntry(zip, "Example Product/Content/manifest.json", """
+                    {"Name":"Example Product Content","Author":"Test","Version":"1.0.0","UniqueID":"Example.Product.Content","ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"},"UpdateKeys":["Nexus:12345"]}
+                    """);
+                WriteEntry(zip, "Example Product/Content/content.json", "{}");
+            }
+            archive.Position = 0;
+            var transaction = Library.CreateInstallTransaction("bundle.zip");
+            try
+            {
+                transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+                transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
+                return transaction.ImportResult?.AllItems
+                    ?? throw new InvalidOperationException("The bundled test Mod import failed.");
             }
             finally
             {

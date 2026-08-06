@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CheckBox xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mod_picker_item_check"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:buttonTint="?attr/colorPrimary"
+    android:gravity="center_vertical"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp"
+    android:textAppearance="?attr/textAppearanceBodyMedium" />
