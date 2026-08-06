@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="22dp" />
+            <solid android:color="@color/junimo_wood_dark" />
+        </shape>
+    </item>
+    <item
+        android:bottom="3dp"
+        android:left="3dp"
+        android:right="3dp"
+        android:top="3dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="19dp" />
+            <solid android:color="@color/junimo_hero_rail" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/junimo_hero_border" />
+        </shape>
+    </item>
+    <item
+        android:bottom="7dp"
+        android:left="7dp"
+        android:right="7dp"
+        android:top="7dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <gradient
+                android:angle="90"
+                android:endColor="@color/junimo_hero_gradient_end"
+                android:startColor="@color/junimo_hero_gradient_start" />
+            <stroke
+                android:width="2dp"
+                android:color="@color/junimo_hero_inner_border" />
+        </shape>
+    </item>
+    <item
+        android:bottom="12dp"
+        android:left="12dp"
+        android:right="12dp"
+        android:top="12dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="12dp" />
+            <gradient
+                android:angle="0"
+                android:endColor="@color/junimo_hero_surface_end"
+                android:startColor="@color/junimo_hero_surface_start" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/junimo_hero_surface_stroke" />
+        </shape>
+    </item>
+</layer-list>

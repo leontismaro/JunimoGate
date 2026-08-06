@@ -1,15 +1,172 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.JunimoGate" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.JunimoGate.Base" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/junimo_primary</item>
         <item name="colorOnPrimary">@color/junimo_on_primary</item>
         <item name="colorPrimaryContainer">@color/junimo_primary_container</item>
         <item name="colorOnPrimaryContainer">@color/junimo_on_primary_container</item>
         <item name="colorSecondary">@color/junimo_secondary</item>
+        <item name="colorOnSecondary">@color/junimo_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/junimo_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/junimo_on_secondary_container</item>
+        <item name="colorTertiary">@color/junimo_tertiary</item>
+        <item name="colorOnTertiary">@color/junimo_on_tertiary</item>
+        <item name="colorTertiaryContainer">@color/junimo_tertiary_container</item>
+        <item name="colorOnTertiaryContainer">@color/junimo_on_tertiary_container</item>
+
         <item name="colorSurface">@color/junimo_surface</item>
+        <item name="colorSurfaceDim">@color/junimo_surface_dim</item>
+        <item name="colorSurfaceBright">@color/junimo_surface_bright</item>
+        <item name="colorSurfaceContainerLowest">@color/junimo_surface_container_lowest</item>
+        <item name="colorSurfaceContainerLow">@color/junimo_surface_container_low</item>
         <item name="colorSurfaceContainer">@color/junimo_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/junimo_surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/junimo_surface_container_highest</item>
+        <item name="colorSurfaceVariant">@color/junimo_surface_container_high</item>
+        <item name="colorOnSurface">@color/junimo_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/junimo_on_surface_variant</item>
+        <item name="colorOutline">@color/junimo_outline</item>
+        <item name="colorOutlineVariant">@color/junimo_outline_variant</item>
+
+        <item name="colorError">@color/junimo_error</item>
+        <item name="colorOnError">@color/junimo_on_error</item>
+        <item name="colorErrorContainer">@color/junimo_error_container</item>
+        <item name="colorOnErrorContainer">@color/junimo_on_error_container</item>
+
+        <item name="android:colorAccent">@color/junimo_primary</item>
+        <item name="android:colorBackground">@color/junimo_surface</item>
+        <item name="android:colorControlActivated">@color/junimo_primary</item>
+        <item name="android:colorControlHighlight">@color/junimo_primary_container</item>
+        <item name="android:colorControlNormal">@color/junimo_on_surface_variant</item>
+        <item name="android:windowBackground">@color/junimo_surface</item>
+        <item name="colorControlActivated">@color/junimo_primary</item>
+        <item name="colorControlHighlight">@color/junimo_primary_container</item>
+        <item name="colorControlNormal">@color/junimo_on_surface_variant</item>
         <item name="android:fontFamily">sans</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+
+        <item name="materialCardViewStyle">@style/JunimoGate.Card.Section</item>
+        <item name="android:searchViewStyle">@style/JunimoGate.SearchView</item>
+        <item name="textInputStyle">@style/JunimoGate.TextInput.Filled</item>
+        <item name="tabStyle">@style/JunimoGate.TabLayout</item>
+        <item name="materialSwitchStyle">@style/JunimoGate.Switch</item>
+    </style>
+
+    <style name="Theme.JunimoGate" parent="Theme.JunimoGate.Base">
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">@color/junimo_surface_container</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="JunimoGate.Card.Section" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">?attr/colorSurfaceContainerLow</item>
+        <item name="cardCornerRadius">@dimen/junimo_radius_md</item>
+        <item name="cardElevation">0dp</item>
+        <item name="strokeWidth">0dp</item>
+    </style>
+
+    <style name="JunimoGate.Card.Interactive" parent="JunimoGate.Card.Section">
+        <item name="cardBackgroundColor">?attr/colorSurfaceContainerLowest</item>
+        <item name="cardElevation">@dimen/junimo_card_elevation</item>
+    </style>
+
+    <style name="JunimoGate.Card.List" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">@android:color/transparent</item>
+        <item name="cardCornerRadius">0dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="strokeWidth">0dp</item>
+    </style>
+
+    <style name="JunimoGate.Card.Brand" parent="JunimoGate.Card.Section">
+        <item name="cardBackgroundColor">?attr/colorPrimaryContainer</item>
+        <item name="cardCornerRadius">@dimen/junimo_radius_lg</item>
+    </style>
+
+    <style name="JunimoGate.Card.Navigation" parent="JunimoGate.Card.Section">
+        <item name="cardBackgroundColor">@color/junimo_navigation_glass_surface</item>
+        <item name="cardCornerRadius">@dimen/junimo_radius_pill</item>
+        <item name="cardElevation">2dp</item>
+    </style>
+
+    <style name="JunimoGate.Button.Primary" parent="Widget.Material3.Button">
+        <item name="android:minHeight">@dimen/junimo_touch_target</item>
+    </style>
+
+    <style name="JunimoGate.Button.Tonal" parent="Widget.Material3.Button.TonalButton">
+        <item name="android:minHeight">@dimen/junimo_touch_target</item>
+    </style>
+
+    <style name="JunimoGate.Button.Secondary" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minHeight">@dimen/junimo_touch_target</item>
+    </style>
+
+    <style name="JunimoGate.Switch" parent="Widget.Material3.CompoundButton.MaterialSwitch" />
+
+    <style name="JunimoGate.TextInput.Filled" parent="Widget.Material3.TextInputLayout.FilledBox">
+        <item name="boxBackgroundColor">?attr/colorSurfaceContainer</item>
+        <item name="boxCornerRadiusTopStart">@dimen/junimo_radius_md</item>
+        <item name="boxCornerRadiusTopEnd">@dimen/junimo_radius_md</item>
+        <item name="boxCornerRadiusBottomStart">@dimen/junimo_radius_md</item>
+        <item name="boxCornerRadiusBottomEnd">@dimen/junimo_radius_md</item>
+        <item name="boxStrokeWidth">0dp</item>
+        <item name="boxStrokeWidthFocused">1dp</item>
+    </style>
+
+    <style name="JunimoGate.TextInput.Dropdown" parent="Widget.Material3.TextInputLayout.FilledBox.ExposedDropdownMenu">
+        <item name="boxBackgroundColor">?attr/colorSurfaceContainer</item>
+        <item name="boxCornerRadiusTopStart">@dimen/junimo_radius_md</item>
+        <item name="boxCornerRadiusTopEnd">@dimen/junimo_radius_md</item>
+        <item name="boxCornerRadiusBottomStart">@dimen/junimo_radius_md</item>
+        <item name="boxCornerRadiusBottomEnd">@dimen/junimo_radius_md</item>
+        <item name="boxStrokeWidth">0dp</item>
+        <item name="boxStrokeWidthFocused">1dp</item>
+    </style>
+
+    <style name="JunimoGate.TabLayout" parent="Widget.Material3.TabLayout">
+        <item name="android:background">?attr/colorSurface</item>
+        <item name="tabIndicatorColor">?attr/colorPrimary</item>
+        <item name="tabIndicatorFullWidth">false</item>
+        <item name="tabRippleColor">?attr/colorPrimaryContainer</item>
+        <item name="tabSelectedTextColor">?attr/colorOnSurface</item>
+        <item name="tabTextColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+
+    <style name="JunimoGate.SearchView" parent="">
+        <item name="android:queryBackground">@android:color/transparent</item>
+        <item name="android:submitBackground">@android:color/transparent</item>
+        <item name="android:searchIcon">@drawable/ic_search_24</item>
+        <item name="android:closeIcon">@drawable/ic_close_24</item>
+    </style>
+
+    <style name="JunimoGate.Text.SectionTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+    </style>
+
+    <style name="JunimoGate.Text.Meta" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+
+    <style name="JunimoGate.IconButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:layout_width">@dimen/junimo_touch_target</item>
+        <item name="android:layout_height">@dimen/junimo_touch_target</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:insetLeft">0dp</item>
+        <item name="android:insetRight">0dp</item>
+        <item name="iconPadding">0dp</item>
+        <item name="android:text"></item>
+    </style>
+
+    <style name="JunimoGate.IconButton.Tonal" parent="Widget.Material3.Button.TonalButton">
+        <item name="android:layout_width">@dimen/junimo_touch_target</item>
+        <item name="android:layout_height">@dimen/junimo_touch_target</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:insetLeft">0dp</item>
+        <item name="android:insetRight">0dp</item>
+        <item name="iconPadding">0dp</item>
+        <item name="android:text"></item>
     </style>
 </resources>

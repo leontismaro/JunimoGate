@@ -1,10 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="junimo_primary">#B8D49F</color>
-    <color name="junimo_on_primary">#263619</color>
-    <color name="junimo_primary_container">#3E522E</color>
-    <color name="junimo_on_primary_container">#DCEBCB</color>
-    <color name="junimo_secondary">#E7C174</color>
-    <color name="junimo_surface">#1B2018</color>
-    <color name="junimo_surface_container">#252A22</color>
+    <color name="junimo_home_background_scrim">#80111610</color>
+    <color name="junimo_home_compact_glass_surface">#B31C221A</color>
+    <color name="junimo_home_glass_surface">#D91C221A</color>
+    <color name="junimo_navigation_glass_surface">#E61C221A</color>
+    <color name="junimo_primary">#ADCF91</color>
+    <color name="junimo_on_primary">#203516</color>
+    <color name="junimo_primary_container">#354D29</color>
+    <color name="junimo_on_primary_container">#DCEFCB</color>
+    <color name="junimo_secondary">#BDCBB5</color>
+    <color name="junimo_on_secondary">#293424</color>
+    <color name="junimo_secondary_container">#3F4C3A</color>
+    <color name="junimo_on_secondary_container">#D9E8D1</color>
+    <color name="junimo_tertiary">#A9D3C7</color>
+    <color name="junimo_on_tertiary">#12372F</color>
+    <color name="junimo_tertiary_container">#2B4F47</color>
+    <color name="junimo_on_tertiary_container">#C4ECE1</color>
+
+    <color name="junimo_surface">#111610</color>
+    <color name="junimo_surface_dim">#111610</color>
+    <color name="junimo_surface_bright">#343B32</color>
+    <color name="junimo_surface_container_lowest">#0C110B</color>
+    <color name="junimo_surface_container_low">#171C15</color>
+    <color name="junimo_surface_container">#1C221A</color>
+    <color name="junimo_surface_container_high">#262D23</color>
+    <color name="junimo_surface_container_highest">#31382E</color>
+    <color name="junimo_on_surface">#E5E9E1</color>
+    <color name="junimo_on_surface_variant">#BAC3B6</color>
+    <color name="junimo_outline">#848E80</color>
+    <color name="junimo_outline_variant">#40493E</color>
+
+    <color name="junimo_error">#FFB4AB</color>
+    <color name="junimo_on_error">#690005</color>
+    <color name="junimo_error_container">#93000A</color>
+    <color name="junimo_on_error_container">#FFDAD6</color>
+    <color name="junimo_warning">#F1C16A</color>
+    <color name="junimo_warning_container">#664500</color>
+    <color name="junimo_on_warning_container">#FFE2A8</color>
+
+    <color name="junimo_wood">#D99A62</color>
+    <color name="junimo_wood_dark">#4B2411</color>
+    <color name="junimo_wood_light">#FFD99A</color>
 </resources>
