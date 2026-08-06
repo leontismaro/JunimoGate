@@ -3,12 +3,12 @@ using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using AndroidX.AppCompat.App;
-using AndroidX.AppCompat.Widget;
 using AndroidX.Core.OS;
 using AndroidX.Fragment.App;
 using AndroidX.Navigation.Fragment;
 using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
+using Google.Android.Material.MaterialSwitch;
 using Google.Android.Material.TextField;
 using JunimoGate.Android;
 using JunimoGate.Mods;
@@ -25,11 +25,8 @@ public sealed class SettingsFragment : Fragment
     private MaterialAutoCompleteTextView? bindingPolicy;
     private MaterialAutoCompleteTextView? language;
     private bool syncing;
-    private View? environmentCard;
-    private View? saveBackupsCard;
-    private View? aboutCard;
-    private SwitchCompat? addImportedMods;
-    private SwitchCompat? confirmDeletion;
+    private MaterialSwitch? addImportedMods;
+    private MaterialSwitch? confirmDeletion;
     private LauncherSettingsRepository? settingsRepository;
     private CancellationTokenSource? settingsCancellation;
     private MaterialButton? repairButton;
@@ -44,35 +41,15 @@ public sealed class SettingsFragment : Fragment
         base.OnViewCreated(view, savedInstanceState);
         bindingPolicy = view.FindViewById<MaterialAutoCompleteTextView>(Resource.Id.settings_binding_policy)
             ?? throw new InvalidOperationException("The dependency policy control is unavailable.");
-        var labels = new[]
-        {
-            GetString(Resource.String.binding_highest_compatible),
-            GetString(Resource.String.binding_strict),
-            GetString(Resource.String.binding_first_loaded),
-        };
-        bindingPolicy.Adapter = new ArrayAdapter<string>(RequireContext(), global::Android.Resource.Layout.SimpleListItem1, labels);
+        ResetBindingPolicyAdapter();
         bindingPolicy.ItemClick += OnPolicyClicked;
         language = view.FindViewById<MaterialAutoCompleteTextView>(Resource.Id.settings_language)
             ?? throw new InvalidOperationException("The language control is unavailable.");
-        language.Adapter = new ArrayAdapter<string>(
-            RequireContext(),
-            global::Android.Resource.Layout.SimpleListItem1,
-            new[]
-            {
-                GetString(Resource.String.language_system),
-                GetString(Resource.String.language_simplified_chinese),
-                GetString(Resource.String.language_english),
-            });
+        ResetLanguageAdapter();
         language.ItemClick += OnLanguageClicked;
-        environmentCard = view.FindViewById(Resource.Id.settings_environment_card);
-        environmentCard!.Click += OnEnvironmentClicked;
-        saveBackupsCard = view.FindViewById(Resource.Id.settings_save_backups_card);
-        saveBackupsCard!.Click += OnSaveBackupsClicked;
-        aboutCard = view.FindViewById(Resource.Id.settings_about_card);
-        aboutCard!.Click += OnAboutClicked;
-        addImportedMods = view.FindViewById<SwitchCompat>(Resource.Id.settings_add_imported_mods)
+        addImportedMods = view.FindViewById<MaterialSwitch>(Resource.Id.settings_add_imported_mods)
             ?? throw new InvalidOperationException("The imported Mod setting is unavailable.");
-        confirmDeletion = view.FindViewById<SwitchCompat>(Resource.Id.settings_confirm_mod_deletion)
+        confirmDeletion = view.FindViewById<MaterialSwitch>(Resource.Id.settings_confirm_mod_deletion)
             ?? throw new InvalidOperationException("The Mod deletion setting is unavailable.");
         addImportedMods.CheckedChange += OnAddImportedModsChanged;
         confirmDeletion.CheckedChange += OnConfirmDeletionChanged;
@@ -90,6 +67,8 @@ public sealed class SettingsFragment : Fragment
         host = Activity as ILauncherUiHost
             ?? throw new InvalidOperationException("The Settings screen requires a launcher host.");
         host.LauncherStateChanged += OnStateChanged;
+        ResetBindingPolicyAdapter();
+        ResetLanguageAdapter();
         Render(host.CurrentState);
         RenderLanguage();
         settingsCancellation = new CancellationTokenSource();
@@ -117,12 +96,6 @@ public sealed class SettingsFragment : Fragment
             bindingPolicy.ItemClick -= OnPolicyClicked;
         if (language is not null)
             language.ItemClick -= OnLanguageClicked;
-        if (environmentCard is not null)
-            environmentCard.Click -= OnEnvironmentClicked;
-        if (saveBackupsCard is not null)
-            saveBackupsCard.Click -= OnSaveBackupsClicked;
-        if (aboutCard is not null)
-            aboutCard.Click -= OnAboutClicked;
         if (addImportedMods is not null)
             addImportedMods.CheckedChange -= OnAddImportedModsChanged;
         if (confirmDeletion is not null)
@@ -133,9 +106,6 @@ public sealed class SettingsFragment : Fragment
             cleanupButton.Click -= OnCleanupClicked;
         bindingPolicy = null;
         language = null;
-        environmentCard = null;
-        saveBackupsCard = null;
-        aboutCard = null;
         addImportedMods = null;
         confirmDeletion = null;
         repairButton = null;
@@ -165,20 +135,16 @@ public sealed class SettingsFragment : Fragment
     {
         if (syncing)
             return;
-        host?.UpdateBindingPolicy(eventArgs.Position switch
+        var policy = eventArgs.Position switch
         {
             0 => ModAssemblyBindingPolicy.HighestCompatible,
             1 => ModAssemblyBindingPolicy.Strict,
             2 => ModAssemblyBindingPolicy.FirstLoaded,
             _ => throw new InvalidOperationException("The selected Mod dependency policy is invalid."),
-        });
+        };
+        ResetBindingPolicyAdapter();
+        host?.UpdateBindingPolicy(policy);
     }
-
-    private void OnEnvironmentClicked(object? sender, EventArgs eventArgs) => host?.OpenEnvironment();
-
-    private void OnSaveBackupsClicked(object? sender, EventArgs eventArgs) => host?.OpenSaveBackups();
-
-    private void OnAboutClicked(object? sender, EventArgs eventArgs) => host?.OpenAbout();
 
     private void OnAddImportedModsChanged(object? sender, CompoundButton.CheckedChangeEventArgs eventArgs)
     {
@@ -289,5 +255,33 @@ public sealed class SettingsFragment : Fragment
             _ => throw new InvalidOperationException("The selected application language is invalid."),
         } ?? throw new InvalidOperationException("The selected application locale could not be created.");
         AppCompatDelegate.ApplicationLocales = locales;
+    }
+
+    private void ResetBindingPolicyAdapter()
+    {
+        if (bindingPolicy is null)
+            return;
+        bindingPolicy.Adapter = new ArrayAdapter<string>(
+            RequireContext(),
+            global::Android.Resource.Layout.SimpleListItem1,
+            [
+                GetString(Resource.String.binding_highest_compatible),
+                GetString(Resource.String.binding_strict),
+                GetString(Resource.String.binding_first_loaded),
+            ]);
+    }
+
+    private void ResetLanguageAdapter()
+    {
+        if (language is null)
+            return;
+        language.Adapter = new ArrayAdapter<string>(
+            RequireContext(),
+            global::Android.Resource.Layout.SimpleListItem1,
+            [
+                GetString(Resource.String.language_system),
+                GetString(Resource.String.language_simplified_chinese),
+                GetString(Resource.String.language_english),
+            ]);
     }
 }
