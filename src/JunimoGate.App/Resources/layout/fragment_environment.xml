@@ -20,77 +20,70 @@
             android:id="@+id/environment_app_version"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="4dp"
             android:text="@string/environment_loading"
-            android:textAppearance="?attr/textAppearanceBodyLarge" />
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
 
-        <com.google.android.material.card.MaterialCardView
+        <com.google.android.material.progressindicator.LinearProgressIndicator
+            android:id="@+id/environment_progress"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp">
-            <TextView
-                android:id="@+id/environment_play_game"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="18dp"
-                android:text="@string/environment_loading"
-                android:textAppearance="?attr/textAppearanceBodyLarge" />
-        </com.google.android.material.card.MaterialCardView>
+            android:layout_marginTop="16dp"
+            android:indeterminate="true" />
 
-        <com.google.android.material.card.MaterialCardView
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp">
-            <TextView
-                android:id="@+id/environment_samsung_game"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="18dp"
-                android:text="@string/environment_loading"
-                android:textAppearance="?attr/textAppearanceBodyLarge" />
-        </com.google.android.material.card.MaterialCardView>
+            android:layout_marginTop="24dp"
+            android:text="@string/environment_installed_games"
+            android:textAppearance="?attr/textAppearanceTitleLarge" />
 
-        <com.google.android.material.card.MaterialCardView
+        <LinearLayout
+            android:id="@+id/environment_games"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="1dp">
+            android:orientation="vertical" />
+
+        <TextView
+            android:id="@+id/environment_games_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:padding="18dp"
+            android:text="@string/environment_no_installed_game"
+            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:visibility="gone" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/environment_smapi_title"
+            android:textAppearance="?attr/textAppearanceTitleLarge" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/JunimoGate.Card.Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp">
             <TextView
                 android:id="@+id/environment_smapi"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:padding="18dp"
                 android:text="@string/environment_loading"
-                android:textAppearance="?attr/textAppearanceBodyMedium" />
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
         </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.progressindicator.CircularProgressIndicator
-            android:id="@+id/environment_progress"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="20dp"
-            android:indeterminate="true" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/environment_launch"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="20dp"
-            android:text="@string/environment_prepare_launch" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/environment_refresh"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="12dp"
+            style="@style/JunimoGate.Button.Secondary"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_gravity="end"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="24dp"
             android:text="@string/environment_refresh" />
     </LinearLayout>
 </ScrollView>

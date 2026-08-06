@@ -1,3 +1,4 @@
+using Android.Content.PM;
 using Android.OS;
 using Android.Runtime;
 using Android.Views;
@@ -6,7 +7,6 @@ using AndroidX.Fragment.App;
 using Google.Android.Material.Button;
 using Google.Android.Material.ProgressIndicator;
 using Fragment = AndroidX.Fragment.App.Fragment;
-using JInteger = Java.Lang.Integer;
 using JObject = Java.Lang.Object;
 using JString = Java.Lang.String;
 using OperationCanceledException = System.OperationCanceledException;
@@ -17,15 +17,12 @@ namespace JunimoGate.App;
 public sealed class EnvironmentFragment : Fragment
 {
     private TextView? appVersion;
-    private TextView? playGame;
-    private TextView? samsungGame;
+    private LinearLayout? games;
+    private TextView? gamesEmpty;
     private TextView? smapi;
-    private CircularProgressIndicator? progress;
+    private LinearProgressIndicator? progress;
     private MaterialButton? refresh;
-    private MaterialButton? launch;
     private CancellationTokenSource? cancellation;
-    private ILauncherUiHost? host;
-    private bool hasSelectableGame;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_environment, container, false)
@@ -35,23 +32,17 @@ public sealed class EnvironmentFragment : Fragment
     {
         base.OnViewCreated(view, savedInstanceState);
         appVersion = view.FindViewById<TextView>(Resource.Id.environment_app_version);
-        playGame = view.FindViewById<TextView>(Resource.Id.environment_play_game);
-        samsungGame = view.FindViewById<TextView>(Resource.Id.environment_samsung_game);
+        games = view.FindViewById<LinearLayout>(Resource.Id.environment_games);
+        gamesEmpty = view.FindViewById<TextView>(Resource.Id.environment_games_empty);
         smapi = view.FindViewById<TextView>(Resource.Id.environment_smapi);
-        progress = view.FindViewById<CircularProgressIndicator>(Resource.Id.environment_progress);
+        progress = view.FindViewById<LinearProgressIndicator>(Resource.Id.environment_progress);
         refresh = view.FindViewById<MaterialButton>(Resource.Id.environment_refresh);
-        launch = view.FindViewById<MaterialButton>(Resource.Id.environment_launch);
         refresh!.Click += OnRefreshClicked;
-        launch!.Click += OnLaunchClicked;
     }
 
     public override void OnStart()
     {
         base.OnStart();
-        host = Activity as ILauncherUiHost
-            ?? throw new InvalidOperationException("The environment screen requires a launcher host.");
-        host.LauncherStateChanged += OnLauncherStateChanged;
-        RenderLaunchState(host.CurrentState);
         Refresh();
     }
 
@@ -60,9 +51,6 @@ public sealed class EnvironmentFragment : Fragment
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = null;
-        if (host is not null)
-            host.LauncherStateChanged -= OnLauncherStateChanged;
-        host = null;
         base.OnStop();
     }
 
@@ -70,23 +58,16 @@ public sealed class EnvironmentFragment : Fragment
     {
         if (refresh is not null)
             refresh.Click -= OnRefreshClicked;
-        if (launch is not null)
-            launch.Click -= OnLaunchClicked;
         appVersion = null;
-        playGame = null;
-        samsungGame = null;
+        games = null;
+        gamesEmpty = null;
         smapi = null;
         progress = null;
         refresh = null;
-        launch = null;
         base.OnDestroyView();
     }
 
     private void OnRefreshClicked(object? sender, EventArgs eventArgs) => Refresh();
-
-    private void OnLaunchClicked(object? sender, EventArgs eventArgs) => host?.RequestLaunch();
-
-    private void OnLauncherStateChanged(LauncherState state) => RenderLaunchState(state);
 
     private void Refresh()
     {
@@ -102,9 +83,6 @@ public sealed class EnvironmentFragment : Fragment
             progress.Visibility = ViewStates.Visible;
         if (refresh is not null)
             refresh.Enabled = false;
-        if (launch is not null)
-            launch.Enabled = false;
-        hasSelectableGame = false;
         try
         {
             var info = await new ProductInformationService(RequireContext())
@@ -122,8 +100,11 @@ public sealed class EnvironmentFragment : Fragment
             global::Android.Util.Log.Warn("JunimoGate.Environment", $"environment-unavailable:{exception.GetType().Name}");
             Activity?.RunOnUiThread(() =>
             {
-                if (playGame is not null)
-                    playGame.Text = GetString(Resource.String.environment_read_failed);
+                if (gamesEmpty is not null)
+                {
+                    gamesEmpty.Text = GetString(Resource.String.environment_read_failed);
+                    gamesEmpty.Visibility = ViewStates.Visible;
+                }
             });
         }
         finally
@@ -143,71 +124,70 @@ public sealed class EnvironmentFragment : Fragment
 
     private void Render(EnvironmentDisplayInfo info)
     {
-        if (appVersion is null || playGame is null || samsungGame is null || smapi is null)
+        if (appVersion is null || games is null || gamesEmpty is null || smapi is null)
             return;
-        var play = info.Games.Single(game => game.PackageName == JunimoGate.Android.AndroidPlatformBoundary.PlayPackageName);
-        var samsung = info.Games.Single(game => game.PackageName == JunimoGate.Android.AndroidPlatformBoundary.SamsungPackageName);
         appVersion.Text = FormatString(
             Resource.String.environment_app_version_value,
             new JString(info.AppVersion));
-        playGame.Text = FormatGame(play);
-        samsungGame.Text = FormatGame(samsung);
+        games.RemoveAllViews();
+        foreach (var game in info.Games)
+            games.AddView(CreateGameView(game));
+        gamesEmpty.Visibility = info.Games.Count == 0 ? ViewStates.Visible : ViewStates.Gone;
         smapi.Text = FormatString(
             Resource.String.environment_smapi_value,
-            new JString(info.Smapi.SmapiApiVersion),
-            new JString(info.Smapi.SmapiImplementationVersion),
-            new JString(info.Smapi.BuildId),
-            new JString(info.Smapi.BundleId),
-            new JString(FormatQuantity(Resource.Plurals.environment_file_count, info.Smapi.BundleFileCount)));
-        hasSelectableGame = info.Games.Any(static game => game.IsSelectable);
-        if (host is not null)
-            RenderLaunchState(host.CurrentState);
+            new JString(info.Smapi.SmapiApiVersion));
     }
 
-    private string FormatGame(InstalledGameDisplayInfo game)
+    private View CreateGameView(InstalledGameDisplayInfo game)
     {
-        var storeName = GetString(game.Store switch
-        {
-            GameStore.GooglePlay => Resource.String.store_google_play,
-            GameStore.GalaxyStore => Resource.String.store_galaxy,
-            _ => throw new InvalidOperationException("The game store is invalid."),
-        });
-        if (!game.IsInstalled)
-        {
-            return FormatString(
-                Resource.String.environment_game_not_installed,
-                new JString(storeName),
-                new JString(game.PackageName));
-        }
-        var status = game.Status switch
+        var view = LayoutInflater.From(RequireContext())?.Inflate(Resource.Layout.item_installed_game, games, false)
+            ?? throw new InvalidOperationException("The installed game item could not be created.");
+        var icon = view.FindViewById<ImageView>(Resource.Id.installed_game_icon);
+        var name = view.FindViewById<TextView>(Resource.Id.installed_game_name);
+        var version = view.FindViewById<TextView>(Resource.Id.installed_game_version);
+        var status = view.FindViewById<TextView>(Resource.Id.installed_game_status);
+        name!.Text = game.DisplayName;
+        version!.Text = FormatString(
+            Resource.String.environment_game_version,
+            new JString(game.VersionName ?? "—"),
+            new JString(game.VersionCode?.ToString() ?? "—"));
+        var statusText = game.Status switch
         {
             InstalledGameStatus.Supported => GetString(Resource.String.environment_status_supported),
             InstalledGameStatus.Unrecognized => GetString(Resource.String.environment_status_unrecognized),
             InstalledGameStatus.DetectedUnsupported => GetString(Resource.String.environment_status_unsupported),
             _ => throw new InvalidOperationException("The installed game status is invalid."),
         };
-        return FormatString(
-            Resource.String.environment_game_value,
-            new JString(storeName),
-            new JString(game.VersionName ?? "—"),
-            new JString(game.VersionCode?.ToString() ?? "—"),
-            new JString(status),
-            new JString(game.PackageName));
+        status!.Text = statusText;
+        TrySetGameIcon(icon, game.PackageName);
+        return view;
     }
 
-    private string FormatQuantity(int resourceId, int quantity) =>
-        Resources?.GetQuantityString(resourceId, quantity, [JInteger.ValueOf(quantity)])
-        ?? throw new InvalidOperationException("The environment quantity resource is unavailable.");
+    private void TrySetGameIcon(ImageView? icon, string packageName)
+    {
+        if (icon is null)
+            return;
+        try
+        {
+            var manager = RequireContext().PackageManager;
+            var application = manager is null
+                ? null
+                : OperatingSystem.IsAndroidVersionAtLeast(33)
+                    ? manager.GetApplicationInfo(
+                        packageName,
+                        PackageManager.ApplicationInfoFlags.Of(0L))
+                    : manager.GetApplicationInfo(packageName, (PackageInfoFlags)0);
+            var drawable = application?.LoadIcon(manager);
+            if (drawable is not null)
+                icon.SetImageDrawable(drawable);
+        }
+        catch (PackageManager.NameNotFoundException)
+        {
+            // The package can disappear between the snapshot and UI render; the fallback icon remains.
+        }
+    }
 
     private string FormatString(int resourceId, params JObject[] arguments) =>
         Resources?.GetString(resourceId, arguments)
         ?? throw new InvalidOperationException("The environment string resource is unavailable.");
-
-    private void RenderLaunchState(LauncherState state)
-    {
-        if (launch is null)
-            return;
-        launch.Enabled = hasSelectableGame && state.CanLaunch;
-        launch.Text = GetString(LauncherTextFormatter.GetActionTextResource(state));
-    }
 }
