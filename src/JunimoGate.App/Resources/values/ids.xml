@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UI-only IDs used by the bottom navigation; they are not top-level destinations. -->
+    <item name="navigation_home" type="id" />
+    <item name="navigation_mods" type="id" />
+</resources>

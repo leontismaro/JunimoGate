@@ -2,26 +2,12 @@
 <navigation xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/main_navigation"
-    app:startDestination="@id/navigation_home">
+    app:startDestination="@id/navigation_main">
 
     <fragment
-        android:id="@+id/navigation_home"
-        android:name="org.junimogate.app.MainPagerFragment"
+        android:id="@+id/navigation_main"
+        android:name="org.junimogate.app.PrimaryPagerFragment"
         android:label="@string/nav_home">
-        <argument
-            android:name="initialPage"
-            android:defaultValue="0"
-            app:argType="integer" />
-    </fragment>
-
-    <fragment
-        android:id="@+id/navigation_mods"
-        android:name="org.junimogate.app.MainPagerFragment"
-        android:label="@string/nav_mods">
-        <argument
-            android:name="initialPage"
-            android:defaultValue="1"
-            app:argType="integer" />
     </fragment>
 
     <fragment
