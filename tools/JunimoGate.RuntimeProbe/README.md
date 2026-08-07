@@ -51,12 +51,12 @@ application-local-mono-with-harmony-monomod-fix
 This means:
 
 - start from the .NET for Android `libmonosgen-2.0.so` in the local runtime pack;
-- patch only `mono_method_can_access_field` and `mono_method_can_access_method` in the application copy;
-- use generated `Lib.Harmony 2.4.2-junimogate.11`;
+- apply the versioned application-local Mono recipes documented in [`../../docs/mono-android-runtime-maintenance.md`](../../docs/mono-android-runtime-maintenance.md);
+- use generated `Lib.Harmony 2.4.2-junimogate.63`;
 - package `libjunimogate-cacheflush.so` for ARM64;
 - do not modify or redistribute the complete SDK/runtime pack.
 
-It does not mean unmodified upstream Harmony 2.4.2 works on Android, and it does not prove full game or Mod compatibility.
+The result is limited to the ten runtime diagnostics listed above. The probe does not start MonoGame, SMAPI, the game host, or a Mod.
 
 ## Report
 

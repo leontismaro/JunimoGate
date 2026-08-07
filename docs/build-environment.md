@@ -183,10 +183,10 @@ dotnet run --project tools/JunimoGate.GameInspector -- inspect-assemblies /tmp/j
 
 `inventory` reports APK SHA-256/size, content-derived roles, legacy v1 or modern v2 AssemblyStore entries, and runtime native libraries. `extract-assemblies` reads either the exact legacy `assemblies/assemblies.blob` + selected-ABI blob + manifest set, or matching modern `lib/<abi>/libassemblies.<abi>.blob.so` entries. Both paths refuse malformed bounds, unsafe/duplicate names, and overwrites. `inspect-assemblies` reads metadata identities, target frameworks, assembly/module references, and P/Invoke declarations; it does not decompile method bodies or source.
 
-Never write or copy APKs, game assets, DLLs, native libraries, decompiled source, or generated manifests into tracked repository paths. Use `/tmp`, ignored `artifacts/` or `local-game/`, or—when explicitly permitted—`../Stardew Valley_1.6.15.3/analysis/`.
+Never write or copy APKs, game assets, DLLs, native libraries, decompiled source, or generated manifests into tracked repository paths. Use `/tmp` or ignored `artifacts/` and `local-game/` directories.
 
 ## Runtime boundary
 
 M2 uses the project-local .NET Android Mono runtime pack as an input, then creates an ignored application-local ARM64 copy with narrow symbol- and instruction-guarded patches. `build/build-mono-android.sh` performs this once before an APK build; it does not alter the global pack and does not copy the original game's AOT images. Harmony/MonoMod remains a separate pinned library patch. The exact recipes and runtime-upgrade procedure are in [`mono-android-runtime-maintenance.md`](mono-android-runtime-maintenance.md).
 
-External baseline: [`../../ARCHITECTURE_PLAN.md`](../../ARCHITECTURE_PLAN.md) and [`../../TECHNICAL_FINDINGS.md`](../../TECHNICAL_FINDINGS.md).
+Related architecture and validation documents are indexed in [`README.md`](README.md).

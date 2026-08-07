@@ -71,7 +71,7 @@ Its `openal-soft/README.txt` states that the included OpenAL library was built f
 - authoritative tag: <https://github.com/kcat/openal-soft/tree/openal-soft-1.16.0>
 - tracked license text: [`licenses/OpenAL-Soft-1.16.0-COPYING.txt`](licenses/OpenAL-Soft-1.16.0-COPYING.txt)
 
-The exact public ARM64 OpenAL binary is hash-pinned by the build and Android artifact verifiers. Before public distribution, JunimoGate must additionally establish and retain the exact corresponding OpenAL fork source commit/source offer and complete GNU Library GPL v2 compliance. This remains an M10 release blocker; the current build is for internal/personal sideload validation.
+The exact public ARM64 OpenAL binary is hash-pinned by the build and Android artifact verifiers. Before public distribution, JunimoGate must additionally establish and retain the exact corresponding OpenAL fork source commit/source offer and complete GNU Library GPL v2 compliance. This remains a release blocker; current APK builds are development artifacts only.
 
 ### StbImageSharp and StbImageWriteSharp
 

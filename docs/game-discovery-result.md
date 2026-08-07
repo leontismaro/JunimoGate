@@ -12,6 +12,7 @@ Play app-signing certificate SHA-256 `c7b27f1faf2f350e3c117875bde2353cea837ebe1b
 - `allowsCodeExecution: true`；
 - `matchedKnownCertificateSha256` 等于上述测试锚点。
 
+`KnownTested` 只表示“与本项目实际测试过的 Play 安装身份一致”，不是 Google、ConcernedApe 或发行方提供的独立认证。
 
 ## 2. 设计与数据边界
 
