@@ -4,7 +4,6 @@ using Android.Views;
 using Android.Widget;
 using AndroidX.Navigation.Fragment;
 using AndroidX.RecyclerView.Widget;
-using Google.Android.Material.AppBar;
 using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
 using Google.Android.Material.MaterialSwitch;
@@ -48,7 +47,7 @@ public sealed class ModGroupEditorFragment : Fragment
     private LinearLayout? empty;
     private TextView? emptyText;
     private MaterialButton? emptyAddButton;
-    private MaterialToolbar? appToolbar;
+    private MainShellFragment? mainShell;
     private RecyclerView? list;
     private bool busy;
 
@@ -216,8 +215,7 @@ public sealed class ModGroupEditorFragment : Fragment
     private void RenderProfile(ModProfileV2 value)
     {
         profile = value;
-        if (appToolbar is not null)
-            appToolbar.Title = GetDisplayName(value);
+        mainShell?.SetEditorTitle(GetDisplayName(value));
         var rows = BuildRows(value);
         var locked = value.Id == ModProfileV2.NoModsId;
         adapter?.SetRows(rows, locked);
@@ -538,25 +536,32 @@ public sealed class ModGroupEditorFragment : Fragment
 
     private void AttachToolbar()
     {
-        appToolbar = Activity?.FindViewById<MaterialToolbar>(Resource.Id.top_app_bar);
-        if (appToolbar is null)
-            return;
-        appToolbar.SetNavigationIcon(Resource.Drawable.ic_chevron_left_24);
-        appToolbar.SetNavigationContentDescription(Resource.String.action_back);
-        appToolbar.NavigationClick += OnNavigateUp;
+        mainShell = FindMainShell()
+            ?? throw new InvalidOperationException("The Mod group editor shell is unavailable.");
+        mainShell.SetEditorToolbar(GetString(Resource.String.mod_group_editor_title), OnNavigateUp);
     }
 
     private void DetachToolbar()
     {
-        if (appToolbar is null)
+        if (mainShell is null)
             return;
-        appToolbar.NavigationClick -= OnNavigateUp;
-        appToolbar.NavigationIcon = null;
-        appToolbar.Title = GetString(Resource.String.app_name);
-        appToolbar = null;
+        mainShell.ClearEditorToolbar(OnNavigateUp);
+        mainShell = null;
     }
 
-    private void OnNavigateUp(object? sender, EventArgs eventArgs) =>
+    private MainShellFragment? FindMainShell()
+    {
+        for (var fragment = ParentFragment; fragment is not null; fragment = fragment.ParentFragment)
+        {
+            if (fragment is MainShellFragment shell)
+                return shell;
+        }
+        return null;
+    }
+
+    private void OnNavigateUp(
+        object? sender,
+        AndroidX.AppCompat.Widget.Toolbar.NavigationClickEventArgs eventArgs) =>
         NavHostFragment.FindNavController(this).PopBackStack();
 
     private string GetDisplayName(ModProfileV2 value) => value.Id switch
