@@ -31,10 +31,8 @@ esac
 
 "$root/build/report-android-environment.sh" >/dev/null
 "$root/build/build-mono-android.sh"
-if [[ "$target" == "probe" || "$target" == "runtime-probe" || "$target" == "all" ]]; then
-  "$root/build/build-harmony-android.sh"
-  "$root/build/build-cacheflush.sh"
-fi
+"$root/build/build-harmony-android.sh"
+"$root/build/build-cacheflush.sh"
 
 for project in "${projects[@]}"; do
   printf '\nBuilding %s (%s)...\n' "${project#$root/}" "$configuration"
