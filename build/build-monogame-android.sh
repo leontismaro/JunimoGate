@@ -16,7 +16,8 @@ proxy_url="${JUNIMOGATE_PROXY_URL:-}"
 mkdir -p "$cache_root" "$source_root" "$package_output" "$(dirname "$provenance_output")"
 
 monogame_license="$root/licenses/MonoGame-f5d8bf.txt"
-openal_license="$root/licenses/OpenAL-Soft-1.16.0-COPYING.txt"
+openal_license="$root/licenses/OpenAL-Soft-1.24.3-COPYING.txt"
+openal_bsd_license="$root/licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt"
 stb_notice="$root/licenses/StbSharp-PUBLIC-DOMAIN.txt"
 
 sha256_file() {
@@ -73,10 +74,12 @@ extract_archive() {
 
 require_sha256 "$monogame_license" "$JUNIMOGATE_MONOGAME_LICENSE_SHA256" "Tracked MonoGame license"
 require_sha256 "$openal_license" "$JUNIMOGATE_MONOGAME_OPENAL_LICENSE_SHA256" "Tracked OpenAL license"
+require_sha256 "$openal_bsd_license" "$JUNIMOGATE_MONOGAME_OPENAL_BSD_LICENSE_SHA256" "Tracked OpenAL BSD notice"
 require_sha256 "$stb_notice" "$JUNIMOGATE_MONOGAME_STB_NOTICE_SHA256" "Tracked Stb public-domain notice"
 
 monogame_archive="$cache_root/monogame-$JUNIMOGATE_MONOGAME_COMMIT.tar.gz"
 dependencies_archive="$cache_root/monogame-dependencies-$JUNIMOGATE_MONOGAME_DEPENDENCIES_COMMIT.tar.gz"
+openal_package="$cache_root/monogame-library-openal-$JUNIMOGATE_OPENAL_PACKAGE_VERSION.nupkg"
 stb_image_archive="$cache_root/stb-image-$JUNIMOGATE_STB_IMAGE_COMMIT.tar.gz"
 stb_write_archive="$cache_root/stb-image-write-$JUNIMOGATE_STB_IMAGE_WRITE_COMMIT.tar.gz"
 
@@ -90,6 +93,11 @@ download_verified \
   "$dependencies_archive" \
   "$JUNIMOGATE_MONOGAME_DEPENDENCIES_ARCHIVE_SHA256" \
   "MonoGame.Dependencies"
+download_verified \
+  "https://api.nuget.org/v3-flatcontainer/monogame.library.openal/$JUNIMOGATE_OPENAL_PACKAGE_VERSION/monogame.library.openal.$JUNIMOGATE_OPENAL_PACKAGE_VERSION.nupkg" \
+  "$openal_package" \
+  "$JUNIMOGATE_OPENAL_PACKAGE_SHA256" \
+  "MonoGame.Library.OpenAL"
 download_verified \
   "https://codeload.github.com/StbSharp/StbImageSharp/tar.gz/$JUNIMOGATE_STB_IMAGE_COMMIT" \
   "$stb_image_archive" \
@@ -107,6 +115,26 @@ extract_archive "$dependencies_archive" "$source_root/ThirdParty/Dependencies"
 extract_archive "$stb_image_archive" "$source_root/ThirdParty/StbImageSharp"
 extract_archive "$stb_write_archive" "$source_root/ThirdParty/StbImageWriteSharp"
 
+python3 - "$openal_package" "$source_root/ThirdParty/Dependencies/openal-soft/libs" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+package = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+entries = {
+    "runtimes/android-arm64/native/libopenal.so": "arm64-v8a/libopenal32.so",
+    "runtimes/android-arm/native/libopenal.so": "armeabi-v7a/libopenal32.so",
+    "runtimes/android-x86/native/libopenal.so": "x86/libopenal32.so",
+    "runtimes/android-x64/native/libopenal.so": "x86_64/libopenal32.so",
+}
+with zipfile.ZipFile(package) as archive:
+    for source, relative_destination in entries.items():
+        target = destination / relative_destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(archive.read(source))
+PY
+
 project="$source_root/MonoGame.Framework/MonoGame.Framework.Android.csproj"
 [[ -f "$project" ]] || { echo "MonoGame Android project is missing after extraction." >&2; exit 3; }
 [[ -f "$source_root/LICENSE.txt" ]] || { echo "MonoGame Ms-PL license is missing after extraction." >&2; exit 3; }
@@ -119,6 +147,18 @@ require_sha256 \
   "$source_root/ThirdParty/Dependencies/openal-soft/libs/arm64-v8a/libopenal32.so" \
   "$JUNIMOGATE_MONOGAME_OPENAL_ARM64_SHA256" \
   "ARM64 OpenAL"
+require_sha256 \
+  "$source_root/ThirdParty/Dependencies/openal-soft/libs/armeabi-v7a/libopenal32.so" \
+  "$JUNIMOGATE_MONOGAME_OPENAL_ARM_SHA256" \
+  "ARM OpenAL"
+require_sha256 \
+  "$source_root/ThirdParty/Dependencies/openal-soft/libs/x86/libopenal32.so" \
+  "$JUNIMOGATE_MONOGAME_OPENAL_X86_SHA256" \
+  "x86 OpenAL"
+require_sha256 \
+  "$source_root/ThirdParty/Dependencies/openal-soft/libs/x86_64/libopenal32.so" \
+  "$JUNIMOGATE_MONOGAME_OPENAL_X64_SHA256" \
+  "x86_64 OpenAL"
 
 grep -Fq '<TargetFramework>net9.0-android35</TargetFramework>' "$project" || {
   echo "Pinned MonoGame source no longer declares net9.0-android35." >&2
@@ -231,7 +271,7 @@ package_name="$JUNIMOGATE_MONOGAME_PACKAGE_ID.$JUNIMOGATE_MONOGAME_PACKAGE_VERSI
 built_package="$pack_root/$package_name"
 [[ -f "$built_package" ]] || { echo "Expected MonoGame NuGet package was not produced." >&2; exit 5; }
 
-python3 - "$built_package" "$monogame_license" "$openal_license" "$stb_notice" <<'PY'
+python3 - "$built_package" "$monogame_license" "$openal_license" "$openal_bsd_license" "$stb_notice" <<'PY'
 import pathlib
 import re
 import sys
@@ -240,8 +280,9 @@ import zipfile
 package = pathlib.Path(sys.argv[1])
 license_entries = {
     "licenses/MonoGame-f5d8bf.txt": pathlib.Path(sys.argv[2]).read_bytes(),
-    "licenses/OpenAL-Soft-1.16.0-COPYING.txt": pathlib.Path(sys.argv[3]).read_bytes(),
-    "licenses/StbSharp-PUBLIC-DOMAIN.txt": pathlib.Path(sys.argv[4]).read_bytes(),
+    "licenses/OpenAL-Soft-1.24.3-COPYING.txt": pathlib.Path(sys.argv[3]).read_bytes(),
+    "licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt": pathlib.Path(sys.argv[4]).read_bytes(),
+    "licenses/StbSharp-PUBLIC-DOMAIN.txt": pathlib.Path(sys.argv[5]).read_bytes(),
 }
 temporary = package.with_name(f".{package.name}.normalized")
 fixed_core = "package/services/metadata/core-properties/junimogate-monogame.psmdcp"
@@ -308,6 +349,7 @@ python3 - "$built_package" \
   "$JUNIMOGATE_MONOGAME_TARGETS_SHA256" \
   "$JUNIMOGATE_MONOGAME_LICENSE_SHA256" \
   "$JUNIMOGATE_MONOGAME_OPENAL_LICENSE_SHA256" \
+  "$JUNIMOGATE_MONOGAME_OPENAL_BSD_LICENSE_SHA256" \
   "$JUNIMOGATE_MONOGAME_STB_NOTICE_SHA256" <<'PY'
 import hashlib
 import io
@@ -326,6 +368,7 @@ import zipfile
     expected_targets_hash,
     expected_monogame_license_hash,
     expected_openal_license_hash,
+    expected_openal_bsd_license_hash,
     expected_stb_notice_hash,
 ) = sys.argv[1:]
 expected = {
@@ -334,7 +377,8 @@ expected = {
     f"lib/net9.0-android35.0/MonoGame.Framework.aar": (int(expected_aar_size), expected_aar_hash),
     f"build/MonoGame.Framework.Android.targets": (None, expected_targets_hash),
     "licenses/MonoGame-f5d8bf.txt": (None, expected_monogame_license_hash),
-    "licenses/OpenAL-Soft-1.16.0-COPYING.txt": (None, expected_openal_license_hash),
+    "licenses/OpenAL-Soft-1.24.3-COPYING.txt": (None, expected_openal_license_hash),
+    "licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt": (None, expected_openal_bsd_license_hash),
     "licenses/StbSharp-PUBLIC-DOMAIN.txt": (None, expected_stb_notice_hash),
 }
 with zipfile.ZipFile(package_path) as archive:
@@ -388,12 +432,16 @@ report = {
     },
     "dependencies": [
         {"repository": "$JUNIMOGATE_MONOGAME_DEPENDENCIES_REPOSITORY", "commit": "$JUNIMOGATE_MONOGAME_DEPENDENCIES_COMMIT", "archiveSha256": "$JUNIMOGATE_MONOGAME_DEPENDENCIES_ARCHIVE_SHA256"},
+        {"repository": "$JUNIMOGATE_OPENAL_PROVIDER_REPOSITORY", "commit": "$JUNIMOGATE_OPENAL_PROVIDER_COMMIT", "packageVersion": "$JUNIMOGATE_OPENAL_PACKAGE_VERSION", "packageSha256": "$JUNIMOGATE_OPENAL_PACKAGE_SHA256"},
+        {"repository": "$JUNIMOGATE_OPENAL_SOURCE_REPOSITORY", "commit": "$JUNIMOGATE_OPENAL_SOURCE_COMMIT", "archiveSha256": "$JUNIMOGATE_OPENAL_SOURCE_ARCHIVE_SHA256"},
+        {"repository": "$JUNIMOGATE_OPENAL_BUILDSCRIPTS_REPOSITORY", "commit": "$JUNIMOGATE_OPENAL_BUILDSCRIPTS_COMMIT", "archiveSha256": "$JUNIMOGATE_OPENAL_BUILDSCRIPTS_ARCHIVE_SHA256"},
         {"repository": "$JUNIMOGATE_STB_IMAGE_REPOSITORY", "commit": "$JUNIMOGATE_STB_IMAGE_COMMIT", "archiveSha256": "$JUNIMOGATE_STB_IMAGE_ARCHIVE_SHA256"},
         {"repository": "$JUNIMOGATE_STB_IMAGE_WRITE_REPOSITORY", "commit": "$JUNIMOGATE_STB_IMAGE_WRITE_COMMIT", "archiveSha256": "$JUNIMOGATE_STB_IMAGE_WRITE_ARCHIVE_SHA256"},
     ],
     "licenses": [
         {"path": "licenses/MonoGame-f5d8bf.txt", "sha256": "$JUNIMOGATE_MONOGAME_LICENSE_SHA256", "classification": "Ms-PL with upstream Mono.Xna MIT notice"},
-        {"path": "licenses/OpenAL-Soft-1.16.0-COPYING.txt", "sha256": "$JUNIMOGATE_MONOGAME_OPENAL_LICENSE_SHA256", "classification": "GNU Library General Public License v2"},
+        {"path": "licenses/OpenAL-Soft-1.24.3-COPYING.txt", "sha256": "$JUNIMOGATE_MONOGAME_OPENAL_LICENSE_SHA256", "classification": "GNU Library General Public License v2 or later"},
+        {"path": "licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt", "sha256": "$JUNIMOGATE_MONOGAME_OPENAL_BSD_LICENSE_SHA256", "classification": "BSD 3-Clause portions"},
         {"path": "licenses/StbSharp-PUBLIC-DOMAIN.txt", "sha256": "$JUNIMOGATE_MONOGAME_STB_NOTICE_SHA256", "classification": "Public Domain notices"},
     ],
     "build": {
