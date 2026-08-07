@@ -23,6 +23,13 @@ JunimoGate currently provides:
 - faster routine launches after the initial setup;
 - English and Simplified Chinese interfaces.
 
+## Community and support
+
+- Join the [JunimoGate Discord community](https://discord.gg/q29GT4Vh6) to
+  connect with other users, exchange ideas, and get community support.
+- Use [GitHub Issues](https://github.com/leontismaro/JunimoGate/issues) to
+  report bugs, request features, or submit feedback that needs to be tracked.
+
 ## Acknowledgements
 
 JunimoGate continues, at the project-goal level, the Android SMAPI launcher

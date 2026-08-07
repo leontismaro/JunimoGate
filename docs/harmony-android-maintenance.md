@@ -246,10 +246,10 @@ git apply /absolute/path/to/patches/harmony-android/harmony-2.4.2-android.patch
 任何二进制变化都先把：
 
 ```xml
-<HarmonyPrerelease>-junimogate.63</HarmonyPrerelease>
+<HarmonyPrerelease>-junimogate.N</HarmonyPrerelease>
 ```
 
-改成新的、从未使用过的版本，例如 `.64`。同时更新所有消费项目的 PackageReference。
+改成新的、从未使用过的版本后缀。同时更新所有消费项目的 PackageReference。
 
 ### 6.4 重新生成 patch
 
@@ -590,10 +590,12 @@ M2通过只允许进入后续阶段。正式升级还应经过：
 
 ```text
 Lib.Harmony 2.4.2-junimogate.63
-nupkg SHA-256: 9d728a94a599805230d970173b88ca41c7969380c9bc841b654c86ada7e72025
-0Harmony.dll SHA-256: baf23a4f2764e7e0357c0979f3c90683c8dc71d5c5bf5148736a54b2df64c027
 patch SHA-256: 5554b9c9f20ad555987167f3364c5d35d26efb568ee94b872c7270a645b005f9
 ```
+
+ILRepack 会为每次构建生成新的 MVID/PDB 路径，NuGet 打包也会写入 ZIP 元数据，
+所以 nupkg 和 `0Harmony.dll` 的整文件哈希不作为固定门禁。构建脚本会在 ignored
+provenance 文件中记录当次实际哈希，并在复用包时验证 provenance 与包内容一致。
 
 ## 12. 删除本地 patch 的条件
 

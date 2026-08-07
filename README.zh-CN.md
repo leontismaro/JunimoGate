@@ -22,6 +22,13 @@ JunimoGate 当前提供：
 - 首次准备完成后获得更快的日常启动；
 - 英文和简体中文界面。
 
+## 社区与支持
+
+- 加入 [JunimoGate Discord 社区](https://discord.gg/q29GT4Vh6)，与其他用户
+  交流、分享想法并获得社区互助。
+- 通过 [GitHub Issues](https://github.com/leontismaro/JunimoGate/issues)
+  报告问题、提出功能建议，或提交需要持续跟踪的反馈。
+
 ## 致谢
 
 JunimoGate 在项目目标上延续了

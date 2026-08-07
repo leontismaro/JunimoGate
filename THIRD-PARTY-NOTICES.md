@@ -167,7 +167,7 @@ JunimoGate as a whole.
   - bundled pardeike/MonoMod commit: `dfc30a1506d37fb88a2c2be004f525205f46a24c`
   - bundled iced commit: `c50f29b7bc305696895c075f3fc7719751426b12`
   - tracked patch: `patches/harmony-android/harmony-2.4.2-android.patch`
-  - generated package: ignored and reproducibly rebuilt by `build/build-harmony-android.sh`
+  - generated package: ignored and rebuilt from pinned sources by `build/build-harmony-android.sh`; each build's hashes are recorded in its ignored provenance file
   - license: MIT
   - Harmony copyright: Copyright (c) 2017 Andreas Pardeike
   - bundled MonoMod copyright: Copyright (c) 2015 - 2020 0x0ade

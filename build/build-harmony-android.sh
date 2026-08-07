@@ -40,7 +40,7 @@ fi
 
 validate_package() {
   python3 - "$package" "$provenance" \
-    "$HARMONY_ANDROID_PACKAGE_SHA256" "$HARMONY_ANDROID_ASSEMBLY_SHA256" "$patch_sha256" \
+    "$patch_sha256" \
     "$HARMONY_COMMIT" "$HARMONY_ARCHIVE_SHA256" \
     "$MONOMOD_COMMIT" "$MONOMOD_ARCHIVE_SHA256" \
     "$ICED_COMMIT" "$ICED_ARCHIVE_SHA256" <<'PY'
@@ -52,16 +52,14 @@ import zipfile
 
 package = pathlib.Path(sys.argv[1])
 provenance = pathlib.Path(sys.argv[2])
-expected_package_sha = sys.argv[3]
-expected_assembly_sha = sys.argv[4]
 expected_inputs = {
-    "patchSha256": sys.argv[5],
-    "harmonyCommit": sys.argv[6],
-    "harmonyArchiveSha256": sys.argv[7],
-    "monoModCommit": sys.argv[8],
-    "monoModArchiveSha256": sys.argv[9],
-    "icedCommit": sys.argv[10],
-    "icedArchiveSha256": sys.argv[11],
+    "patchSha256": sys.argv[3],
+    "harmonyCommit": sys.argv[4],
+    "harmonyArchiveSha256": sys.argv[5],
+    "monoModCommit": sys.argv[6],
+    "monoModArchiveSha256": sys.argv[7],
+    "icedCommit": sys.argv[8],
+    "icedArchiveSha256": sys.argv[9],
 }
 
 def digest(data: bytes) -> str:
@@ -79,12 +77,6 @@ except Exception as error:
 
 actual_package_sha = digest(package_bytes)
 actual_assembly_sha = digest(assembly)
-if actual_package_sha != expected_package_sha:
-    print(f"Patched Harmony package SHA-256 mismatch: {actual_package_sha}", file=sys.stderr)
-    raise SystemExit(1)
-if actual_assembly_sha != expected_assembly_sha:
-    print(f"Patched 0Harmony.dll SHA-256 mismatch: {actual_assembly_sha}", file=sys.stderr)
-    raise SystemExit(1)
 if any(name.startswith("lib/netstandard") for name in names):
     print("Patched Harmony package unexpectedly contains netstandard assets", file=sys.stderr)
     raise SystemExit(1)
@@ -270,4 +262,4 @@ print(encoded,end="")
 PY
 
 validate_package
-printf 'Verified reproducible patched Harmony package: %s\n' "$package"
+printf 'Verified patched Harmony package: %s\n' "$package"
