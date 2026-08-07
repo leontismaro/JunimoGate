@@ -1,28 +1,43 @@
+**English** | [简体中文](README.zh-CN.md)
+
 # JunimoGate
 
-JunimoGate is an experimental .NET 9 Android launcher for a legally installed copy of Stardew Valley. It discovers the installed package, prepares an app-private workspace, and starts a source-integrated Android SMAPI runtime in an isolated `:game` process.
+JunimoGate is an Android SMAPI launcher for Stardew Valley. It integrates an
+Android SMAPI runtime with launch, Mod, save, and diagnostics management.
 
-This repository does not contain or distribute Stardew Valley APKs, assemblies, Content, native libraries, or decompiled source. The user supplies the installed game on their own Android device.
+<p align="center">
+  <img src="docs/assets/junimogate-home.webp" alt="JunimoGate home screen" width="360">
+  <img src="docs/assets/junimogate-mods.webp" alt="JunimoGate Mod library" width="360">
+</p>
 
-## Project status
+## Features
 
-The current source tree includes:
+JunimoGate currently provides:
 
-- package discovery and signer-aware source selection;
-- AssemblyStore v1/v2 extraction into an immutable source workspace;
-- a local semantic bridge recipe with postconditions;
-- Deep Prepare for first import, game updates, schema changes, and repair;
-- Fast Launch using cached snapshots and one pre-SMAPI runtime inventory;
-- a source-integrated SMAPI fork in the `smapi/` submodule;
-- an isolated game process and one-shot launch descriptors;
-- Mod archive import, a global Mod library, groups, selection, and sharing;
-- product and SMAPI log access;
-- save discovery, import, export, and backup management;
-- English and Simplified Chinese launcher resources.
+- launch Stardew Valley through the integrated Android SMAPI runtime;
+- import Mod archives and manage installed Mod versions in one library;
+- search Mods, organize them into groups, choose which Mods are enabled, and
+  share them;
+- discover saves, import or export them, and manage backups;
+- view launcher and SMAPI logs for troubleshooting;
+- faster routine launches after the initial setup;
+- English and Simplified Chinese interfaces.
 
-There are no public release artifacts yet. Production signing, project licensing, Android distribution-policy review, third-party source obligations, and release packaging remain open work.
+## Acknowledgements
 
-## Build
+JunimoGate continues, at the project-goal level, the Android SMAPI launcher
+work pursued by [NRTnarathip/SMAPILoader](https://github.com/NRTnarathip/SMAPILoader).
+The JunimoGate launcher code is an independent implementation. We thank that
+project and the related community work that preceded it.
+
+The bundled JunimoGate-SMAPI fork is derived from
+[Pathoschild/SMAPI](https://github.com/Pathoschild/SMAPI) and
+[NRTnarathip/SMAPI-Android-1.6](https://github.com/NRTnarathip/SMAPI-Android-1.6),
+with further Android integration and maintenance by the JunimoGate project.
+Exact source commits are recorded in the
+[Android branch provenance](smapi/docs/android/provenance.md).
+
+## Build guide
 
 Clone the repository with its SMAPI submodule:
 
@@ -31,65 +46,59 @@ git clone --recurse-submodules https://github.com/leontismaro/JunimoGate.git
 cd JunimoGate
 ```
 
-Bootstrap the repository-local Android toolchain:
+The complete [build environment and script guide](docs/build-environment.md)
+documents prerequisites, the repository-local Android toolchain, every public
+entry point under `build/`, local game compile references, verification, and
+generated artifacts.
+
+A typical development build is:
 
 ```bash
 ./build/bootstrap-android.sh
-```
-
-Build the public-source MonoGame provider and patched runtime dependencies:
-
-```bash
 ./build/build-monogame-android.sh
-./build/build-harmony-android.sh
-./build/build-cacheflush.sh
-```
 
-Android application builds require a local directory containing legally extracted compile-only game assemblies. The build does not search for or copy them automatically.
-
-```bash
 export JUNIMOGATE_GAME_REFERENCE_DIR="/absolute/path/to/game/assemblies"
-./build/build-android.sh Debug all
+./build/build-android.sh Debug app
 ```
 
-Run host checks and inspect the resulting APKs:
+The reference directory is a local, compile-only input. Build scripts do not
+search for game files or copy commercial game payloads into the repository or
+APK.
 
-```bash
-./build/test-host.sh
-./build/verify-android-artifacts.sh
-```
+## Project structure
 
-Generated packages, APKs, reports, local game inputs, and toolchains remain under ignored paths such as `artifacts/`, `local-game/`, and `.toolchains/`.
+- `src/JunimoGate.App` contains the Android launcher application and UI;
+- `src/JunimoGate.Android` owns Android package and private-storage boundaries;
+- `src/JunimoGate.Extraction` discovers and prepares game inputs;
+- `src/JunimoGate.Rewriter` applies guarded Android bridge rewrites;
+- `src/JunimoGate.GameHost` owns the isolated process and SMAPI host contract;
+- `src/JunimoGate.Mods` owns the Mod library, groups, selection, and transfer
+  data;
+- `smapi/` is the Android SMAPI fork, tracked as a Git submodule;
+- `build/` contains toolchain, build, packaging, and verification entry points;
+- `tests/` and `tools/` contain automated checks and development utilities;
+- `docs/` contains architecture, maintenance, validation, and release records.
 
-## Architecture
+See the [documentation index](docs/README.md),
+[startup chain](docs/startup-chain.md), and
+[SMAPI architecture](docs/smapi-architecture.md) for the maintained design.
 
-- `JunimoGate.App` owns launcher UI and user actions.
-- `JunimoGate.Android` owns Android package and private-storage boundaries.
-- `JunimoGate.Extraction` creates the immutable source workspace.
-- `JunimoGate.Rewriter` applies the local semantic bridge recipe.
-- `JunimoGate.GameHost` owns launch descriptors, the isolated process, and SMAPI hosting.
-- `JunimoGate.Mods` owns Mod library, group, selection, and transfer data.
-- `smapi/` contains the Android SMAPI fork as a Git submodule.
+## License
 
-The normal launch path does not hash APKs or workspaces, run compatibility probes, execute Cecil rewrites, or rebuild applied workspaces. Those operations belong to Deep Prepare or explicit verification.
+Except for identified third-party material and repositories with their own
+license, JunimoGate-authored material is licensed under
+[GPL-3.0-only](LICENSE), with the narrow linking permission stated in
+[LICENSE-EXCEPTION](LICENSE-EXCEPTION).
 
-## Documentation
+The `smapi/` submodule remains licensed under LGPL-3.0-only. MonoGame, OpenAL
+Soft, the .NET runtime, and other dependencies retain their respective
+licenses. See [third-party notices](THIRD-PARTY-NOTICES.md) and the
+[open-source release checklist](docs/open-source-release.md).
 
-Start with the [documentation index](docs/README.md). Important references include:
+JunimoGate is an independent, unofficial project. Stardew Valley and related
+names and marks belong to their respective owners. This project is not
+endorsed by or affiliated with ConcernedApe, Stardew Valley, or the SMAPI
+project.
 
-- [startup chain](docs/startup-chain.md);
-- [SMAPI architecture](docs/smapi-architecture.md);
-- [compatibility model](docs/compatibility.md);
-- [build environment](docs/build-environment.md);
-- [version and cache identities](docs/versioning.md);
-- [public roadmap](docs/roadmap.md).
-
-Repository-specific agent constraints are in [AGENTS.md](AGENTS.md).
-
-## Distribution and licensing
-
-The project-wide license has not yet been selected. Until a license is added, publication of the source does not grant general permission to use, modify, or redistribute JunimoGate.
-
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) records the known dependency notices and unresolved OpenAL corresponding-source/relink requirements. Those requirements must be resolved before distributing application binaries.
-
-JunimoGate is an independent, unofficial project. Stardew Valley and related names and marks belong to their respective owners. This project is not endorsed by or affiliated with ConcernedApe, Stardew Valley, or the SMAPI project.
+Third-party names, marks, and game-related elements visible in the product
+screenshots remain the property of their respective owners.

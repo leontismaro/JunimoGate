@@ -26,5 +26,6 @@ Validation records are dated observations. They do not replace the current archi
 ## Project
 
 - [Roadmap](roadmap.md)
+- [Open-source release checklist](open-source-release.md)
 - [Historical engineering checkpoints](history.md)
 - [Third-party notices](../THIRD-PARTY-NOTICES.md)

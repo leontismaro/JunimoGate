@@ -1,0 +1,25 @@
+JunimoGate MonoGame Linking Exception
+
+This file is an additional permission under section 7 of the GNU General
+Public License version 3.
+
+The copyright holders of JunimoGate grant permission to combine or link code
+covered by the JunimoGate project license with the following independent
+module and to copy and distribute the resulting work, provided that the terms
+of the GNU General Public License version 3 are followed for the covered
+JunimoGate code and the license of the independent module is followed for that
+module:
+
+    MonoGame source commit f5d8bfbb4ac9847540b3c898e6237104ee98c149,
+    including the JunimoGate Android package built from that source under the
+    Microsoft Public License and the separately identified MIT-licensed
+    Mono.Xna portions.
+
+An "independent module" is a module which is not derived from or based on
+JunimoGate. This exception does not relicense MonoGame, does not change the
+license of JunimoGate source or modifications to it, and grants no rights to
+Stardew Valley or other commercial game files.
+
+If the identified MonoGame source baseline changes, this exception does not
+automatically extend to the new baseline. The new source and license must be
+reviewed and this file must be updated explicitly.

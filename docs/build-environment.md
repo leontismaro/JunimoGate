@@ -4,6 +4,20 @@ JunimoGate uses C# and .NET for Android. JDK 17 is a build-tool dependency used 
 
 `global.json` requests SDK `9.0.100` with `rollForward: latestFeature`. The reproducible local toolchain currently pins SDK `9.0.118`.
 
+## Host prerequisites
+
+The maintained scripts target a 64-bit Linux host with Bash. A fresh checkout
+needs `git`, `curl`, `unzip`, `tar`, `xz`, `python3`, and standard checksum and
+file utilities. The bootstrap installs the pinned .NET SDK, JDK, Android SDK,
+and Android workload below the repository; system-wide Android or .NET
+installations are not required.
+
+Clone submodules before building:
+
+```bash
+git submodule update --init --recursive
+```
+
 ## Current project-local toolchain
 
 The bootstrap installs into the ignored `.toolchains/` directory and does not modify `/usr/lib64/dotnet`, the system JDK, or global .NET runtime packs.
@@ -43,6 +57,33 @@ JUNIMOGATE_PROXY_URL=http://127.0.0.1:10808 \
 ```
 
 The bootstrap supports resumed downloads, verifies the pinned archive hashes, accepts Android SDK licenses only for the project-local SDK, and installs the Android workload with manifest updates and parallel package installation disabled.
+
+## Build script reference
+
+The supported shell entry points under `build/` are:
+
+| Script | Purpose and typical use |
+|---|---|
+| `bootstrap-android.sh` | Install or repair the pinned repository-local Android toolchain. |
+| `android-env.sh` | Source in an interactive shell to select the local .NET, JDK, Android SDK, NuGet feed, and caches. |
+| `install-android-workload.sh` | Retry only the .NET Android workload installation after bootstrap or network failure. |
+| `build-monogame-android.sh` | Build the pinned public-source MonoGame Android package and verify its managed/native payload. Run once after bootstrap and whenever its pinned inputs change. |
+| `build-harmony-android.sh` | Build the pinned Harmony/MonoMod Android package. `build-android.sh` and `test-host.sh` invoke it when needed. |
+| `build-mono-android.sh` | Prepare the bounded application-local Mono runtime copy. It is normally invoked by `build-android.sh`. |
+| `build-cacheflush.sh` | Build the ARM64 instruction-cache helper. `build-android.sh` invokes it for Android targets. |
+| `build-android.sh <Debug|Release> <app|probe|all>` | Build the selected Android artifact set. |
+| `test-host.sh` | Build the host solution filter and run platform-neutral automated tests. |
+| `report-android-environment.sh` | Write an auditable ignored report of tool versions, paths, hashes, SDK packages, and connected devices. |
+| `verify-android-artifacts.sh` | Check package identity, SDK/ABI/signature properties, and excluded commercial payloads in built APKs. |
+| `run-runtime-probe.sh <Debug|Release>` | Build, install, run, and collect one runtime-probe configuration from a connected device. |
+| `verify-runtime-probe.sh` | Run both Debug and Release runtime-probe configurations. |
+| `verify-game-discovery.sh` | Exercise installed-game discovery on a connected development device. |
+| `verify-game-workspace.sh` | Exercise workspace preparation on a connected development device. |
+| `package-openal-corresponding-source.sh` | Generate the OpenAL corresponding-source archive and checksum required beside a binary release. |
+
+Files named `*-versions.sh`, MSBuild `.targets` files, and Python files in this
+directory are pinned configuration or implementations called by these public
+entry points; they are not separate user workflows.
 
 To retry only the workload step:
 

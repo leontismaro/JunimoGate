@@ -4,9 +4,10 @@ The current repository contains the launcher, preparation pipeline, source-integ
 
 ## Release blockers
 
-- select and apply a project-wide license;
-- resolve OpenAL corresponding-source and relink/replacement obligations;
-- review LGPL combined-work requirements for the SMAPI submodule and packaged dependencies;
+- attach the generated OpenAL corresponding-source bundle to binary releases;
+- package the GPL/LGPL license texts, corresponding source links, and required
+  installation information with binary releases;
+- complete the application-visible license and acknowledgement index;
 - complete production signing and update-channel ownership;
 - review Android dynamic-code and native-library distribution policy;
 - publish the referenced SMAPI submodule commits;
