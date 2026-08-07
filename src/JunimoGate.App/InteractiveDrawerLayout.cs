@@ -11,6 +11,8 @@ namespace JunimoGate.App;
 [Register("org.junimogate.app.InteractiveDrawerLayout")]
 public sealed class InteractiveDrawerLayout : DrawerLayout
 {
+    private const float SwipeStartMinimumDp = 48f;
+    private const float SwipeStartMaximumDp = 320f;
     private bool contentSwipeEnabled;
     private bool remapGesture;
     private bool movementAccepted;
@@ -59,6 +61,16 @@ public sealed class InteractiveDrawerLayout : DrawerLayout
         if (ev is null)
             return base.OnInterceptTouchEvent(ev);
 
+        // A locked, closed drawer must never consume ordinary content taps.
+        // DrawerLayout can still report an intercept while its settle state is
+        // draining, which otherwise drops the bottom-navigation ACTION_UP.
+        if (!contentSwipeEnabled && !IsDrawerOpen(GravityCompat.Start))
+        {
+            if (ev.ActionMasked == MotionEventActions.Down)
+                ResetRemapping();
+            return false;
+        }
+
         PrepareRemapping(ev);
         using var remapped = CreateRemappedEvent(ev);
         var intercepted = base.OnInterceptTouchEvent(remapped ?? ev);
@@ -70,6 +82,13 @@ public sealed class InteractiveDrawerLayout : DrawerLayout
     {
         if (ev is null)
             return base.OnTouchEvent(ev);
+
+        if (!contentSwipeEnabled && !IsDrawerOpen(GravityCompat.Start))
+        {
+            if (ev.ActionMasked == MotionEventActions.Down)
+                ResetRemapping();
+            return false;
+        }
 
         PrepareRemapping(ev);
         using var remapped = CreateRemappedEvent(ev);
@@ -87,8 +106,8 @@ public sealed class InteractiveDrawerLayout : DrawerLayout
                 return;
 
             var density = Resources?.DisplayMetrics?.Density ?? 1f;
-            var minimumX = 48f * density;
-            var maximumX = 190f * density;
+            var minimumX = SwipeStartMinimumDp * density;
+            var maximumX = SwipeStartMaximumDp * density;
             gestureStartX = ev.GetX();
             gestureStartY = ev.GetY();
             gestureDownTime = ev.DownTime;
