@@ -413,14 +413,12 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             "assets/smapi-managed/NVorbis.dll",
             "assets/smapi-managed/Newtonsoft.Json.dll",
             "assets/smapi-managed/Newtonsoft.Json.Bson.dll",
-            "assets/smapi-managed/Pathoschild.Http.Client.dll",
             "assets/smapi-managed/Pintail.dll",
             "assets/smapi-managed/SMAPI.Toolkit.dll",
             "assets/smapi-managed/SMAPI.Toolkit.CoreInterfaces.dll",
             "assets/smapi-managed/SkiaSharp.dll",
             "assets/smapi-managed/StardewModdingAPI.dll",
             "assets/smapi-managed/StbImageWriteSharp.dll",
-            "assets/smapi-managed/System.Net.Http.Formatting.dll",
             "assets/smapi-managed/TMXTile.dll",
             "assets/smapi-managed/TextCopy.dll",
         }
@@ -430,6 +428,15 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             "assets/smapi-managed/StardewModdingAPI.Toolkit.dll",
             "assets/smapi-managed/StardewModdingAPI.Toolkit.CoreInterfaces.dll",
         }
+        excluded_smapi_update_clients = {
+            "pathoschild.http.client",
+            "system.net.http.formatting",
+        }
+        smapi_update_client_payloads = [
+            name
+            for name in archive_names
+            if any(marker in name.casefold() for marker in excluded_smapi_update_clients)
+        ]
         smapi_internal_assets = {
             "assets/smapi-internal/config.json",
             "assets/smapi-internal/metadata.json",
@@ -480,6 +487,7 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
     }
     if expected.require_smapi_host:
         checks["smapiPayloadComplete"] = smapi_payload_complete
+        checks["noSmapiUpdateClientPayloads"] = not smapi_update_client_payloads
         checks["smapiActivityIsolated"] = (
             smapi_activity is not None
             and smapi_activity.get("android:exported") in {"false", "0"}

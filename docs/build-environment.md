@@ -72,6 +72,7 @@ The supported shell entry points under `build/` are:
 | `build-mono-android.sh` | Prepare the bounded application-local Mono runtime copy. It is normally invoked by `build-android.sh`. |
 | `build-cacheflush.sh` | Build the ARM64 instruction-cache helper. `build-android.sh` invokes it for Android targets. |
 | `build-android.sh <Debug|Release> <app|probe|all>` | Build the selected Android artifact set. |
+| `build-production-apk.sh [--sign-only]` | Build and sign the ARM64 Release APK with the pinned JunimoGate release certificate, or sign the current unsigned Release APK. |
 | `test-host.sh` | Build the host solution filter and run platform-neutral automated tests. |
 | `report-android-environment.sh` | Write an auditable ignored report of tool versions, paths, hashes, SDK packages, and connected devices. |
 | `verify-android-artifacts.sh` | Check package identity, SDK/ABI/signature properties, and excluded commercial payloads in built APKs. |
@@ -196,6 +197,56 @@ The verifier checks:
 - absence of known commercial game payload markers.
 
 It writes `artifacts/android/apk-verification.json`. Current builds use an Android development certificate and are not production releases.
+
+## Production signing
+
+Normal `build-android.sh` invocations always retain the Android development
+certificate. They need no private signing input and remain suitable for local
+builds, automated checks, and device development.
+
+The maintainer-only production path receives the protected PKCS12 keystore
+location through a local environment variable. The repository does not define
+or record where that file is stored:
+
+```bash
+export JUNIMOGATE_RELEASE_KEYSTORE="/path/to/junimogate-release.p12"
+```
+
+Keep the file outside the repository. With the variable set in the current
+shell, build and sign in one operation:
+
+```bash
+./build/build-production-apk.sh
+```
+
+The script builds the unsigned ARM64 Release APK before asking for the PKCS12
+password. Password input is hidden and is passed only to `keytool` and
+`apksigner` through a process environment reference; it is not placed in a
+command argument or build log. The script rejects a keystore whose certificate
+does not match the pinned JunimoGate release fingerprint, then verifies the v2
+and v3 signatures and certificate on the completed APK. A version name carrying
+the `-dev` suffix is rejected before signing.
+
+The public release-certificate SHA-256 fingerprint is:
+
+```text
+FA:26:F2:F1:83:F4:BE:61:62:04:23:BF:55:85:81:4A:
+63:AF:05:CA:ED:F6:E3:3D:D7:74:25:A4:28:C8:10:36
+```
+
+When the unsigned Release APK was already built, the private-key holder can do
+only the final signing step:
+
+```bash
+./build/build-production-apk.sh --sign-only
+```
+
+`JUNIMOGATE_RELEASE_KEYSTORE` is required for both modes and should be defined
+only in the maintainer's local shell or protected CI configuration. CI may
+provide `JUNIMOGATE_RELEASE_KEYSTORE_PASSWORD` through a protected secret; do
+not place the password in shell history, tracked files, workflow arguments, or
+logs. Output is written under ignored `artifacts/release/` with a SHA-256
+checksum. This command does not create a tag, GitHub Release, or upload.
 
 ## RuntimeProbe device gate
 

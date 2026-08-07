@@ -11,6 +11,7 @@ using AndroidX.Activity;
 using AndroidX.Core.View;
 using AndroidX.DrawerLayout.Widget;
 using Google.Android.Material.FloatingActionButton;
+using Google.Android.Material.Dialog;
 using Google.Android.Material.Navigation;
 using JunimoGate.Android;
 using JunimoGate.GameHost;
@@ -29,6 +30,9 @@ namespace JunimoGate.App;
     LaunchMode = LaunchMode.SingleTop)]
 public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 {
+    private const string StartupNoticePreferences = "startup_notice";
+    private const string OpenSourceNoticeShownKey = "open_source_notice_shown";
+    private const string OfficialReleasesUrl = "https://github.com/leontismaro/JunimoGate/releases";
     private CancellationTokenSource? lifetimeCancellation;
     private LauncherCoordinator? coordinator;
     private MainShellFragment? mainShell;
@@ -92,6 +96,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         drawerNavigation.NavigationItemSelected += OnDrawerNavigationItemSelected;
         drawerOpen.Click += OnDrawerOpenClicked;
         drawerClose.Click += OnDrawerCloseClicked;
+        ShowOpenSourceNoticeIfNeeded();
 
         lifetimeCancellation = new CancellationTokenSource();
         modManagement = new ModManagementUiSession(AndroidPrivateStorage.GetUserDataRoot(this));
@@ -441,6 +446,35 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
     {
         if (!destroyed)
             mainShell?.OpenEnvironment();
+    }
+
+    private void ShowOpenSourceNoticeIfNeeded()
+    {
+        var preferences = GetSharedPreferences(StartupNoticePreferences, FileCreationMode.Private);
+        if (preferences?.GetBoolean(OpenSourceNoticeShownKey, false) != false)
+            return;
+
+        var dialog = new MaterialAlertDialogBuilder(this);
+        dialog.SetTitle(Resource.String.open_source_notice_title);
+        dialog.SetMessage(Resource.String.open_source_notice_message);
+        dialog.SetNegativeButton(Resource.String.open_source_notice_acknowledge, (_, _) => { });
+        dialog.SetPositiveButton(Resource.String.open_source_notice_official_release, (_, _) => OpenOfficialReleases());
+        dialog.Show();
+
+        preferences.Edit()?.PutBoolean(OpenSourceNoticeShownKey, true)?.Apply();
+    }
+
+    private void OpenOfficialReleases()
+    {
+        try
+        {
+            StartActivity(new Intent(Intent.ActionView, global::Android.Net.Uri.Parse(OfficialReleasesUrl)));
+        }
+        catch (ActivityNotFoundException exception)
+        {
+            Log.Warn("JunimoGate.Launcher", "official-release-browser-unavailable", exception);
+            Toast.MakeText(this, Resource.String.about_browser_unavailable, ToastLength.Long)?.Show();
+        }
     }
 
     private sealed class SystemBarInsetsListener(View drawerContent, View drawerOpen) :

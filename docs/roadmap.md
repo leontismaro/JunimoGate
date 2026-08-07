@@ -7,8 +7,8 @@ The current repository contains the launcher, preparation pipeline, source-integ
 - attach the generated OpenAL corresponding-source bundle to binary releases;
 - package the GPL/LGPL license texts, corresponding source links, and required
   installation information with binary releases;
-- complete the application-visible license and acknowledgement index;
-- complete production signing and update-channel ownership;
+- exercise the pinned production-signing path and establish update-channel
+  ownership for the first public release;
 - review Android dynamic-code and native-library distribution policy;
 - publish the referenced SMAPI submodule commits;
 - verify a clean recursive clone and reproducible release build.

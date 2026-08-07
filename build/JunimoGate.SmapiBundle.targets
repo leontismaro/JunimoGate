@@ -67,10 +67,6 @@
       <AssetPath>smapi-managed/Newtonsoft.Json.Bson.dll</AssetPath>
       <RelativePath>managed/Newtonsoft.Json.Bson.dll</RelativePath>
     </SmapiBundleAsset>
-    <SmapiBundleAsset Include="$(PkgPathoschild_Http_FluentClient)\lib\net5.0\Pathoschild.Http.Client.dll">
-      <AssetPath>smapi-managed/Pathoschild.Http.Client.dll</AssetPath>
-      <RelativePath>managed/Pathoschild.Http.Client.dll</RelativePath>
-    </SmapiBundleAsset>
     <SmapiBundleAsset Include="$(PkgPintail)\lib\net6.0\Pintail.dll">
       <AssetPath>smapi-managed/Pintail.dll</AssetPath>
       <RelativePath>managed/Pintail.dll</RelativePath>
@@ -78,10 +74,6 @@
     <SmapiBundleAsset Include="$(PkgPlatonymous_TMXTile)\lib\net45\TMXTile.dll">
       <AssetPath>smapi-managed/TMXTile.dll</AssetPath>
       <RelativePath>managed/TMXTile.dll</RelativePath>
-    </SmapiBundleAsset>
-    <SmapiBundleAsset Include="$(PkgMicrosoft_AspNet_WebApi_Client)\lib\netstandard2.0\System.Net.Http.Formatting.dll">
-      <AssetPath>smapi-managed/System.Net.Http.Formatting.dll</AssetPath>
-      <RelativePath>managed/System.Net.Http.Formatting.dll</RelativePath>
     </SmapiBundleAsset>
     <SmapiBundleAsset Include="$(PkgSkiaSharp)\lib\net9.0-android35.0\SkiaSharp.dll">
       <AssetPath>smapi-managed/SkiaSharp.dll</AssetPath>

@@ -27,6 +27,24 @@ For each binary release:
 The MonoGame exception is pinned to the reviewed source commit. A MonoGame
 upgrade requires a fresh license review and an explicit exception update.
 
+## APK signing
+
+The production APK is signed explicitly with:
+
+```bash
+./build/build-production-apk.sh
+```
+
+The release keystore and password remain outside the repository. The script
+accepts only the pinned JunimoGate release certificate, signs the unsigned
+Release APK, verifies its v2/v3 signatures, and writes the APK and checksum to
+`artifacts/release/`. It does not publish the result and refuses a `-dev`
+version name. Increment Android's application version and set the display
+version to the matching release tag before signing a public release.
+
+The pinned public certificate SHA-256 fingerprint is
+`FA:26:F2:F1:83:F4:BE:61:62:04:23:BF:55:85:81:4A:63:AF:05:CA:ED:F6:E3:3D:D7:74:25:A4:28:C8:10:36`.
+
 ## OpenAL Soft
 
 MonoGame uses OpenAL Soft as the native audio backend for music, sound effects,

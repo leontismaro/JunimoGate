@@ -69,6 +69,40 @@ The package's license and source repository remain authoritative for its complet
 - license: MIT
 - copyright: Copyright (c) 2008 - 2015 Jb Evain; Copyright (c) 2008 - 2011 Novell, Inc.
 
+## Bundled managed and Android dependencies
+
+The release APK also contains the following runtime dependencies. Their source
+repositories and package metadata remain authoritative; the complete common
+license texts and package-specific notices are available through the
+application's Licenses screen.
+
+- DeepCloner 0.10.4: MIT;
+- HtmlAgilityPack 1.12.1: MIT;
+- Markdig 0.41.1: BSD-2-Clause, with the complete text in
+  [`licenses/Markdig-BSD-2-Clause.txt`](licenses/Markdig-BSD-2-Clause.txt);
+- Microsoft.Extensions.DependencyInjection.Abstractions 7.0.0: MIT;
+- NVorbis 0.10.5: MIT;
+- Newtonsoft.Json 13.0.3 and Newtonsoft.Json.Bson 1.0.2: MIT;
+- Pintail 2.8.1: MIT;
+- Platonymous.TMXTile 1.5.9: MIT;
+- SkiaSharp and SkiaSharp.NativeAssets.Android 4.150.1: MIT with the upstream
+  Skia and incorporated-component notices packaged in the APK;
+- StbImageWriteSharp 1.16.7: public domain;
+- TextCopy 6.2.1: MIT;
+- Microsoft .NET/Mono Android runtime 9.0.17: MIT with the runtime's complete
+  third-party notices packaged in the APK;
+- Microsoft AndroidX, Kotlin, and Material bindings and their transitive
+  runtime packages: MIT for the .NET bindings and Apache-2.0 or the
+  package-identified upstream terms for the bound Android libraries. The
+  binding and Apache-2.0 notices are packaged in the APK.
+
+The Android runtime does not compile or distribute
+`Pathoschild.Http.FluentClient`, `Microsoft.AspNet.WebApi.Client`, or
+`System.Net.Http.Formatting.dll`. Those libraries only support SMAPI's own
+background online update clients, which are disabled in the Android build.
+JunimoGate's application update check is an independent `HttpClient`
+implementation and remains available.
+
 ## Public MonoGame Android runtime provider
 
 `JunimoGate.GameHost` references the ignored, reproducibly generated local package `MonoGame.Framework.Android` version `1.0.0-junimogate.f5d8bf.4`. The package is built by [`build/build-monogame-android.sh`](build/build-monogame-android.sh) from public source only; it does not copy the game-carried MonoGame assembly or OpenAL binary from a commercial APK.
@@ -120,9 +154,12 @@ The public MonoGame source build compiles the following pinned StbSharp source t
 
 Each pinned repository README states that the software is public domain. The tracked notice is [`licenses/StbSharp-PUBLIC-DOMAIN.txt`](licenses/StbSharp-PUBLIC-DOMAIN.txt).
 
-## RuntimeProbe patching and dynamic-method dependencies
+## Harmony and dynamic-method dependencies
 
-`tools/JunimoGate.RuntimeProbe.Core` uses the following fixed NuGet dependencies to test the stock Android runtime. These dependencies are test/probe infrastructure; their licenses do not apply MIT to JunimoGate as a whole.
+JunimoGate bundles the fixed Harmony build used by its Android SMAPI runtime.
+RuntimeProbe and build tooling also use the listed MonoMod dependencies. Their
+licenses apply only to the identified components and do not apply MIT to
+JunimoGate as a whole.
 
 - **Lib.Harmony 2.4.2-junimogate.63**
   - repository: <https://github.com/pardeike/Harmony>

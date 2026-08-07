@@ -62,6 +62,7 @@
     <string name="mods_manage_groups">Manage groups</string>
     <string name="mods_default_group">Default</string>
     <string name="mods_no_mods_group">No Mods</string>
+    <string name="mods_profile_migration_failed">The existing Mods folder could not be added to the group library. The original folder was left unchanged.</string>
     <string name="mod_groups_title">Mod groups</string>
     <string name="mod_groups_description">Choose one group for each launch. A group references exact versions from the global library without copying them.</string>
     <string name="mod_groups_create_action">Create group</string>
@@ -335,6 +336,21 @@
     <string name="about_check_update">Check for updates</string>
     <string name="about_repository">GitHub</string>
     <string name="about_notices">Licenses</string>
+    <string name="about_license_junimogate">JunimoGate - GPL-3.0-only</string>
+    <string name="about_license_exception">JunimoGate MonoGame linking exception</string>
+    <string name="about_license_smapi">JunimoGate-SMAPI - LGPL-3.0-only</string>
+    <string name="about_license_third_party">Third-party notices</string>
+    <string name="about_license_markdig">Markdig - BSD-2-Clause</string>
+    <string name="about_license_monogame">MonoGame - Ms-PL and MIT notice</string>
+    <string name="about_license_openal">OpenAL Soft - LGPL-2.0-or-later</string>
+    <string name="about_license_openal_bsd">OpenAL Soft - BSD-3-Clause portions</string>
+    <string name="about_license_stb">StbSharp - public-domain notice</string>
+    <string name="about_license_dotnet">.NET and Mono runtime - MIT</string>
+    <string name="about_license_dotnet_third_party">.NET runtime third-party notices</string>
+    <string name="about_license_skiasharp">SkiaSharp - MIT</string>
+    <string name="about_license_skiasharp_third_party">SkiaSharp third-party notices</string>
+    <string name="about_license_android">AndroidX and Material bindings - MIT</string>
+    <string name="about_license_android_third_party">AndroidX and Material - Apache-2.0</string>
     <string name="about_read_failed">Version information could not be read.</string>
     <string name="about_update_available_title">Update available</string>
     <string name="about_update_available_message">%1$s is available. Open its GitHub release page?</string>
@@ -342,8 +358,13 @@
     <string name="about_up_to_date">This JunimoGate build is up to date with the latest stable release.</string>
     <string name="about_no_stable_release">No stable JunimoGate release is published yet.</string>
     <string name="about_update_failed">Could not check GitHub for updates.</string>
-    <string name="about_notices_failed">Third-party notices could not be opened.</string>
+    <string name="about_notices_failed">The selected license document could not be opened.</string>
     <string name="about_browser_unavailable">No browser is available to open this link.</string>
+
+    <string name="open_source_notice_title">JunimoGate is free and open source</string>
+    <string name="open_source_notice_message">Official JunimoGate builds are provided free of charge. If you paid to download this app, get the official version from the project\'s GitHub Releases page and report the seller to the platform.</string>
+    <string name="open_source_notice_official_release">Official version</string>
+    <string name="open_source_notice_acknowledge">Got it</string>
 
     <string name="environment_title">Game &amp; runtime</string>
     <string name="environment_settings_summary">Installed game and SMAPI runtime</string>

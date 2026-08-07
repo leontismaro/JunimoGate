@@ -336,6 +336,21 @@
     <string name="about_check_update">检查更新</string>
     <string name="about_repository">GitHub</string>
     <string name="about_notices">开源许可</string>
+    <string name="about_license_junimogate">JunimoGate - GPL-3.0-only</string>
+    <string name="about_license_exception">JunimoGate MonoGame 链接例外</string>
+    <string name="about_license_smapi">JunimoGate-SMAPI - LGPL-3.0-only</string>
+    <string name="about_license_third_party">第三方声明</string>
+    <string name="about_license_markdig">Markdig - BSD-2-Clause</string>
+    <string name="about_license_monogame">MonoGame - Ms-PL 与 MIT 声明</string>
+    <string name="about_license_openal">OpenAL Soft - LGPL-2.0-or-later</string>
+    <string name="about_license_openal_bsd">OpenAL Soft - BSD-3-Clause 部分</string>
+    <string name="about_license_stb">StbSharp - 公共领域声明</string>
+    <string name="about_license_dotnet">.NET 与 Mono 运行时 - MIT</string>
+    <string name="about_license_dotnet_third_party">.NET 运行时第三方声明</string>
+    <string name="about_license_skiasharp">SkiaSharp - MIT</string>
+    <string name="about_license_skiasharp_third_party">SkiaSharp 第三方声明</string>
+    <string name="about_license_android">AndroidX 与 Material 绑定 - MIT</string>
+    <string name="about_license_android_third_party">AndroidX 与 Material - Apache-2.0</string>
     <string name="about_read_failed">无法读取版本信息。</string>
     <string name="about_update_available_title">发现新版本</string>
     <string name="about_update_available_message">%1$s 已发布，是否打开 GitHub Release 页面？</string>
@@ -343,8 +358,13 @@
     <string name="about_up_to_date">当前 JunimoGate 已不低于最新稳定版。</string>
     <string name="about_no_stable_release">JunimoGate 尚未发布稳定版本。</string>
     <string name="about_update_failed">无法通过 GitHub 检查更新。</string>
-    <string name="about_notices_failed">无法打开第三方声明。</string>
+    <string name="about_notices_failed">无法打开所选许可证文档。</string>
     <string name="about_browser_unavailable">没有可用于打开链接的浏览器。</string>
+
+    <string name="open_source_notice_title">JunimoGate 免费且开源</string>
+    <string name="open_source_notice_message">JunimoGate 官方构建版本始终免费提供。如果你通过付费渠道下载了本应用，请前往项目的 GitHub Release 页面获取官方版本，并向相关平台举报违规售卖行为。</string>
+    <string name="open_source_notice_official_release">获取官方版本</string>
+    <string name="open_source_notice_acknowledge">我知道了</string>
 
     <string name="environment_title">游戏与运行环境</string>
     <string name="environment_settings_summary">已安装游戏与 SMAPI 运行环境</string>

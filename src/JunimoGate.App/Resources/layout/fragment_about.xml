@@ -117,7 +117,8 @@
                 android:layout_weight="1"
                 android:minHeight="48dp"
                 android:text="@string/about_notices"
-                app:icon="@drawable/ic_description_24" />
+                app:icon="@drawable/ic_description_24"
+                app:iconGravity="textStart" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

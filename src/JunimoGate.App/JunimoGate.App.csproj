@@ -6,7 +6,7 @@
     <ApplicationId>org.junimogate.app</ApplicationId>
     <ApplicationTitle>JunimoGate</ApplicationTitle>
     <ApplicationVersion>1</ApplicationVersion>
-    <ApplicationDisplayVersion>0.1.0-dev</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
     <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
@@ -23,19 +23,31 @@
   </PropertyGroup>
   <ItemGroup>
     <AndroidAsset Include="../../THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" />
+    <AndroidAsset Include="../../LICENSE" Link="licenses/JunimoGate-GPL-3.0-only.txt" />
+    <AndroidAsset Include="../../LICENSE-EXCEPTION" Link="licenses/JunimoGate-MonoGame-Linking-Exception.txt" />
+    <AndroidAsset Include="../../smapi/LICENSE.txt" Link="licenses/JunimoGate-SMAPI-LGPL-3.0-only.txt" />
+    <AndroidAsset Include="../../licenses/Markdig-BSD-2-Clause.txt" Link="licenses/Markdig-BSD-2-Clause.txt" />
+    <AndroidAsset Include="../../licenses/MonoGame-f5d8bf.txt" Link="licenses/MonoGame-f5d8bf.txt" />
+    <AndroidAsset Include="../../licenses/OpenAL-Soft-1.24.3-COPYING.txt" Link="licenses/OpenAL-Soft-1.24.3-COPYING.txt" />
+    <AndroidAsset Include="../../licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt" Link="licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt" />
+    <AndroidAsset Include="../../licenses/StbSharp-PUBLIC-DOMAIN.txt" Link="licenses/StbSharp-PUBLIC-DOMAIN.txt" />
+    <AndroidAsset Include="$(DOTNET_ROOT)/packs/Microsoft.NETCore.App.Runtime.Mono.android-arm64/9.0.17/LICENSE.TXT" Link="licenses/DotNet-Runtime-MIT.txt" />
+    <AndroidAsset Include="$(DOTNET_ROOT)/packs/Microsoft.NETCore.App.Runtime.Mono.android-arm64/9.0.17/THIRD-PARTY-NOTICES.TXT" Link="licenses/DotNet-Runtime-THIRD-PARTY-NOTICES.txt" />
+    <AndroidAsset Include="$(PkgSkiaSharp)/LICENSE.txt" Link="licenses/SkiaSharp-MIT.txt" />
+    <AndroidAsset Include="$(NuGetPackageRoot)/skiasharp.nativeassets.android/4.150.1/THIRD-PARTY-NOTICES.txt" Link="licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt" />
+    <AndroidAsset Include="$(NuGetPackageRoot)/xamarin.androidx.appcompat/1.7.1.4/LICENSE.md" Link="licenses/AndroidX-Bindings-MIT.txt" />
+    <AndroidAsset Include="$(NuGetPackageRoot)/xamarin.androidx.appcompat/1.7.1.4/THIRD-PARTY-NOTICES.txt" Link="licenses/AndroidX-Apache-2.0.txt" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DeepCloner" Version="0.10.4" GeneratePathProperty="true" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.1" GeneratePathProperty="true" />
     <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.63" GeneratePathProperty="true" />
     <PackageReference Include="Markdig" Version="0.41.1" GeneratePathProperty="true" />
-    <PackageReference Include="Microsoft.AspNet.WebApi.Client" Version="6.0.0" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="7.0.0" GeneratePathProperty="true" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" GeneratePathProperty="true" />
     <PackageReference Include="NVorbis" Version="0.10.5" GeneratePathProperty="true" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
     <PackageReference Include="Newtonsoft.Json.Bson" Version="1.0.2" GeneratePathProperty="true" />
-    <PackageReference Include="Pathoschild.Http.FluentClient" Version="4.4.2" GeneratePathProperty="true" />
     <PackageReference Include="Pintail" Version="2.8.1" GeneratePathProperty="true" />
     <PackageReference Include="Platonymous.TMXTile" Version="1.5.9" GeneratePathProperty="true" NoWarn="NU1701" />
     <PackageReference Include="SkiaSharp" Version="4.150.1" GeneratePathProperty="true" />

@@ -21,6 +21,24 @@ namespace JunimoGate.App;
 public sealed class AboutFragment : Fragment
 {
     private const string RepositoryUrl = "https://github.com/leontismaro/JunimoGate";
+    private static readonly LicenseDocument[] LicenseDocuments =
+    [
+        new(Resource.String.about_license_junimogate, "licenses/JunimoGate-GPL-3.0-only.txt"),
+        new(Resource.String.about_license_exception, "licenses/JunimoGate-MonoGame-Linking-Exception.txt"),
+        new(Resource.String.about_license_smapi, "licenses/JunimoGate-SMAPI-LGPL-3.0-only.txt"),
+        new(Resource.String.about_license_third_party, "THIRD-PARTY-NOTICES.md"),
+        new(Resource.String.about_license_markdig, "licenses/Markdig-BSD-2-Clause.txt"),
+        new(Resource.String.about_license_monogame, "licenses/MonoGame-f5d8bf.txt"),
+        new(Resource.String.about_license_openal, "licenses/OpenAL-Soft-1.24.3-COPYING.txt"),
+        new(Resource.String.about_license_openal_bsd, "licenses/OpenAL-Soft-1.24.3-BSD-3-Clause.txt"),
+        new(Resource.String.about_license_stb, "licenses/StbSharp-PUBLIC-DOMAIN.txt"),
+        new(Resource.String.about_license_dotnet, "licenses/DotNet-Runtime-MIT.txt"),
+        new(Resource.String.about_license_dotnet_third_party, "licenses/DotNet-Runtime-THIRD-PARTY-NOTICES.txt"),
+        new(Resource.String.about_license_skiasharp, "licenses/SkiaSharp-MIT.txt"),
+        new(Resource.String.about_license_skiasharp_third_party, "licenses/SkiaSharp-THIRD-PARTY-NOTICES.txt"),
+        new(Resource.String.about_license_android, "licenses/AndroidX-Bindings-MIT.txt"),
+        new(Resource.String.about_license_android_third_party, "licenses/AndroidX-Apache-2.0.txt"),
+    ];
     private TextView? versions;
     private MaterialButton? updateButton;
     private MaterialButton? repositoryButton;
@@ -28,7 +46,7 @@ public sealed class AboutFragment : Fragment
     private LinearProgressIndicator? progress;
     private CancellationTokenSource? cancellation;
     private LauncherSettingsRepository? settings;
-    private string appVersion = "0.1.0-dev";
+    private string appVersion = "0.0.0-dev";
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_about, container, false)
@@ -190,15 +208,27 @@ public sealed class AboutFragment : Fragment
 
     private void OnNoticesClicked(object? sender, EventArgs eventArgs)
     {
+        var labels = LicenseDocuments
+            .Select(document => GetString(document.TitleResourceId) ?? document.AssetPath)
+            .ToArray();
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.about_notices);
+        dialog.SetItems(labels, (_, eventArgs) => ShowLicense(LicenseDocuments[eventArgs.Which]));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
+        dialog.Show();
+    }
+
+    private void ShowLicense(LicenseDocument document)
+    {
         try
         {
-            using var stream = RequireContext().Assets?.Open("THIRD-PARTY-NOTICES.md")
-                ?? throw new IOException("The third-party notices asset is missing.");
+            using var stream = RequireContext().Assets?.Open(document.AssetPath)
+                ?? throw new IOException("The selected license asset is missing.");
             using var reader = new StreamReader(stream);
-            var notices = reader.ReadToEnd();
+            var text = reader.ReadToEnd();
             var dialog = new MaterialAlertDialogBuilder(RequireContext());
-            dialog.SetTitle(Resource.String.about_notices);
-            dialog.SetMessage(notices);
+            dialog.SetTitle(document.TitleResourceId);
+            dialog.SetMessage(text);
             dialog.SetPositiveButton(global::Android.Resource.String.Ok, (_, _) => { });
             dialog.Show();
         }
@@ -234,4 +264,5 @@ public sealed class AboutFragment : Fragment
         Resources?.GetString(resourceId, arguments)
         ?? throw new InvalidOperationException("The About string resource is unavailable.");
 
+    private sealed record LicenseDocument(int TitleResourceId, string AssetPath);
 }
