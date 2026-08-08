@@ -29,6 +29,8 @@ JunimoGate currently provides:
   connect with other users, exchange ideas, and get community support.
 - Use [GitHub Issues](https://github.com/leontismaro/JunimoGate/issues) to
   report bugs, request features, or submit feedback that needs to be tracked.
+- Visit [LINUX DO](https://linux.do), a community for developers and technology
+  enthusiasts.
 
 ## Acknowledgements
 

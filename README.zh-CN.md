@@ -28,6 +28,7 @@ JunimoGate 当前提供：
   交流、分享想法并获得社区互助。
 - 通过 [GitHub Issues](https://github.com/leontismaro/JunimoGate/issues)
   报告问题、提出功能建议，或提交需要持续跟踪的反馈。
+- 访问 [LINUX DO](https://linux.do)，与开发者和技术爱好者交流。
 
 ## 致谢
 
