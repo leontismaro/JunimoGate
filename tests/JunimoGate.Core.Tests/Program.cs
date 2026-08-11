@@ -1,3 +1,4 @@
+using System.Net;
 using JunimoGate.Core;
 using JunimoGate.Tests;
 using JunimoGate.App;
@@ -7,6 +8,115 @@ var digest2 = Sha256Digest.Parse(new string('2', 64));
 var digest3 = Sha256Digest.Parse(new string('3', 64));
 
 return TestHarness.Run(
+    ("SMAPI logs parse levels, multiline messages, and critical errors", () =>
+    {
+        var parsed = ProductLogParser.ParseSmapi("""
+            [12:00:00 TRACE SMAPI] trace
+            [12:00:01 DEBUG Mod A] debug
+            [12:00:02 INFO  SMAPI] info
+            [12:00:03 ALERT SMAPI] alert
+            [12:00:04 WARN  Mod B] warning
+            [12:00:05 ERROR Mod C] failed
+              at Mod.Entry()
+            [12:00:06 CRITICAL game] crashed
+            """);
+
+        TestHarness.Equal(7, parsed.Entries.Count);
+        TestHarness.Equal(ProductLogLevel.Trace, parsed.Entries[0].Level);
+        TestHarness.Equal(ProductLogLevel.Alert, parsed.Entries[3].Level);
+        TestHarness.Equal("failed\n  at Mod.Entry()", parsed.Entries[5].Message);
+        TestHarness.Equal(1, parsed.WarningCount);
+        TestHarness.Equal(2, parsed.ErrorCount);
+    }),
+    ("SMAPI tail preserves a partial leading continuation", () =>
+    {
+        var parsed = ProductLogParser.ParseSmapi("""
+              at Missing.Header()
+              at Another.Frame()
+            [12:00:01 INFO SMAPI] recovered
+            """);
+
+        TestHarness.Equal(2, parsed.Entries.Count);
+        TestHarness.True(parsed.Entries[0].IsPartial);
+        TestHarness.Equal(ProductLogLevel.Unknown, parsed.Entries[0].Level);
+        TestHarness.True(parsed.Entries[0].Message.Contains("Another.Frame", StringComparison.Ordinal));
+        TestHarness.Equal("recovered", parsed.Entries[1].Message);
+    }),
+    ("SMAPI severity uses headers and folds adjacent repeats", () =>
+    {
+        var parsed = ProductLogParser.ParseSmapi("""
+            [12:00:00 INFO SMAPI] body contains ERROR and WARN
+            [12:00:01 WARN Mod A] repeated
+            [12:00:02 WARN Mod A] repeated
+            """);
+
+        TestHarness.Equal(2, parsed.Entries.Count);
+        TestHarness.Equal(2, parsed.Entries[1].RepeatCount);
+        TestHarness.Equal(2, parsed.WarningCount);
+        TestHarness.Equal(0, parsed.ErrorCount);
+    }),
+    ("Product JSONL skips malformed tails and keeps exceptions", () =>
+    {
+        var parsed = ProductLogParser.ParseJsonLines("""
+            partial-json
+            {"timestampUtc":"2026-08-11T12:00:00+00:00","level":"warn","process":"launcher","tag":"JunimoGate.Test","message":"warning","exception":"System.Exception: details"}
+            {"timestampUtc":"2026-08-11T12:00:01+00:00","level":"error","process":"launcher","tag":"JunimoGate.Test","message":"failed","exception":null}
+            """);
+
+        TestHarness.Equal(2, parsed.Entries.Count);
+        TestHarness.Equal("JunimoGate.Test", parsed.Entries[0].Source);
+        TestHarness.True(parsed.Entries[0].Message.Contains("System.Exception: details", StringComparison.Ordinal));
+        TestHarness.Equal(1, parsed.WarningCount);
+        TestHarness.Equal(1, parsed.ErrorCount);
+    }),
+    ("SMAPI upload accepts only canonical HTTPS log URLs", () =>
+    {
+        var endpoint = new Uri("https://smapi.io/log");
+        TestHarness.Equal(
+            "https://smapi.io/log/abc_123",
+            SmapiLogUploadClient.TryResolveLogUri(endpoint, new Uri("/log/abc_123", UriKind.Relative), null)!.AbsoluteUri);
+        TestHarness.Equal(
+            "https://smapi.io/log/xyz-9",
+            SmapiLogUploadClient.TryResolveLogUri(endpoint, null, "view https://smapi.io/log/xyz-9 now")!.AbsoluteUri);
+        TestHarness.True(SmapiLogUploadClient.TryResolveLogUri(endpoint, new Uri("http://smapi.io/log/id"), null) is null);
+        TestHarness.True(SmapiLogUploadClient.TryResolveLogUri(endpoint, new Uri("https://example.com/log/id"), null) is null);
+        TestHarness.True(SmapiLogUploadClient.TryResolveLogUri(endpoint, new Uri("https://smapi.io/log"), null) is null);
+        TestHarness.True(SmapiLogUploadClient.TryResolveLogUri(endpoint, new Uri("https://smapi.io/log/id/extra"), null) is null);
+    }),
+    ("SMAPI upload posts the input field and accepts a canonical redirect", () =>
+    {
+        using var client = new SmapiLogUploadClient(new StubHttpMessageHandler(request =>
+        {
+            TestHarness.Equal("https://smapi.io/log", request.RequestUri!.AbsoluteUri);
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            TestHarness.True(body.StartsWith("input=", StringComparison.Ordinal));
+            var response = new HttpResponseMessage(HttpStatusCode.Redirect);
+            response.Headers.Location = new Uri("/log/synthetic_1", UriKind.Relative);
+            return response;
+        }));
+
+        var result = client.UploadAsync("[12:00:00 INFO SMAPI] synthetic", CancellationToken.None)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal("https://smapi.io/log/synthetic_1", result.AbsoluteUri);
+    }),
+    ("SMAPI upload rejects server errors and missing result links", () =>
+    {
+        using var serverError = new SmapiLogUploadClient(new StubHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            response.Headers.Location = new Uri("/log/must_not_pass", UriKind.Relative);
+            return response;
+        }));
+        TestHarness.Throws<HttpRequestException>(() => serverError
+            .UploadAsync("[12:00:00 INFO SMAPI] synthetic", CancellationToken.None)
+            .AsTask().GetAwaiter().GetResult());
+
+        using var missingLink = new SmapiLogUploadClient(new StubHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("no result") }));
+        TestHarness.Throws<HttpRequestException>(() => missingLink
+            .UploadAsync("[12:00:00 INFO SMAPI] synthetic", CancellationToken.None)
+            .AsTask().GetAwaiter().GetResult());
+    }),
     ("Update comparison promotes an equal stable release over a dev build", () =>
     {
         TestHarness.True(GitHubUpdateService.IsNewerStableVersion("0.1.0-dev", "v0.1.0"));
@@ -331,4 +441,11 @@ sealed class RuntimeInventoryFixture : IDisposable
     }
 
     public void Dispose() => Directory.Delete(Root, recursive: true);
+}
+
+sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken) => Task.FromResult(response(request));
 }

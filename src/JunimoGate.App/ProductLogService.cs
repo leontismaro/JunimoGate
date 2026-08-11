@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Text;
 using Android.Content;
 using Android.Text.Format;
 using JunimoGate.Android;
@@ -17,6 +17,7 @@ internal enum ProductLogKind
 
 internal enum ProductLogGeneration
 {
+    Crash,
     Current,
     Previous,
 }
@@ -29,6 +30,7 @@ internal sealed record ProductLogSource(
 
 internal sealed record ProductLogDocument(
     string Text,
+    IReadOnlyList<ProductLogEntry> Entries,
     long AvailableBytes,
     int DisplayedBytes,
     bool IsTruncated,
@@ -63,6 +65,8 @@ internal sealed class ProductLogService
                 new(kind, generation, "game-previous.txt", Path.Combine(productLogs, "game-previous.jsonl")),
             (ProductLogKind.Smapi, ProductLogGeneration.Current) =>
                 new(kind, generation, "smapi-current.txt", Path.Combine(gameLogs, "SMAPI-latest.txt")),
+            (ProductLogKind.Smapi, ProductLogGeneration.Crash) =>
+                new(kind, generation, "smapi-crash.txt", Path.Combine(gameLogs, "SMAPI-crash.txt")),
             (ProductLogKind.Smapi, ProductLogGeneration.Previous) =>
                 new(kind, generation, "smapi-previous.txt", Path.Combine(productLogs, "smapi-previous.txt")),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
@@ -80,14 +84,60 @@ internal sealed class ProductLogService
             source.Path,
             MaximumDisplayBytes,
             cancellationToken).ConfigureAwait(false);
-        var (warnings, errors) = CountSeverity(text, kind != ProductLogKind.Smapi);
+        var parsed = kind == ProductLogKind.Smapi
+            ? ProductLogParser.ParseSmapi(text)
+            : ProductLogParser.ParseJsonLines(text);
         return new ProductLogDocument(
             text,
+            parsed.Entries,
             available,
             System.Text.Encoding.UTF8.GetByteCount(text),
             available > MaximumDisplayBytes,
-            warnings,
-            errors);
+            parsed.WarningCount,
+            parsed.ErrorCount);
+    }
+
+    public ProductLogGeneration GetPreferredSmapiGeneration() =>
+        File.Exists(GetSource(ProductLogKind.Smapi, ProductLogGeneration.Crash).Path)
+            ? ProductLogGeneration.Crash
+            : ProductLogGeneration.Current;
+
+    public bool IsAvailable(ProductLogKind kind, ProductLogGeneration generation) =>
+        GetLength(GetSource(kind, generation).Path) > 0;
+
+    public async ValueTask<string> ReadFullTextAsync(
+        ProductLogKind kind,
+        ProductLogGeneration generation,
+        CancellationToken cancellationToken)
+    {
+        var source = GetSource(kind, generation);
+        if (!File.Exists(source.Path))
+            return string.Empty;
+        await using var stream = OpenSource(source.Path);
+        using var reader = new StreamReader(stream, new UTF8Encoding(false), true, 16 * 1024, leaveOpen: false);
+        return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask CopyFullLogAsync(
+        ProductLogKind kind,
+        ProductLogGeneration generation,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        if (!Path.IsPathFullyQualified(destinationPath))
+            throw new ArgumentException("The log destination path must be absolute.", nameof(destinationPath));
+        var source = GetSource(kind, generation);
+        await using var input = OpenSource(source.Path);
+        await using var output = new FileStream(
+            destinationPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            16 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public DiagnosticBundlePreview PreviewDiagnosticBundle() =>
@@ -149,45 +199,21 @@ internal sealed class ProductLogService
     }
 
     private IReadOnlyList<DiagnosticTextSource> GetDiagnosticSources() =>
-        Enum.GetValues<ProductLogKind>()
-            .SelectMany(kind => Enum.GetValues<ProductLogGeneration>()
-                .Select(generation => GetSource(kind, generation)))
+        new[]
+        {
+            GetSource(ProductLogKind.Launcher, ProductLogGeneration.Current),
+            GetSource(ProductLogKind.Launcher, ProductLogGeneration.Previous),
+            GetSource(ProductLogKind.GameHost, ProductLogGeneration.Current),
+            GetSource(ProductLogKind.GameHost, ProductLogGeneration.Previous),
+            GetSource(ProductLogKind.Smapi, ProductLogGeneration.Crash),
+            GetSource(ProductLogKind.Smapi, ProductLogGeneration.Current),
+            GetSource(ProductLogKind.Smapi, ProductLogGeneration.Previous),
+        }
             .Select(static source => new DiagnosticTextSource(
                 source.EntryName,
                 source.Path,
                 MaximumDiagnosticBytes))
             .ToArray();
-
-    private static (int Warnings, int Errors) CountSeverity(string text, bool jsonLines)
-    {
-        var warnings = 0;
-        var errors = 0;
-        foreach (var line in text.Split('\n'))
-        {
-            if (jsonLines)
-            {
-                try
-                {
-                    using var json = JsonDocument.Parse(line);
-                    if (!json.RootElement.TryGetProperty("level", out var level))
-                        continue;
-                    if (level.ValueEquals("error"))
-                        errors++;
-                    else if (level.ValueEquals("warn"))
-                        warnings++;
-                }
-                catch (JsonException)
-                {
-                    // A bounded tail may start after a partial JSON line; raw display remains authoritative.
-                }
-            }
-            else if (line.Contains("ERROR", StringComparison.OrdinalIgnoreCase))
-                errors++;
-            else if (line.Contains("WARN", StringComparison.OrdinalIgnoreCase))
-                warnings++;
-        }
-        return (warnings, errors);
-    }
 
     private static long GetLength(string path)
     {
@@ -201,6 +227,14 @@ internal sealed class ProductLogService
             return 0;
         }
     }
+
+    private static FileStream OpenSource(string path) => new(
+        path,
+        FileMode.Open,
+        FileAccess.Read,
+        FileShare.ReadWrite | FileShare.Delete,
+        16 * 1024,
+        FileOptions.Asynchronous | FileOptions.SequentialScan);
 
     private static long GetLongVersionCode(global::Android.Content.PM.PackageInfo package)
     {

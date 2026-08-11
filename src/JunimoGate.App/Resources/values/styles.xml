@@ -102,6 +102,16 @@
         <item name="android:minHeight">@dimen/junimo_touch_target</item>
     </style>
 
+    <style name="JunimoGate.Button.LogSegment" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">@dimen/junimo_touch_target</item>
+        <item name="android:paddingLeft">3dp</item>
+        <item name="android:paddingRight">3dp</item>
+        <item name="android:insetLeft">0dp</item>
+        <item name="android:insetRight">0dp</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+
     <style name="JunimoGate.Switch" parent="Widget.Material3.CompoundButton.MaterialSwitch" />
 
     <style name="JunimoGate.TextInput.Filled" parent="Widget.Material3.TextInputLayout.FilledBox">
