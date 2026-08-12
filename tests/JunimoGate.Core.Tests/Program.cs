@@ -25,6 +25,9 @@ return TestHarness.Run(
         TestHarness.Equal(ProductLogLevel.Trace, parsed.Entries[0].Level);
         TestHarness.Equal(ProductLogLevel.Alert, parsed.Entries[3].Level);
         TestHarness.Equal("failed\n  at Mod.Entry()", parsed.Entries[5].Message);
+        TestHarness.Equal(
+            "[12:00:05 ERROR Mod C] failed\n  at Mod.Entry()",
+            parsed.Entries[5].RawText);
         TestHarness.Equal(1, parsed.WarningCount);
         TestHarness.Equal(2, parsed.ErrorCount);
     }),
@@ -40,6 +43,9 @@ return TestHarness.Run(
         TestHarness.True(parsed.Entries[0].IsPartial);
         TestHarness.Equal(ProductLogLevel.Unknown, parsed.Entries[0].Level);
         TestHarness.True(parsed.Entries[0].Message.Contains("Another.Frame", StringComparison.Ordinal));
+        TestHarness.Equal(
+            "  at Missing.Header()\n  at Another.Frame()",
+            parsed.Entries[0].RawText);
         TestHarness.Equal("recovered", parsed.Entries[1].Message);
     }),
     ("SMAPI severity uses headers and folds adjacent repeats", () =>
@@ -52,6 +58,9 @@ return TestHarness.Run(
 
         TestHarness.Equal(2, parsed.Entries.Count);
         TestHarness.Equal(2, parsed.Entries[1].RepeatCount);
+        TestHarness.Equal(
+            "[12:00:01 WARN Mod A] repeated\n[12:00:02 WARN Mod A] repeated",
+            parsed.Entries[1].RawText);
         TestHarness.Equal(2, parsed.WarningCount);
         TestHarness.Equal(0, parsed.ErrorCount);
     }),
@@ -65,6 +74,7 @@ return TestHarness.Run(
 
         TestHarness.Equal(2, parsed.Entries.Count);
         TestHarness.Equal("JunimoGate.Test", parsed.Entries[0].Source);
+        TestHarness.True(parsed.Entries[0].RawText.StartsWith("{\"timestampUtc\"", StringComparison.Ordinal));
         TestHarness.True(parsed.Entries[0].Message.Contains("System.Exception: details", StringComparison.Ordinal));
         TestHarness.Equal(1, parsed.WarningCount);
         TestHarness.Equal(1, parsed.ErrorCount);

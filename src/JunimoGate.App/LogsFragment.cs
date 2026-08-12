@@ -419,8 +419,6 @@ public sealed class LogsFragment : Fragment
             Activity?.RunOnUiThread(() =>
             {
                 currentDocument = document;
-                if (rawContent is not null)
-                    rawContent.Text = document.Text;
                 if (document.Text.Length > 0 && document.Entries.Count == 0)
                     rawMode = true;
                 UpdateSummary(document);
@@ -464,6 +462,12 @@ public sealed class LogsFragment : Fragment
                 item.Entry.Message.Contains(query, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         adapter?.Submit(filtered);
+        if (rawContent is not null)
+        {
+            rawContent.Text = entries.Count == 0 || selectedFilter == ProductLogFilter.All && query.Length == 0
+                ? currentDocument?.Text ?? string.Empty
+                : string.Join('\n', filtered.Select(static item => item.Entry.RawText));
+        }
         UpdateContentViews(filtered.Length);
     }
 
@@ -479,14 +483,15 @@ public sealed class LogsFragment : Fragment
     private void UpdateContentViews(int? filteredCount = null)
     {
         var hasText = currentDocument?.Text.Length > 0;
+        var hasRawText = rawContent?.Text?.Length > 0;
         var count = filteredCount ?? adapter?.ItemCount ?? 0;
         if (rawScroll is not null)
-            rawScroll.Visibility = rawMode && hasText ? ViewStates.Visible : ViewStates.Gone;
+            rawScroll.Visibility = rawMode && hasRawText ? ViewStates.Visible : ViewStates.Gone;
         if (list is not null)
             list.Visibility = !rawMode && count > 0 ? ViewStates.Visible : ViewStates.Gone;
         if (empty is not null)
         {
-            var showEmpty = rawMode ? !hasText : count == 0;
+            var showEmpty = rawMode ? !hasRawText : count == 0;
             empty.Visibility = showEmpty ? ViewStates.Visible : ViewStates.Gone;
             empty.SetText(hasText ? Resource.String.logs_no_matches : Resource.String.logs_empty);
         }

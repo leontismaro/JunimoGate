@@ -20,6 +20,7 @@ public sealed record ProductLogEntry(
     ProductLogLevel Level,
     string Source,
     string Message,
+    string RawText,
     bool IsPartial = false,
     int RepeatCount = 1);
 
@@ -43,12 +44,17 @@ public static partial class ProductLogParser
                     match.Groups["time"].Value,
                     ParseLevel(match.Groups["level"].Value),
                     match.Groups["source"].Value.Trim(),
-                    match.Groups["message"].Value));
+                    match.Groups["message"].Value,
+                    rawLine));
             }
             else if (entries.Count > 0)
             {
                 var previous = entries[^1];
-                entries[^1] = previous with { Message = AppendLine(previous.Message, rawLine) };
+                entries[^1] = previous with
+                {
+                    Message = AppendLine(previous.Message, rawLine),
+                    RawText = AppendLine(previous.RawText, rawLine),
+                };
             }
             else
             {
@@ -56,6 +62,7 @@ public static partial class ProductLogParser
                     string.Empty,
                     ProductLogLevel.Unknown,
                     string.Empty,
+                    rawLine,
                     rawLine,
                     IsPartial: true));
             }
@@ -90,7 +97,8 @@ public static partial class ProductLogParser
                     GetJsonTime(root),
                     ParseLevel(level),
                     source ?? string.Empty,
-                    message));
+                    message,
+                    line));
             }
             catch (JsonException)
             {
@@ -117,7 +125,11 @@ public static partial class ProductLogParser
             if (collapsed.Count > 0 && IsSameMessage(collapsed[^1], entry))
             {
                 var previous = collapsed[^1];
-                collapsed[^1] = previous with { RepeatCount = previous.RepeatCount + 1 };
+                collapsed[^1] = previous with
+                {
+                    RawText = AppendLine(previous.RawText, entry.RawText),
+                    RepeatCount = previous.RepeatCount + entry.RepeatCount,
+                };
             }
             else
                 collapsed.Add(entry);
