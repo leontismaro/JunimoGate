@@ -129,6 +129,23 @@ return TestHarness.Run(
         TestHarness.Throws<InvalidDataException>(() =>
             GitHubUpdateService.IsNewerStableVersion("development", "latest"));
     }),
+    ("Mod document picker requests broad access with ZIP hints", () =>
+    {
+        TestHarness.Equal("*/*", ModDocumentPickerPolicy.RequestMimeType);
+        TestHarness.True(ModDocumentPickerPolicy.AcceptedMimeTypes.SequenceEqual(new[]
+        {
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/octet-stream",
+        }));
+    }),
+    ("Mod document picker resolves exactly one returned document", () =>
+    {
+        TestHarness.Equal("direct", ModDocumentPickerPolicy.ResolveSingleDocument("direct", "clip", 1));
+        TestHarness.Equal("clip", ModDocumentPickerPolicy.ResolveSingleDocument<string>(null, "clip", 1));
+        TestHarness.True(ModDocumentPickerPolicy.ResolveSingleDocument<string>(null, null, 0) is null);
+        TestHarness.True(ModDocumentPickerPolicy.ResolveSingleDocument<string>(null, "clip", 2) is null);
+    }),
     ("Sha256Digest accepts canonical lowercase hex", () =>
     {
         var text = new string('a', Sha256Digest.HexLength);

@@ -7,6 +7,8 @@ using Android.Runtime;
 using Android.Text.Format;
 using Android.Views;
 using Android.Widget;
+using AndroidX.Activity.Result;
+using AndroidX.Activity.Result.Contract;
 using AndroidX.RecyclerView.Widget;
 using Google.Android.Material.AppBar;
 using Google.Android.Material.Button;
@@ -26,8 +28,8 @@ namespace JunimoGate.App;
 [Register("org.junimogate.app.ModsFragment")]
 public sealed class ModsFragment : Fragment
 {
-    private const int ImportArchiveRequestCode = 4701;
     private const int ExportBundleRequestCode = 4702;
+    private ActivityResultLauncher? importArchiveLauncher;
     private MaterialButton? importButton;
     private MaterialButton? batchButton;
     private View? batchBar;
@@ -56,6 +58,14 @@ public sealed class ModsFragment : Fragment
     private string? pendingExportBundleId;
     private int actualComponentCount;
     private bool busy;
+
+    public override void OnCreate(Bundle? savedInstanceState)
+    {
+        base.OnCreate(savedInstanceState);
+        importArchiveLauncher = RegisterForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ImportArchiveResultCallback(HandleImportArchiveResult));
+    }
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_mods, container, false)
@@ -190,7 +200,7 @@ public sealed class ModsFragment : Fragment
         base.OnDestroyView();
     }
 
-#pragma warning disable CS0618, CS0672 // Fragment activity-result API is scoped to this lifecycle and retains no external path.
+#pragma warning disable CS0618, CS0672 // Export still uses the legacy API; Mod import uses Activity Result below.
     public override void OnActivityResult(int requestCode, int resultCode, Intent? data)
     {
         base.OnActivityResult(requestCode, resultCode, data);
@@ -198,11 +208,9 @@ public sealed class ModsFragment : Fragment
             pendingExportBundleId = null;
         if (resultCode != (int)Result.Ok || data?.Data is not { } uri)
             return;
-        if (cancellation is not { IsCancellationRequested: false } lifetime)
-            return;
-        if (requestCode == ImportArchiveRequestCode)
-            _ = ScanArchiveAsync(uri, lifetime.Token);
-        else if (requestCode == ExportBundleRequestCode && pendingExportBundleId is { } bundleId)
+        if (requestCode == ExportBundleRequestCode &&
+            cancellation is { IsCancellationRequested: false } lifetime &&
+            pendingExportBundleId is { } bundleId)
         {
             pendingExportBundleId = null;
             _ = ExportBundleAsync(uri, bundleId, lifetime.Token);
@@ -216,16 +224,61 @@ public sealed class ModsFragment : Fragment
             return;
         var intent = new Intent(Intent.ActionOpenDocument);
         intent.AddCategory(Intent.CategoryOpenable);
-        intent.SetType("application/zip");
-        intent.PutExtra(Intent.ExtraMimeTypes, new[]
+        intent.SetType(ModDocumentPickerPolicy.RequestMimeType);
+        intent.PutExtra(Intent.ExtraMimeTypes, ModDocumentPickerPolicy.AcceptedMimeTypes.ToArray());
+        intent.AddFlags(ActivityFlags.GrantReadUriPermission);
+        if (importArchiveLauncher is null)
         {
-            "application/zip",
-            "application/x-zip-compressed",
-            "application/octet-stream",
-        });
-#pragma warning disable CS0618 // See OnActivityResult; SAF grants only the selected document stream.
-        StartActivityForResult(intent, ImportArchiveRequestCode);
-#pragma warning restore CS0618
+            Log.Error("JunimoGate.Mods", "archive-picker-launcher-unavailable");
+            ShowMessage(Resource.String.mods_picker_unavailable);
+            return;
+        }
+        try
+        {
+            importArchiveLauncher.Launch(intent);
+            Log.Info("JunimoGate.Mods", "archive-picker-launched");
+        }
+        catch (Exception exception) when (exception is ActivityNotFoundException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "archive-picker-launch-failed", exception);
+            ShowMessage(Resource.String.mods_picker_unavailable);
+        }
+    }
+
+    private void HandleImportArchiveResult(ActivityResult result)
+    {
+        if (result.ResultCode != (int)Result.Ok)
+        {
+            Log.Info("JunimoGate.Mods", $"archive-picker-cancelled resultCode={result.ResultCode}");
+            return;
+        }
+
+        var uri = GetSingleDocumentUri(result.Data);
+        if (uri is null)
+        {
+            Log.Warn("JunimoGate.Mods", "archive-picker-empty-result");
+            if (IsAdded)
+                ShowMessage(Resource.String.mods_picker_empty_result);
+            return;
+        }
+
+        if (cancellation is not { IsCancellationRequested: false } lifetime)
+        {
+            Log.Warn("JunimoGate.Mods", "archive-picker-result-ignored lifecycle=inactive");
+            return;
+        }
+
+        Log.Info("JunimoGate.Mods", "archive-picker-document-received");
+        _ = ScanArchiveAsync(uri, lifetime.Token);
+    }
+
+    private static global::Android.Net.Uri? GetSingleDocumentUri(Intent? data)
+    {
+        var clipData = data?.ClipData;
+        return ModDocumentPickerPolicy.ResolveSingleDocument(
+            data?.Data,
+            clipData?.ItemCount == 1 ? clipData.GetItemAt(0)?.Uri : null,
+            clipData?.ItemCount ?? 0);
     }
 
     private void OnSearchChanged(object? sender, SearchView.QueryTextChangeEventArgs eventArgs)
@@ -408,19 +461,31 @@ public sealed class ModsFragment : Fragment
         {
             // Leaving the screen cancels the app-private staging transaction.
         }
+        catch (Java.Lang.Exception exception)
+        {
+            Log.Error(
+                "JunimoGate.Mods",
+                $"archive-provider-access-failed exception={exception.GetType().Name}");
+            await FinishArchiveScanFailureAsync().ConfigureAwait(false);
+        }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException)
         {
             Log.Error("JunimoGate.Mods", "archive-scan-failed", exception);
-            await DisposePendingAsync().ConfigureAwait(false);
-            if (IsAdded)
+            await FinishArchiveScanFailureAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask FinishArchiveScanFailureAsync()
+    {
+        await DisposePendingAsync().ConfigureAwait(false);
+        if (IsAdded)
+        {
+            Activity?.RunOnUiThread(() =>
             {
-                Activity?.RunOnUiThread(() =>
-                {
-                    SetBusy(false);
-                    ShowMessage(Resource.String.mods_import_failed);
-                });
-            }
+                SetBusy(false);
+                ShowMessage(Resource.String.mods_import_failed);
+            });
         }
     }
 
@@ -1125,12 +1190,45 @@ public sealed class ModsFragment : Fragment
                     return cursor.GetString(index);
             }
         }
+        catch (Exception exception) when (exception is InvalidOperationException or Java.Lang.Exception)
+        {
+            Log.Warn(
+                "JunimoGate.Mods",
+                $"archive-display-name-unavailable exception={exception.GetType().Name}");
+        }
         finally
         {
-            cursor?.Close();
-            cursor?.Dispose();
+            TryCloseCursor(cursor);
         }
         return null;
+    }
+
+    private static void TryCloseCursor(ICursor? cursor)
+    {
+        if (cursor is null)
+            return;
+        try
+        {
+            cursor.Close();
+            cursor.Dispose();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Java.Lang.Exception)
+        {
+            Log.Warn(
+                "JunimoGate.Mods",
+                $"archive-display-name-cursor-close-failed exception={exception.GetType().Name}");
+        }
+    }
+
+    private sealed class ImportArchiveResultCallback(Action<ActivityResult> callback) :
+        Java.Lang.Object,
+        IActivityResultCallback
+    {
+        public void OnActivityResult(Java.Lang.Object? result)
+        {
+            if (result is ActivityResult activityResult)
+                callback(activityResult);
+        }
     }
 
     private void OnModManagementChanged(object? sender, ModManagementChangedEventArgs eventArgs)
