@@ -43,6 +43,7 @@ public sealed class ModsFragment : Fragment
     private View? searchTools;
     private SearchView? search;
     private TextView? inventoryCount;
+    private TextView? importProgressStatus;
     private LinearProgressIndicator? progress;
     private TextView? empty;
     private ModLibraryAdapter? adapter;
@@ -56,6 +57,8 @@ public sealed class ModsFragment : Fragment
     private LauncherSettings? launcherSettings;
     private CancellationTokenSource? cancellation;
     private IModArchiveInstallTransaction? pendingTransaction;
+    private IReadOnlyList<PendingImportDocument> pendingImportDocuments = Array.Empty<PendingImportDocument>();
+    private int pendingImportDocumentIndex;
     private string? pendingExportBundleId;
     private int actualComponentCount;
     private bool busy;
@@ -101,6 +104,8 @@ public sealed class ModsFragment : Fragment
             ?? throw new InvalidOperationException("The Mod search input is unavailable.");
         inventoryCount = view.FindViewById<TextView>(Resource.Id.mods_inventory_count)
             ?? throw new InvalidOperationException("The Mod inventory count is unavailable.");
+        importProgressStatus = view.FindViewById<TextView>(Resource.Id.mods_import_progress_status)
+            ?? throw new InvalidOperationException("The Mod import progress status is unavailable.");
         empty = view.FindViewById<TextView>(Resource.Id.mods_empty)
             ?? throw new InvalidOperationException("The Mod empty state is unavailable.");
         list = view.FindViewById<RecyclerView>(Resource.Id.mods_list)
@@ -152,6 +157,8 @@ public sealed class ModsFragment : Fragment
         var pending = Interlocked.Exchange(ref pendingTransaction, null);
         if (pending is not null)
             _ = pending.DisposeAsync();
+        pendingImportDocuments = Array.Empty<PendingImportDocument>();
+        pendingImportDocumentIndex = 0;
         if (modManagement is not null)
             modManagement.Changed -= OnModManagementChanged;
         modManagement = null;
@@ -194,6 +201,7 @@ public sealed class ModsFragment : Fragment
         batchDoneButton = null;
         search = null;
         inventoryCount = null;
+        importProgressStatus = null;
         progress = null;
         empty = null;
         list = null;
@@ -228,6 +236,7 @@ public sealed class ModsFragment : Fragment
         intent.AddCategory(Intent.CategoryOpenable);
         intent.SetType(ModDocumentPickerPolicy.RequestMimeType);
         intent.PutExtra(Intent.ExtraMimeTypes, ModDocumentPickerPolicy.AcceptedMimeTypes.ToArray());
+        intent.PutExtra(Intent.ExtraAllowMultiple, true);
         intent.AddFlags(ActivityFlags.GrantReadUriPermission);
         if (importArchiveLauncher is null)
         {
@@ -255,8 +264,8 @@ public sealed class ModsFragment : Fragment
             return;
         }
 
-        var uri = GetSingleDocumentUri(result.Data);
-        if (uri is null)
+        var documents = GetDocumentUris(result.Data);
+        if (documents.Count == 0)
         {
             Log.Warn("JunimoGate.Mods", "archive-picker-empty-result");
             if (IsAdded)
@@ -270,17 +279,22 @@ public sealed class ModsFragment : Fragment
             return;
         }
 
-        Log.Info("JunimoGate.Mods", "archive-picker-document-received");
-        _ = ScanArchiveAsync(uri, lifetime.Token);
+        pendingImportDocuments = documents
+            .Select(uri => new PendingImportDocument(uri, ReadDisplayName(uri)))
+            .ToArray();
+        pendingImportDocumentIndex = 0;
+        Log.Info("JunimoGate.Mods", $"archive-picker-documents-received count={documents.Count}");
+        ScanNextImportDocument(lifetime.Token);
     }
 
-    private static global::Android.Net.Uri? GetSingleDocumentUri(Intent? data)
+    private static IReadOnlyList<global::Android.Net.Uri> GetDocumentUris(Intent? data)
     {
         var clipData = data?.ClipData;
-        return ModDocumentPickerPolicy.ResolveSingleDocument(
+        var clipItems = Enumerable.Range(0, clipData?.ItemCount ?? 0)
+            .Select(index => clipData?.GetItemAt(index)?.Uri);
+        return ModDocumentPickerPolicy.ResolveDocuments(
             data?.Data,
-            clipData?.ItemCount == 1 ? clipData.GetItemAt(0)?.Uri : null,
-            clipData?.ItemCount ?? 0);
+            clipItems);
     }
 
     private void OnSearchChanged(object? sender, SearchView.QueryTextChangeEventArgs eventArgs)
@@ -447,6 +461,8 @@ public sealed class ModsFragment : Fragment
         if (repository is null)
             return;
         SetBusy(true);
+        if (IsAdded)
+            Activity?.RunOnUiThread(RenderImportProgress);
         try
         {
             await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
@@ -485,8 +501,8 @@ public sealed class ModsFragment : Fragment
         {
             Activity?.RunOnUiThread(() =>
             {
-                SetBusy(false);
                 ShowMessage(Resource.String.mods_import_failed);
+                ContinueImportBatch();
             });
         }
     }
@@ -499,23 +515,23 @@ public sealed class ModsFragment : Fragment
         {
             var detail = FormatIssues(scan.Issues);
             _ = DisposePendingAsync();
-            SetBusy(false);
             var rejectedDialog = new MaterialAlertDialogBuilder(RequireContext());
-            rejectedDialog.SetTitle(Resource.String.mods_archive_rejected);
+            rejectedDialog.SetTitle(FormatImportDialogTitle(Resource.String.mods_archive_rejected));
             rejectedDialog.SetMessage(detail);
-            rejectedDialog.SetPositiveButton(global::Android.Resource.String.Ok, (_, _) => { });
+            rejectedDialog.SetPositiveButton(
+                pendingImportDocuments.Count > 1 ? Resource.String.mods_import_skip : global::Android.Resource.String.Ok,
+                (_, _) => _ = SkipCurrentImportAsync());
+            rejectedDialog.SetOnCancelListener(new DialogCancelListener(() => _ = EndImportBatchAsync()));
             rejectedDialog.Show();
             return;
         }
 
         var confirmDialog = new MaterialAlertDialogBuilder(RequireContext());
-        confirmDialog.SetTitle(Resource.String.mods_import_confirm_title);
+        confirmDialog.SetTitle(FormatImportDialogTitle(Resource.String.mods_import_confirm_title));
         confirmDialog.SetMessage(FormatScanConfirmation(scan));
-        confirmDialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
-        {
-            _ = DisposePendingAsync();
-            SetBusy(false);
-        });
+        confirmDialog.SetNegativeButton(
+            pendingImportDocuments.Count > 1 ? Resource.String.mods_import_skip : global::Android.Resource.String.Cancel,
+            (_, _) => _ = SkipCurrentImportAsync());
         confirmDialog.SetPositiveButton(Resource.String.mods_import_action, (_, _) =>
         {
             if (cancellation is { IsCancellationRequested: false } lifetime)
@@ -523,8 +539,7 @@ public sealed class ModsFragment : Fragment
         });
         confirmDialog.SetOnCancelListener(new DialogCancelListener(() =>
         {
-            _ = DisposePendingAsync();
-            SetBusy(false);
+            _ = EndImportBatchAsync();
         }));
         confirmDialog.Show();
     }
@@ -572,9 +587,9 @@ public sealed class ModsFragment : Fragment
             {
                 Activity?.RunOnUiThread(() =>
                 {
-                    SetBusy(false);
                     var count = result.AllItems.Count;
                     ShowMessage(FormatImportResult(count, assignment, assignmentFailed));
+                    ContinueImportBatch();
                 });
             }
         }
@@ -591,8 +606,8 @@ public sealed class ModsFragment : Fragment
             {
                 Activity?.RunOnUiThread(() =>
                 {
-                    SetBusy(false);
                     ShowMessage(Resource.String.mods_import_failed);
+                    ContinueImportBatch();
                 });
             }
         }
@@ -1281,6 +1296,94 @@ public sealed class ModsFragment : Fragment
             await pending.DisposeAsync().ConfigureAwait(false);
     }
 
+    private PendingImportDocument? CurrentImportDocument =>
+        pendingImportDocumentIndex >= 0 && pendingImportDocumentIndex < pendingImportDocuments.Count
+            ? pendingImportDocuments[pendingImportDocumentIndex]
+            : null;
+
+    private void ScanNextImportDocument(CancellationToken cancellationToken)
+    {
+        if (CurrentImportDocument is not { } document)
+        {
+            ClearImportBatch();
+            SetBusy(false);
+            return;
+        }
+        _ = ScanArchiveAsync(document.Uri, cancellationToken);
+    }
+
+    private void ContinueImportBatch()
+    {
+        pendingImportDocumentIndex++;
+        if (cancellation is { IsCancellationRequested: false } lifetime && CurrentImportDocument is not null)
+        {
+            ScanNextImportDocument(lifetime.Token);
+            return;
+        }
+        ClearImportBatch();
+        SetBusy(false);
+    }
+
+    private async Task SkipCurrentImportAsync()
+    {
+        await DisposePendingAsync().ConfigureAwait(false);
+        if (IsAdded)
+            Activity?.RunOnUiThread(ContinueImportBatch);
+    }
+
+    private async Task EndImportBatchAsync()
+    {
+        await DisposePendingAsync().ConfigureAwait(false);
+        if (!IsAdded)
+            return;
+        Activity?.RunOnUiThread(() =>
+        {
+            ClearImportBatch();
+            SetBusy(false);
+        });
+    }
+
+    private void ClearImportBatch()
+    {
+        pendingImportDocuments = Array.Empty<PendingImportDocument>();
+        pendingImportDocumentIndex = 0;
+        if (importProgressStatus is not null)
+            importProgressStatus.Visibility = ViewStates.Gone;
+        if (progress is not null)
+        {
+            progress.Indeterminate = true;
+            progress.Max = 100;
+            progress.Progress = 0;
+        }
+    }
+
+    private void RenderImportProgress()
+    {
+        if (CurrentImportDocument is not { } document || importProgressStatus is null || progress is null)
+            return;
+        importProgressStatus.Text = FormatString(
+            Resource.String.mods_import_progress,
+            Java.Lang.Integer.ValueOf(pendingImportDocumentIndex + 1),
+            Java.Lang.Integer.ValueOf(pendingImportDocuments.Count),
+            new JString(document.DisplayName ?? GetString(Resource.String.value_unavailable)));
+        importProgressStatus.Visibility = ViewStates.Visible;
+        progress.Indeterminate = false;
+        progress.Max = Math.Max(1, pendingImportDocuments.Count);
+        progress.Progress = pendingImportDocumentIndex;
+    }
+
+    private string FormatImportDialogTitle(int titleResourceId)
+    {
+        if (pendingImportDocuments.Count <= 1 || CurrentImportDocument is not { } document)
+            return GetString(titleResourceId);
+        return FormatString(
+            Resource.String.mods_import_batch_title,
+            new JString(GetString(titleResourceId)),
+            Java.Lang.Integer.ValueOf(pendingImportDocumentIndex + 1),
+            Java.Lang.Integer.ValueOf(pendingImportDocuments.Count),
+            new JString(document.DisplayName ?? GetString(Resource.String.value_unavailable)));
+    }
+
     private void SetBusy(bool value)
     {
         busy = value;
@@ -1310,6 +1413,8 @@ public sealed class ModsFragment : Fragment
     {
         public void OnCancel(IDialogInterface? dialog) => onCancel();
     }
+
+    private sealed record PendingImportDocument(global::Android.Net.Uri Uri, string? DisplayName);
 }
 
 internal sealed class ModLibraryAdapter(

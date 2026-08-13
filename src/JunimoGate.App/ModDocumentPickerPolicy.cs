@@ -11,11 +11,18 @@ internal static class ModDocumentPickerPolicy
         "application/octet-stream",
     ];
 
-    public static T? ResolveSingleDocument<T>(T? direct, T? singleClipItem, int clipItemCount)
+    public static IReadOnlyList<T> ResolveDocuments<T>(T? direct, IEnumerable<T?> clipItems)
         where T : class
     {
-        if (direct is not null)
-            return direct;
-        return clipItemCount == 1 ? singleClipItem : null;
+        var result = new List<T>();
+        var seen = new HashSet<T>();
+        if (direct is not null && seen.Add(direct))
+            result.Add(direct);
+        foreach (var item in clipItems)
+        {
+            if (item is not null && seen.Add(item))
+                result.Add(item);
+        }
+        return result;
     }
 }

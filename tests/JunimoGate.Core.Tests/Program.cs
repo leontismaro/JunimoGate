@@ -149,12 +149,15 @@ return TestHarness.Run(
             "application/octet-stream",
         }));
     }),
-    ("Mod document picker resolves exactly one returned document", () =>
+    ("Mod document picker resolves direct and multiple returned documents", () =>
     {
-        TestHarness.Equal("direct", ModDocumentPickerPolicy.ResolveSingleDocument("direct", "clip", 1));
-        TestHarness.Equal("clip", ModDocumentPickerPolicy.ResolveSingleDocument<string>(null, "clip", 1));
-        TestHarness.True(ModDocumentPickerPolicy.ResolveSingleDocument<string>(null, null, 0) is null);
-        TestHarness.True(ModDocumentPickerPolicy.ResolveSingleDocument<string>(null, "clip", 2) is null);
+        TestHarness.True(ModDocumentPickerPolicy.ResolveDocuments("direct", new[] { "clip-a", "clip-b" })
+            .SequenceEqual(new[] { "direct", "clip-a", "clip-b" }));
+        TestHarness.True(ModDocumentPickerPolicy.ResolveDocuments<string>(null, new[] { "clip-a", null, "clip-b" })
+            .SequenceEqual(new[] { "clip-a", "clip-b" }));
+        TestHarness.True(ModDocumentPickerPolicy.ResolveDocuments("same", new[] { "same", "other", "same" })
+            .SequenceEqual(new[] { "same", "other" }));
+        TestHarness.Equal(0, ModDocumentPickerPolicy.ResolveDocuments<string>(null, Array.Empty<string>()).Count);
     }),
     ("Sha256Digest accepts canonical lowercase hex", () =>
     {

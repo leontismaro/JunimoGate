@@ -168,6 +168,9 @@
     <string name="mods_inventory_count">%1$d items · %2$d Mods</string>
     <string name="mods_inventory_filtered_count">Showing %1$d / %2$d items · %3$d Mods</string>
     <string name="mods_import_confirm_title">Import these Mods?</string>
+    <string name="mods_import_batch_title">%1$s · %2$d/%3$d\n%4$s</string>
+    <string name="mods_import_progress">Processing %1$d / %2$d: %3$s</string>
+    <string name="mods_import_skip">Skip</string>
     <string name="mods_import_more">…and %1$d more</string>
     <string name="mods_import_has_warnings">The archive has compatibility notices. You can still import it.</string>
     <string name="mods_import_more_errors">…and more errors</string>

@@ -64,6 +64,20 @@
             android:textColor="?attr/colorOnSurfaceVariant"
             app:layout_scrollFlags="scroll|enterAlways" />
 
+        <TextView
+            android:id="@+id/mods_import_progress_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="middle"
+            android:maxLines="2"
+            android:paddingStart="16dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp"
+            android:textAppearance="?attr/textAppearanceLabelMedium"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/mods_batch_bar"
             android:layout_width="match_parent"

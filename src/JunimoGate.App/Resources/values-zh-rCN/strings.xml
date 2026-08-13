@@ -168,6 +168,9 @@
     <string name="mods_inventory_count">%1$d 项 · %2$d 个 Mod</string>
     <string name="mods_inventory_filtered_count">显示 %1$d / %2$d 项 · 共 %3$d 个 Mod</string>
     <string name="mods_import_confirm_title">导入这些 Mod？</string>
+    <string name="mods_import_batch_title">%1$s · 第 %2$d/%3$d 个\n%4$s</string>
+    <string name="mods_import_progress">正在处理第 %1$d / %2$d 个：%3$s</string>
+    <string name="mods_import_skip">跳过</string>
     <string name="mods_import_more">……以及另外 %1$d 个</string>
     <string name="mods_import_has_warnings">压缩包包含兼容性提示，仍可继续导入。</string>
     <string name="mods_import_more_errors">……以及更多错误</string>
