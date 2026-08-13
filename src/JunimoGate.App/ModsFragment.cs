@@ -30,7 +30,9 @@ namespace JunimoGate.App;
 public sealed class ModsFragment : Fragment
 {
     private const int ExportBundleRequestCode = 4702;
+    private const string PendingTranslationTargetState = "mods.pendingTranslationTarget";
     private ActivityResultLauncher? importArchiveLauncher;
+    private ActivityResultLauncher? translationArchiveLauncher;
     private MaterialButton? importButton;
     private MaterialButton? batchButton;
     private View? batchBar;
@@ -59,6 +61,9 @@ public sealed class ModsFragment : Fragment
     private IModArchiveInstallTransaction? pendingTransaction;
     private IReadOnlyList<PendingImportDocument> pendingImportDocuments = Array.Empty<PendingImportDocument>();
     private int pendingImportDocumentIndex;
+    private ModTranslationInstallTransaction? pendingTranslationTransaction;
+    private ModManagementItem? pendingTranslationTarget;
+    private string? pendingTranslationTargetItemId;
     private string? pendingExportBundleId;
     private int actualComponentCount;
     private bool busy;
@@ -66,9 +71,20 @@ public sealed class ModsFragment : Fragment
     public override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        pendingTranslationTargetItemId = savedInstanceState?.GetString(PendingTranslationTargetState);
         importArchiveLauncher = RegisterForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             new ImportArchiveResultCallback(HandleImportArchiveResult));
+        translationArchiveLauncher = RegisterForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ImportArchiveResultCallback(HandleTranslationArchiveResult));
+    }
+
+    public override void OnSaveInstanceState(Bundle outState)
+    {
+        base.OnSaveInstanceState(outState);
+        if (pendingTranslationTargetItemId is { } itemId)
+            outState.PutString(PendingTranslationTargetState, itemId);
     }
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
@@ -115,6 +131,7 @@ public sealed class ModsFragment : Fragment
             FormatItemMetadata,
             ShowDetails,
             RequestFiles,
+            RequestTranslation,
             RequestAddToGroup,
             RequestDelete,
             RequestExport,
@@ -159,6 +176,10 @@ public sealed class ModsFragment : Fragment
             _ = pending.DisposeAsync();
         pendingImportDocuments = Array.Empty<PendingImportDocument>();
         pendingImportDocumentIndex = 0;
+        var pendingTranslation = Interlocked.Exchange(ref pendingTranslationTransaction, null);
+        if (pendingTranslation is not null)
+            _ = pendingTranslation.DisposeAsync();
+        pendingTranslationTarget = null;
         if (modManagement is not null)
             modManagement.Changed -= OnModManagementChanged;
         modManagement = null;
@@ -287,6 +308,256 @@ public sealed class ModsFragment : Fragment
         ScanNextImportDocument(lifetime.Token);
     }
 
+    private void RequestTranslation(ModManagementItem item)
+    {
+        if (busy || repository is null || cancellation is not { IsCancellationRequested: false } lifetime)
+            return;
+        _ = ShowTranslationActionsAsync(item, lifetime.Token);
+    }
+
+    private async Task ShowTranslationActionsAsync(
+        ModManagementItem item,
+        CancellationToken cancellationToken)
+    {
+        if (repository is null)
+            return;
+        SetBusy(true);
+        try
+        {
+            var installations = await repository.ListTranslationInstallationsAsync(
+                    item.Members.Select(member => member.LibraryItemId).ToArray(),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!IsAdded || cancellationToken.IsCancellationRequested)
+                return;
+            Activity?.RunOnUiThread(() =>
+            {
+                SetBusy(false);
+                ShowTranslationManagement(item, installations);
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            Log.Error("JunimoGate.Mods", "translation-list-failed", exception);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => { SetBusy(false); ShowMessage(Resource.String.mod_translation_manage_failed); });
+        }
+    }
+
+    private void LaunchTranslationPicker(ModManagementItem item)
+    {
+        pendingTranslationTarget = item;
+        pendingTranslationTargetItemId = item.ItemId;
+        var intent = new Intent(Intent.ActionOpenDocument);
+        intent.AddCategory(Intent.CategoryOpenable);
+        intent.SetType(ModDocumentPickerPolicy.RequestMimeType);
+        intent.PutExtra(Intent.ExtraMimeTypes, ModDocumentPickerPolicy.AcceptedMimeTypes.ToArray());
+        intent.AddFlags(ActivityFlags.GrantReadUriPermission);
+        if (translationArchiveLauncher is null)
+        {
+            pendingTranslationTarget = null;
+            pendingTranslationTargetItemId = null;
+            ShowMessage(Resource.String.mods_picker_unavailable);
+            return;
+        }
+        try
+        {
+            translationArchiveLauncher.Launch(intent);
+            Log.Info("JunimoGate.Mods", "translation-picker-launched");
+        }
+        catch (Exception exception) when (exception is ActivityNotFoundException or InvalidOperationException)
+        {
+            pendingTranslationTarget = null;
+            pendingTranslationTargetItemId = null;
+            Log.Error("JunimoGate.Mods", "translation-picker-launch-failed", exception);
+            ShowMessage(Resource.String.mods_picker_unavailable);
+        }
+    }
+
+    private void ShowTranslationManagement(
+        ModManagementItem item,
+        IReadOnlyList<ModTranslationInstallationSummary> installations)
+    {
+        var view = LayoutInflater.From(RequireContext())?.Inflate(Resource.Layout.dialog_mod_translation_manage, null)
+            ?? throw new InvalidOperationException("The translation management layout could not be created.");
+        var install = view.FindViewById<MaterialButton>(Resource.Id.mod_translation_install_new)
+            ?? throw new InvalidOperationException("The translation install action is unavailable.");
+        var emptyState = view.FindViewById<TextView>(Resource.Id.mod_translation_empty)
+            ?? throw new InvalidOperationException("The translation empty state is unavailable.");
+        var list = view.FindViewById<LinearLayout>(Resource.Id.mod_translation_installations)
+            ?? throw new InvalidOperationException("The translation installation list is unavailable.");
+        emptyState.Visibility = installations.Count == 0 ? ViewStates.Visible : ViewStates.Gone;
+
+        AndroidX.AppCompat.App.AlertDialog? shownDialog = null;
+        install.Click += (_, _) =>
+        {
+            shownDialog?.Dismiss();
+            LaunchTranslationPicker(item);
+        };
+        foreach (var installation in installations)
+        {
+            var row = new LinearLayout(RequireContext())
+            {
+                Orientation = Orientation.Horizontal,
+            };
+            row.SetGravity(GravityFlags.CenterVertical);
+            var rowPadding = (int)Math.Round(6 * RequireContext().Resources!.DisplayMetrics!.Density);
+            row.SetPadding(0, rowPadding, 0, rowPadding);
+            var label = new TextView(RequireContext())
+            {
+                Text = FormatString(
+                    Resource.String.mod_translation_installation_item,
+                    new JString(installation.SourceArchiveName ?? GetString(Resource.String.value_unavailable)),
+                    new JString(FormatDateTime(installation.InstalledAtUtc)),
+                    Java.Lang.Integer.ValueOf(installation.FileCount)),
+            };
+            label.SetTextAppearance(Resource.Style.JunimoGate_Text_Meta);
+            row.AddView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1));
+            var restore = new MaterialButton(RequireContext())
+            {
+                Text = GetString(Resource.String.mod_translation_restore_action),
+                ContentDescription = GetString(Resource.String.mod_translation_restore_action),
+            };
+            restore.SetIconResource(Resource.Drawable.ic_refresh_24);
+            restore.Click += (_, _) =>
+            {
+                shownDialog?.Dismiss();
+                ShowTranslationRestoreConfirmation(item, installations, installation);
+            };
+            row.AddView(restore, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WrapContent,
+                ViewGroup.LayoutParams.WrapContent));
+            list.AddView(row);
+        }
+
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_manage_title);
+        dialog.SetView(view);
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
+        shownDialog = dialog.Show();
+    }
+
+    private void ShowTranslationRestoreConfirmation(
+        ModManagementItem item,
+        IReadOnlyList<ModTranslationInstallationSummary> installations,
+        ModTranslationInstallationSummary installation)
+    {
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_restore_title);
+        dialog.SetMessage(FormatString(
+            Resource.String.mod_translation_restore_message,
+            new JString(installation.SourceArchiveName ?? GetString(Resource.String.value_unavailable)),
+            new JString(FormatDateTime(installation.InstalledAtUtc)),
+            Java.Lang.Integer.ValueOf(installation.FileCount)));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
+            ShowTranslationManagement(item, installations));
+        dialog.SetPositiveButton(Resource.String.mod_translation_restore_action, (_, _) =>
+        {
+            if (cancellation is { IsCancellationRequested: false } lifetime)
+                _ = RestoreTranslationAsync(
+                    installation.InstallationId,
+                    installation.AffectedLibraryItemIds,
+                    lifetime.Token);
+        });
+        dialog.Show();
+    }
+
+    private async Task RestoreTranslationAsync(
+        string installationId,
+        IReadOnlyList<string> affectedLibraryItemIds,
+        CancellationToken cancellationToken)
+    {
+        if (repository is null)
+            return;
+        SetBusy(true);
+        try
+        {
+            if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
+            {
+                if (IsAdded)
+                    Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
+                return;
+            }
+            var result = await repository.RestoreTranslationAsync(installationId, cancellationToken).ConfigureAwait(false);
+            modManagement?.NotifyLibraryChanged();
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() => ShowMessage(FormatString(
+                    Resource.String.mod_translation_restored,
+                    Java.Lang.Integer.ValueOf(result.RestoredFiles))));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
+        {
+            Log.Error("JunimoGate.Mods", "translation-restore-failed", exception);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_failed));
+        }
+        finally
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => SetBusy(false));
+        }
+    }
+
+    private void HandleTranslationArchiveResult(ActivityResult result)
+    {
+        if (result.ResultCode != (int)Result.Ok)
+        {
+            pendingTranslationTarget = null;
+            pendingTranslationTargetItemId = null;
+            return;
+        }
+        var uri = GetSingleDocumentUri(result.Data);
+        var targetItemId = pendingTranslationTargetItemId;
+        if (uri is null || targetItemId is null)
+        {
+            pendingTranslationTarget = null;
+            pendingTranslationTargetItemId = null;
+            ShowMessage(Resource.String.mod_translation_picker_failed);
+            return;
+        }
+        if (cancellation is { IsCancellationRequested: false } lifetime)
+            _ = ResolveTranslationTargetAndScanAsync(uri, targetItemId, lifetime.Token);
+    }
+
+    private async Task ResolveTranslationTargetAndScanAsync(
+        global::Android.Net.Uri uri,
+        string targetItemId,
+        CancellationToken cancellationToken)
+    {
+        if (repository is null)
+            return;
+        try
+        {
+            var index = modManagement is null
+                ? await repository.ReadAsync(cancellationToken).ConfigureAwait(false)
+                : await modManagement.GetLibraryAsync(cancellationToken).ConfigureAwait(false);
+            var target = ModManagementProjection.Create(index).Items.SingleOrDefault(item => item.ItemId == targetItemId)
+                ?? throw new KeyNotFoundException("The selected translation target no longer exists.");
+            pendingTranslationTarget = target;
+            await ScanTranslationAsync(uri, target, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or KeyNotFoundException)
+        {
+            Log.Error("JunimoGate.Mods", "translation-target-resolution-failed", exception);
+            pendingTranslationTarget = null;
+            pendingTranslationTargetItemId = null;
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_picker_failed));
+        }
+    }
+
     private static IReadOnlyList<global::Android.Net.Uri> GetDocumentUris(Intent? data)
     {
         var clipData = data?.ClipData;
@@ -296,6 +567,9 @@ public sealed class ModsFragment : Fragment
             data?.Data,
             clipItems);
     }
+
+    private static global::Android.Net.Uri? GetSingleDocumentUri(Intent? data) =>
+        GetDocumentUris(data) is { Count: 1 } documents ? documents[0] : null;
 
     private void OnSearchChanged(object? sender, SearchView.QueryTextChangeEventArgs eventArgs)
     {
@@ -461,12 +735,11 @@ public sealed class ModsFragment : Fragment
         if (repository is null)
             return;
         SetBusy(true);
-        if (IsAdded)
-            Activity?.RunOnUiThread(RenderImportProgress);
+        RenderImportProgress();
         try
         {
             await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
-            var transaction = repository.CreateInstallTransaction(ReadDisplayName(uri));
+            var transaction = repository.CreateInstallTransaction(CurrentImportDocument?.DisplayName ?? ReadDisplayName(uri));
             pendingTransaction = transaction;
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected Mod archive could not be opened.");
@@ -514,7 +787,6 @@ public sealed class ModsFragment : Fragment
         if (!scan.CanCommit)
         {
             var detail = FormatIssues(scan.Issues);
-            _ = DisposePendingAsync();
             var rejectedDialog = new MaterialAlertDialogBuilder(RequireContext());
             rejectedDialog.SetTitle(FormatImportDialogTitle(Resource.String.mods_archive_rejected));
             rejectedDialog.SetMessage(detail);
@@ -613,6 +885,297 @@ public sealed class ModsFragment : Fragment
         }
     }
 
+    private async Task ScanTranslationAsync(
+        global::Android.Net.Uri uri,
+        ModManagementItem target,
+        CancellationToken cancellationToken)
+    {
+        if (repository is null)
+            return;
+        SetBusy(true);
+        try
+        {
+            await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
+            var originalRoots = target.Bundle?.Members.ToDictionary(
+                member => member.LibraryItemId,
+                member => member.OriginalRootPath,
+                StringComparer.Ordinal) ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            var targets = target.Members.Select(item => ModTranslationTarget.FromLibraryItem(
+                item,
+                originalRoots.TryGetValue(item.LibraryItemId, out var root) ? root : null)).ToArray();
+            var transaction = repository.CreateTranslationTransaction(targets, ReadDisplayName(uri));
+            pendingTranslationTransaction = transaction;
+            await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
+                ?? throw new IOException("The selected translation archive could not be opened.");
+            await transaction.ScanAsync(stream, cancellationToken).ConfigureAwait(false);
+            if (!IsAdded || cancellationToken.IsCancellationRequested)
+                return;
+            Activity?.RunOnUiThread(() => ShowTranslationScanResult(transaction, target));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Java.Lang.Exception exception)
+        {
+            Log.Error("JunimoGate.Mods", "translation-provider-access-failed", exception);
+            await FinishTranslationFailureAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
+        {
+            Log.Error("JunimoGate.Mods", "translation-scan-failed", exception);
+            await FinishTranslationFailureAsync().ConfigureAwait(false);
+        }
+    }
+
+    private void ShowTranslationScanResult(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target)
+    {
+        if (!ReferenceEquals(transaction, pendingTranslationTransaction) || transaction.ScanResult is not { } scan)
+            return;
+        if (!scan.CanCommit && scan.Files.Count == 0)
+        {
+            var message = FormatTranslationIssues(scan.Issues);
+            _ = DisposePendingTranslationAsync();
+            SetBusy(false);
+            ShowDialog(Resource.String.mod_translation_rejected, message);
+            return;
+        }
+        if (scan.UnmappedFiles.Count > 0)
+        {
+            ShowUnmappedTranslationDialog(transaction, target);
+            return;
+        }
+        ShowTranslationConfirmation(transaction, target, ignoredFiles: 0);
+    }
+
+    private void ShowUnmappedTranslationDialog(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target)
+    {
+        var scan = transaction.ScanResult!;
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_unmapped_title);
+        dialog.SetMessage(GetString(Resource.String.mod_translation_unmapped_message, scan.UnmappedFiles.Count));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
+        {
+            _ = DisposePendingTranslationAsync();
+            SetBusy(false);
+        });
+        dialog.SetNeutralButton(Resource.String.mod_translation_ignore_action, (_, _) =>
+            ShowTranslationConfirmation(transaction, target, scan.UnmappedFiles.Count));
+        dialog.SetPositiveButton(Resource.String.mod_translation_map_action, (_, _) =>
+            ShowTranslationSourcePicker(transaction, target));
+        dialog.SetOnCancelListener(new DialogCancelListener(() =>
+        {
+            _ = DisposePendingTranslationAsync();
+            SetBusy(false);
+        }));
+        dialog.Show();
+    }
+
+    private void ShowTranslationSourcePicker(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target)
+    {
+        var roots = GetUnmappedSourceRoots(transaction.ScanResult!.UnmappedFiles);
+        var labels = roots.Select(root => root.Length == 0 ? "/" : root).ToArray();
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_choose_source);
+        dialog.SetItems(labels, (_, eventArgs) =>
+        {
+            var source = roots[eventArgs.Which];
+            if (target.Members.Count == 1)
+                ShowTranslationMappingDialog(transaction, target, source, target.Members[0]);
+            else
+                ShowTranslationTargetPicker(transaction, target, source);
+        });
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => ShowUnmappedTranslationDialog(transaction, target));
+        dialog.Show();
+    }
+
+    private void ShowTranslationTargetPicker(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target,
+        string source)
+    {
+        var members = target.Members.OrderBy(item => item.Manifest.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        var labels = members.Select(item => $"{item.Manifest.Name} {item.Manifest.Version}").ToArray();
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_choose_target);
+        dialog.SetItems(labels, (_, eventArgs) =>
+            ShowTranslationMappingDialog(transaction, target, source, members[eventArgs.Which]));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => ShowTranslationSourcePicker(transaction, target));
+        dialog.Show();
+    }
+
+    private void ShowTranslationMappingDialog(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target,
+        string source,
+        ModLibraryItem member)
+    {
+        var view = LayoutInflater.From(RequireContext())?.Inflate(
+            Resource.Layout.dialog_mod_translation_mapping, null, false)
+            ?? throw new InvalidOperationException("The translation mapping layout is unavailable.");
+        view.FindViewById<TextView>(Resource.Id.mod_translation_mapping_source)!.Text = FormatString(
+            Resource.String.mod_translation_mapping_source,
+            new JString(source.Length == 0 ? "/" : source),
+            new JString(member.Manifest.Name));
+        var directory = view.FindViewById<EditText>(Resource.Id.mod_translation_mapping_directory)!;
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_mapping_title);
+        dialog.SetView(view);
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => ShowTranslationSourcePicker(transaction, target));
+        dialog.SetPositiveButton(global::Android.Resource.String.Ok, (_, _) =>
+        {
+            if (cancellation is { IsCancellationRequested: false } lifetime)
+                _ = ApplyTranslationMappingAsync(transaction, target, source, member.LibraryItemId, directory.Text, lifetime.Token);
+        });
+        dialog.Show();
+    }
+
+    private async Task ApplyTranslationMappingAsync(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target,
+        string source,
+        string libraryItemId,
+        string? targetDirectory,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await transaction.MapUnmappedAsync(source, libraryItemId, targetDirectory, cancellationToken)
+                .ConfigureAwait(false);
+            if (!IsAdded || cancellationToken.IsCancellationRequested)
+                return;
+            Activity?.RunOnUiThread(() => ShowTranslationScanResult(transaction, target));
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          InvalidOperationException or ArgumentException)
+        {
+            Log.Error("JunimoGate.Mods", "translation-manual-mapping-failed", exception);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(Resource.String.mod_translation_mapping_failed);
+                    ShowUnmappedTranslationDialog(transaction, target);
+                });
+            }
+        }
+    }
+
+    private void ShowTranslationConfirmation(
+        ModTranslationInstallTransaction transaction,
+        ModManagementItem target,
+        int ignoredFiles)
+    {
+        var scan = transaction.ScanResult!;
+        if (!scan.CanCommit)
+        {
+            _ = DisposePendingTranslationAsync();
+            SetBusy(false);
+            ShowDialog(Resource.String.mod_translation_rejected, FormatTranslationIssues(scan.Issues));
+            return;
+        }
+        var lines = new List<string>
+        {
+            FormatString(Resource.String.mod_translation_confirm_summary,
+                new JString(target.DisplayName),
+                Java.Lang.Integer.ValueOf(scan.AddedFiles),
+                Java.Lang.Integer.ValueOf(scan.ReplacedFiles),
+                Java.Lang.Integer.ValueOf(ignoredFiles)),
+        };
+        foreach (var diagnostic in scan.LocaleDiagnostics)
+        {
+            lines.Add(FormatString(Resource.String.mod_translation_locale_summary,
+                new JString(diagnostic.TargetPath),
+                Java.Lang.Integer.ValueOf(diagnostic.MatchingKeys),
+                Java.Lang.Integer.ValueOf(diagnostic.MissingKeys),
+                Java.Lang.Integer.ValueOf(diagnostic.UnknownKeys)));
+        }
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_translation_confirm_title);
+        dialog.SetMessage(string.Join("\n\n", lines));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
+        {
+            _ = DisposePendingTranslationAsync();
+            SetBusy(false);
+        });
+        dialog.SetPositiveButton(Resource.String.mod_translation_install_action, (_, _) =>
+        {
+            if (cancellation is { IsCancellationRequested: false } lifetime)
+                _ = CommitTranslationAsync(transaction, lifetime.Token);
+        });
+        dialog.SetOnCancelListener(new DialogCancelListener(() =>
+        {
+            _ = DisposePendingTranslationAsync();
+            SetBusy(false);
+        }));
+        dialog.Show();
+    }
+
+    private async Task CommitTranslationAsync(
+        ModTranslationInstallTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
+            {
+                await DisposePendingTranslationAsync().ConfigureAwait(false);
+                if (IsAdded)
+                {
+                    Activity?.RunOnUiThread(() =>
+                    {
+                        ShowMessage(Resource.String.mod_translation_game_running);
+                        SetBusy(false);
+                    });
+                }
+                return;
+            }
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            var result = transaction.InstallResult
+                ?? throw new InvalidDataException("The translation installation result is missing.");
+            Interlocked.CompareExchange(ref pendingTranslationTransaction, null, transaction);
+            pendingTranslationTarget = null;
+            pendingTranslationTargetItemId = null;
+            await transaction.DisposeAsync().ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    SetBusy(false);
+                    ShowMessage(FormatString(
+                        Resource.String.mod_translation_installed,
+                        Java.Lang.Integer.ValueOf(result.AddedFiles),
+                        Java.Lang.Integer.ValueOf(result.ReplacedFiles)));
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await DisposePendingTranslationAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
+        {
+            Log.Error("JunimoGate.Mods", "translation-install-failed", exception);
+            await DisposePendingTranslationAsync().ConfigureAwait(false);
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => { SetBusy(false); ShowMessage(Resource.String.mod_translation_install_failed); });
+        }
+    }
+
+    private async ValueTask FinishTranslationFailureAsync()
+    {
+        await DisposePendingTranslationAsync().ConfigureAwait(false);
+        if (IsAdded)
+            Activity?.RunOnUiThread(() => { SetBusy(false); ShowMessage(Resource.String.mod_translation_scan_failed); });
+    }
+
     private async Task RefreshAsync(CancellationToken cancellationToken)
     {
         if (repository is null)
@@ -623,9 +1186,10 @@ public sealed class ModsFragment : Fragment
             var index = modManagement is null
                 ? await repository.ReadAsync(cancellationToken).ConfigureAwait(false)
                 : await modManagement.GetLibraryAsync(cancellationToken).ConfigureAwait(false);
+            var translatedItemIds = await ReadTranslatedItemIdsAsync(cancellationToken).ConfigureAwait(false);
             if (!IsAdded || cancellationToken.IsCancellationRequested)
                 return;
-            Activity?.RunOnUiThread(() => Render(index));
+            Activity?.RunOnUiThread(() => Render(index, translatedItemIds));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -646,16 +1210,28 @@ public sealed class ModsFragment : Fragment
         var index = modManagement is null
             ? await repository.ReadAsync(cancellationToken).ConfigureAwait(false)
             : await modManagement.GetLibraryAsync(cancellationToken).ConfigureAwait(false);
+        var translatedItemIds = await ReadTranslatedItemIdsAsync(cancellationToken).ConfigureAwait(false);
         if (!IsAdded || cancellationToken.IsCancellationRequested)
             return;
-        Activity?.RunOnUiThread(() => Render(index));
+        Activity?.RunOnUiThread(() => Render(index, translatedItemIds));
     }
 
-    private void Render(ModLibraryIndex index)
+    private async ValueTask<IReadOnlySet<string>> ReadTranslatedItemIdsAsync(CancellationToken cancellationToken)
+    {
+        if (repository is null)
+            return new HashSet<string>(StringComparer.Ordinal);
+        var installations = await repository.ListTranslationInstallationsAsync(null, cancellationToken)
+            .ConfigureAwait(false);
+        return installations
+            .SelectMany(installation => installation.AffectedLibraryItemIds)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private void Render(ModLibraryIndex index, IReadOnlySet<string>? translatedItemIds = null)
     {
         var projection = ModManagementProjection.Create(index);
         actualComponentCount = projection.ActualComponentCount;
-        adapter?.SetItems(projection.Items);
+        adapter?.SetItems(projection.Items, translatedItemIds);
         UpdateInventoryCount();
         UpdateEmptyState();
     }
@@ -1030,7 +1606,7 @@ public sealed class ModsFragment : Fragment
             {
                 Activity?.RunOnUiThread(() =>
                 {
-                    Render(result.Library);
+                    _ = RefreshAsync(lifetime.Token);
                     ShowMessage(Resource.String.mods_bundle_changed);
                 });
             }
@@ -1116,7 +1692,8 @@ public sealed class ModsFragment : Fragment
         {
             // Leaving the screen cancels deletion before its next transaction boundary.
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
         {
             Log.Error("JunimoGate.Mods", "library-delete-failed", exception);
             if (IsAdded)
@@ -1384,6 +1961,42 @@ public sealed class ModsFragment : Fragment
             new JString(document.DisplayName ?? GetString(Resource.String.value_unavailable)));
     }
 
+    private async ValueTask DisposePendingTranslationAsync()
+    {
+        var pending = Interlocked.Exchange(ref pendingTranslationTransaction, null);
+        pendingTranslationTarget = null;
+        pendingTranslationTargetItemId = null;
+        if (pending is not null)
+            await pending.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<string> GetUnmappedSourceRoots(IReadOnlyList<string> paths)
+    {
+        var roots = paths.Select(path => path.IndexOf('/') is var index && index >= 0 ? path[..index] : string.Empty)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+        return roots;
+    }
+
+    private string FormatTranslationIssues(IReadOnlyList<ModTranslationIssue> issues)
+    {
+        var errors = issues.Where(issue => issue.Severity == ModArchiveIssueSeverity.Error)
+            .Take(8)
+            .Select(issue => issue.Path is null ? issue.Code : $"{issue.Code}: {issue.Path}")
+            .ToArray();
+        return errors.Length == 0 ? GetString(Resource.String.mod_translation_scan_failed) : string.Join("\n", errors);
+    }
+
+    private void ShowDialog(int titleResourceId, string message)
+    {
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(titleResourceId);
+        dialog.SetMessage(message);
+        dialog.SetPositiveButton(global::Android.Resource.String.Ok, (_, _) => { });
+        dialog.Show();
+    }
+
     private void SetBusy(bool value)
     {
         busy = value;
@@ -1422,6 +2035,7 @@ internal sealed class ModLibraryAdapter(
     Func<ModManagementItem, string> formatMetadata,
     Action<ModManagementItem> showDetails,
     Action<ModManagementItem> showFiles,
+    Action<ModManagementItem> installTranslation,
     Action<ModManagementItem> addToGroup,
     Action<ModManagementItem> delete,
     Action<ModManagementItem> export,
@@ -1432,6 +2046,7 @@ internal sealed class ModLibraryAdapter(
     private IReadOnlyList<ModManagementItem> allItems = Array.Empty<ModManagementItem>();
     private IReadOnlyList<ModManagementItem> items = Array.Empty<ModManagementItem>();
     private IReadOnlyDictionary<string, int> versionCounts = new Dictionary<string, int>();
+    private IReadOnlySet<string> translatedItemIds = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<string> selected = new(StringComparer.Ordinal);
     private bool selectionMode;
     private bool interactionEnabled = true;
@@ -1450,8 +2065,12 @@ internal sealed class ModLibraryAdapter(
     public bool AreAllFilteredSelected => items.Count > 0 &&
         items.All(item => selected.Contains(item.ItemId));
 
-    public void SetItems(IReadOnlyList<ModManagementItem> value)
+    public void SetItems(IReadOnlyList<ModManagementItem> value, IReadOnlySet<string>? translatedIds = null)
     {
+        var translationStateChanged = translatedIds is not null &&
+            !translatedItemIds.SetEquals(translatedIds);
+        if (translatedIds is not null)
+            translatedItemIds = new HashSet<string>(translatedIds, StringComparer.Ordinal);
         allItems = value;
         selected.RemoveWhere(id => value.All(item => item.ItemId != id));
         versionCounts = value
@@ -1459,6 +2078,8 @@ internal sealed class ModLibraryAdapter(
             .GroupBy(item => item.Manifest.UniqueId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
         ApplyFilter();
+        if (translationStateChanged)
+            NotifyDataSetChanged();
     }
 
     public void SetQuery(string? value)
@@ -1537,6 +2158,7 @@ internal sealed class ModLibraryAdapter(
             formatMetadata,
             showDetails,
             showFiles,
+            installTranslation,
             addToGroup,
             delete,
             export,
@@ -1555,7 +2177,8 @@ internal sealed class ModLibraryAdapter(
             selected.Contains(item.ItemId),
             selectionMode,
             interactionEnabled,
-            item.ItemId == expandedItemId);
+            item.ItemId == expandedItemId,
+            item.Members.Any(member => translatedItemIds.Contains(member.LibraryItemId)));
     }
 
     private void ToggleSelection(ModManagementItem item, bool value)
@@ -1603,6 +2226,9 @@ internal sealed class ModLibraryAdapter(
 
     private sealed class ModLibraryViewHolder : RecyclerView.ViewHolder
     {
+        private const int MoreActionExport = 1;
+        private const int MoreActionRestore = 2;
+        private const int MoreActionDelete = 3;
         private readonly TextView title;
         private readonly TextView summary;
         private readonly TextView description;
@@ -1612,13 +2238,13 @@ internal sealed class ModLibraryAdapter(
         private readonly View expanded;
         private readonly CheckBox selected;
         private readonly MaterialButton addButton;
-        private readonly MaterialButton deleteButton;
         private readonly MaterialButton detailsButton;
         private readonly MaterialButton filesButton;
-        private readonly MaterialButton exportButton;
-        private readonly MaterialButton restoreButton;
+        private readonly MaterialButton translationButton;
+        private readonly MaterialButton moreButton;
         private readonly Action<ModManagementItem> showDetails;
         private readonly Action<ModManagementItem> showFiles;
+        private readonly Action<ModManagementItem> installTranslation;
         private readonly Action<ModManagementItem> addToGroup;
         private readonly Action<ModManagementItem> delete;
         private readonly Action<ModManagementItem> export;
@@ -1635,6 +2261,7 @@ internal sealed class ModLibraryAdapter(
             Func<ModManagementItem, string> formatMetadata,
             Action<ModManagementItem> showDetails,
             Action<ModManagementItem> showFiles,
+            Action<ModManagementItem> installTranslation,
             Action<ModManagementItem> addToGroup,
             Action<ModManagementItem> delete,
             Action<ModManagementItem> export,
@@ -1646,6 +2273,7 @@ internal sealed class ModLibraryAdapter(
             this.formatMetadata = formatMetadata;
             this.showDetails = showDetails;
             this.showFiles = showFiles;
+            this.installTranslation = installTranslation;
             this.addToGroup = addToGroup;
             this.delete = delete;
             this.export = export;
@@ -1673,16 +2301,14 @@ internal sealed class ModLibraryAdapter(
             selected.Focusable = false;
             addButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_add)
                 ?? throw new InvalidOperationException("The Mod item add action is unavailable.");
-            deleteButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_delete)
-                ?? throw new InvalidOperationException("The Mod item delete button is unavailable.");
             detailsButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_details)
                 ?? throw new InvalidOperationException("The Mod item details button is unavailable.");
             filesButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_files)
                 ?? throw new InvalidOperationException("The Mod item files button is unavailable.");
-            exportButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_export)
-                ?? throw new InvalidOperationException("The Mod item export button is unavailable.");
-            restoreButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_restore)
-                ?? throw new InvalidOperationException("The Mod item restore button is unavailable.");
+            translationButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_translation)
+                ?? throw new InvalidOperationException("The Mod item translation button is unavailable.");
+            moreButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_more)
+                ?? throw new InvalidOperationException("The Mod item more action is unavailable.");
             detailsButton.Click += (_, _) =>
             {
                 if (item is not null)
@@ -1693,26 +2319,17 @@ internal sealed class ModLibraryAdapter(
                 if (item is not null)
                     this.showFiles(item);
             };
+            translationButton.Click += (_, _) =>
+            {
+                if (item is not null)
+                    this.installTranslation(item);
+            };
             addButton.Click += (_, _) =>
             {
                 if (item is not null)
                     this.addToGroup(item);
             };
-            deleteButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.delete(item);
-            };
-            exportButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.export(item);
-            };
-            restoreButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.restore(item);
-            };
+            moreButton.Click += (_, _) => ShowMoreActions();
             ItemView.Click += (_, _) =>
             {
                 if (selectionMode && item is not null)
@@ -1728,7 +2345,8 @@ internal sealed class ModLibraryAdapter(
             bool isSelected,
             bool isSelectionMode,
             bool interactionEnabled,
-            bool isExpanded)
+            bool isExpanded,
+            bool hasTranslation)
         {
             item = value;
             selectionMode = isSelectionMode;
@@ -1745,20 +2363,56 @@ internal sealed class ModLibraryAdapter(
             addButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
             detailsButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
             filesButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            exportButton.Visibility = !isSelectionMode && value.IsBundle ? ViewStates.Visible : ViewStates.Gone;
-            restoreButton.Visibility = !isSelectionMode && value.RestorableBundle is not null
-                ? ViewStates.Visible
-                : ViewStates.Gone;
-            deleteButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
+            translationButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
+            moreButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
             expanded.Visibility = !isSelectionMode && isExpanded ? ViewStates.Visible : ViewStates.Gone;
             expand.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
             expand.Rotation = isExpanded ? 180f : 0f;
             addButton.Enabled = interactionEnabled;
             detailsButton.Enabled = interactionEnabled;
             filesButton.Enabled = interactionEnabled;
-            exportButton.Enabled = interactionEnabled;
-            restoreButton.Enabled = interactionEnabled;
-            deleteButton.Enabled = interactionEnabled;
+            translationButton.Enabled = interactionEnabled;
+            translationButton.Selected = hasTranslation;
+            translationButton.ContentDescription = ItemView.Context?.GetString(hasTranslation
+                ? Resource.String.mod_translation_action_installed
+                : Resource.String.mod_translation_action);
+            moreButton.Enabled = interactionEnabled;
+        }
+
+        private void ShowMoreActions()
+        {
+            if (item is not { } value || !moreButton.Enabled)
+                return;
+            var context = ItemView.Context
+                ?? throw new InvalidOperationException("The Mod item context is unavailable.");
+            var menu = new PopupMenu(context, moreButton);
+            var popup = menu.Menu
+                ?? throw new InvalidOperationException("The Mod item action menu is unavailable.");
+            var order = 0;
+            if (value.IsBundle)
+                _ = popup.Add(0, MoreActionExport, order++, Resource.String.mods_bundle_export);
+            if (value.RestorableBundle is not null)
+                _ = popup.Add(0, MoreActionRestore, order++, Resource.String.mods_bundle_restore);
+            _ = popup.Add(0, MoreActionDelete, order, Resource.String.mods_delete_action);
+            menu.MenuItemClick += (_, eventArgs) =>
+            {
+                eventArgs.Handled = eventArgs.Item?.ItemId switch
+                {
+                    MoreActionExport => HandleMoreAction(this.export),
+                    MoreActionRestore => HandleMoreAction(this.restore),
+                    MoreActionDelete => HandleMoreAction(this.delete),
+                    _ => false,
+                };
+            };
+            menu.Show();
+        }
+
+        private bool HandleMoreAction(Action<ModManagementItem> action)
+        {
+            if (item is null)
+                return false;
+            action(item);
+            return true;
         }
 
         private void BindComponents(ModManagementItem value, bool interactionEnabled)

@@ -230,7 +230,10 @@ public sealed class LegacyModProfileMigrator
             DateTimeOffset.UtcNow,
             $"legacy-{profileId.Value}-{(candidate.Enabled ? "enabled" : "disabled")}",
             files.Length,
-            totalBytes);
+            totalBytes)
+        {
+            OriginalRootPath = candidate.RelativeSourcePath,
+        };
         item.Validate();
         await using (var metadata = new FileStream(
                          Path.Combine(candidateDirectory, "library-item.json"),

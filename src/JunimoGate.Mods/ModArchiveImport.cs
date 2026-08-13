@@ -406,7 +406,10 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
             DateTimeOffset.UtcNow,
             sourceArchiveName,
             fileCount,
-            totalBytes);
+            totalBytes)
+        {
+            OriginalRootPath = candidate.RootPath,
+        };
         item.Validate();
         var metadataPath = Path.Combine(candidateDirectory, "library-item.json");
         await using (var metadata = new FileStream(

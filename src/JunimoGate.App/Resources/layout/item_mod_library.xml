@@ -97,54 +97,93 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
-                android:layout_marginTop="4dp"
-                android:gravity="end|center_vertical"
+                android:layout_marginTop="6dp"
                 android:orientation="horizontal">
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/mod_item_add"
                     style="@style/JunimoGate.Button.Secondary"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="48dp"
-                    android:text="@string/mods_add_to_group"
-                    app:icon="@drawable/ic_add_24" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/mod_item_details"
-                    style="@style/JunimoGate.IconButton"
-                    android:contentDescription="@string/mods_details_action"
-                    android:tooltipText="@string/mods_details_action"
-                    app:icon="@drawable/ic_info_24" />
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="@string/mods_group_action_short"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_add_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/mod_item_files"
-                    style="@style/JunimoGate.IconButton"
-                    android:contentDescription="@string/mod_files_action"
-                    android:tooltipText="@string/mod_files_action"
-                    app:icon="@drawable/ic_folder_24" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/mod_item_export"
-                    style="@style/JunimoGate.IconButton"
-                    android:contentDescription="@string/mods_bundle_export"
-                    android:tooltipText="@string/mods_bundle_export"
-                    android:visibility="gone"
-                    app:icon="@drawable/ic_share_24" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/mod_item_restore"
                     style="@style/JunimoGate.Button.Secondary"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="48dp"
-                    android:text="@string/mods_bundle_restore"
-                    android:visibility="gone" />
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="@string/mod_files_action"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_folder_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/mod_item_delete"
-                    style="@style/JunimoGate.IconButton"
-                    android:contentDescription="@string/mods_delete_action"
-                    android:tooltipText="@string/mods_delete_action"
-                    app:icon="@drawable/ic_delete_24" />
+                    android:id="@+id/mod_item_translation"
+                    style="@style/JunimoGate.Button.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/mod_translation_action_background"
+                    android:minWidth="0dp"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="@string/mod_translation_action_short"
+                    android:textColor="@color/mod_translation_action_foreground"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_translate_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp"
+                    app:iconTint="@color/mod_translation_action_foreground" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mod_item_details"
+                    style="@style/JunimoGate.Button.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/mods_details_action"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_info_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mod_item_more"
+                    style="@style/JunimoGate.Button.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/mods_more_actions_short"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_more_vert_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1" />
             </LinearLayout>
         </LinearLayout>
 

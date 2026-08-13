@@ -172,6 +172,26 @@ return TestHarness.Run(
         ModFileServiceTests.CreatesTextFilesInTheCurrentDirectory()),
     ("Mod files accept UTF-8 split at the text probe boundary", () =>
         ModFileServiceTests.AcceptsUtf8SplitAtTheProbeBoundary()),
+    ("Mod translations map member roots without archive-name guesses", () =>
+        ModTranslationInstallTests.MapsMemberRootsWithoutUsingArchiveNames()),
+    ("Mod translations map multiple bundle members atomically", () =>
+        ModTranslationInstallTests.MapsMultipleBundleMembersAndLeavesWeakFilesUnmapped()),
+    ("Mod translations map flat locales to one structural target", () =>
+        ModTranslationInstallTests.MapsFlatLocalesOnlyToOneStructuralTarget()),
+    ("Mod translations reject wrong manifests and ignore executables", () =>
+        ModTranslationInstallTests.RejectsWrongManifestAndIgnoresExecutablePayloads()),
+    ("Mod translations restore files and detect later conflicts", () =>
+        ModTranslationInstallTests.RestoresAddedAndReplacedFilesWithConflictChecks()),
+    ("Mod translations support contained manual mappings", () =>
+        ModTranslationInstallTests.SupportsContainedManualMappings()),
+    ("Mod deletion removes its translation records", () =>
+        ModTranslationInstallTests.DeletesItemsAndTheirTranslationRecords()),
+    ("Mod deletion preserves translated bundle members not deleted", () =>
+        ModTranslationInstallTests.DeletingOneTranslatedBundleMemberPreservesTheOther()),
+    ("Interrupted translation restore recovers files and its record", () =>
+        ModTranslationInstallTests.RecoversInterruptedRestoreWithItsInstallationRecord()),
+    ("Mod translation commit rejects targets changed after preview", () =>
+        ModTranslationInstallTests.RejectsTargetsChangedAfterPreview()),
     ("Mod library keeps same-version different-content items", () =>
         ModLibraryTests.KeepsDistinctContentCandidates()),
     ("Mod library persists bundles and unlock overrides", () =>

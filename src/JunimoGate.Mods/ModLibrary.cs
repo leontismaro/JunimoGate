@@ -34,6 +34,7 @@ public sealed record ModLibraryItem(
     long TotalBytes)
 {
     public const string CurrentSchema = "junimogate-mod-library-item/v1";
+    public string? OriginalRootPath { get; init; }
 
     public void Validate()
     {
@@ -44,6 +45,12 @@ public sealed record ModLibraryItem(
             RelativeStoragePath != $"library/{LibraryItemId}/files")
         {
             throw new InvalidDataException("The Mod library item is malformed.");
+        }
+
+        if (OriginalRootPath is { Length: > 0 } rootPath &&
+            (!SafeArchivePath.TryParse(rootPath, out var parsedRoot) || parsedRoot.Value != rootPath))
+        {
+            throw new InvalidDataException("The Mod library item source root is malformed.");
         }
 
         if (Manifest.Dependencies is null || Manifest.UpdateKeys is null)
@@ -102,6 +109,7 @@ public sealed class ModLibraryLayout
         StagingDirectory = Path.Combine(Root, "staging");
         QuarantineDirectory = Path.Combine(Root, "quarantine");
         ExportsDirectory = Path.Combine(Root, "exports");
+        TranslationsDirectory = Path.Combine(Root, "translations");
     }
 
     public string Root { get; }
@@ -110,13 +118,14 @@ public sealed class ModLibraryLayout
     public string StagingDirectory { get; }
     public string QuarantineDirectory { get; }
     public string ExportsDirectory { get; }
+    public string TranslationsDirectory { get; }
 
     public string GetItemDirectory(string libraryItemId) => Path.Combine(LibraryDirectory, libraryItemId);
     public string GetItemFilesDirectory(string libraryItemId) => Path.Combine(GetItemDirectory(libraryItemId), "files");
     public string GetItemMetadataPath(string libraryItemId) => Path.Combine(GetItemDirectory(libraryItemId), "library-item.json");
 }
 
-public sealed class ModLibraryRepository
+public sealed partial class ModLibraryRepository
 {
     private const int MaximumIndexBytes = 8 * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
@@ -137,6 +146,12 @@ public sealed class ModLibraryRepository
         string? sourceArchiveName = null,
         ModArchiveImportLimits? limits = null) =>
         new ModArchiveInstallTransaction(this, sourceArchiveName, limits ?? ModArchiveImportLimits.Default);
+
+    public ModTranslationInstallTransaction CreateTranslationTransaction(
+        IReadOnlyList<ModTranslationTarget> targets,
+        string? sourceArchiveName = null,
+        ModArchiveImportLimits? limits = null) =>
+        new(this, targets, sourceArchiveName, limits ?? ModArchiveImportLimits.Default);
 
     public async ValueTask<ModLibraryIndex> ReadAsync(CancellationToken cancellationToken = default)
     {
@@ -194,8 +209,49 @@ public sealed class ModLibraryRepository
                 return new ModLibraryDeleteResult(Array.Empty<ModLibraryItem>(), missingItemIds, current.Revision);
 
             var moved = new List<(string Source, string Trash)>(deletedItems.Length);
+            var translationChanges = new List<(string Source, string Trash, string? Staged)>();
+            var appliedTranslationChanges = new List<(string Source, string Trash, string? Staged)>();
             try
             {
+                foreach (var directory in Directory.EnumerateDirectories(Layout.TranslationsDirectory))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var record = await ReadInstallationRecordAsync(directory, cancellationToken).ConfigureAwait(false);
+                    var removedFiles = record.Files.Where(file => requestedIds.Contains(file.LibraryItemId)).ToArray();
+                    if (removedFiles.Length == 0)
+                        continue;
+
+                    var retainedFiles = record.Files.Where(file => !requestedIds.Contains(file.LibraryItemId)).ToArray();
+                    string? staged = null;
+                    if (retainedFiles.Length > 0)
+                    {
+                        staged = Path.Combine(Layout.StagingDirectory, $"delete-translation-new-{Guid.NewGuid():N}");
+                        translationChanges.Add((
+                            directory,
+                            Path.Combine(Layout.StagingDirectory, $"delete-translation-old-{Guid.NewGuid():N}"),
+                            staged));
+                        CopyDirectory(directory, staged, cancellationToken);
+                        foreach (var file in removedFiles.Where(file => file.BackupRelativePath is not null))
+                        {
+                            var backup = ResolveContained(staged, file.BackupRelativePath!);
+                            TryDeleteFile(backup);
+                            RemoveEmptyParents(Path.GetDirectoryName(backup)!, staged);
+                        }
+                        await WriteJsonDurableAsync(
+                                Path.Combine(staged, "installation.json"),
+                                record with { Files = retainedFiles },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        translationChanges.Add((
+                            directory,
+                            Path.Combine(Layout.StagingDirectory, $"delete-translation-old-{Guid.NewGuid():N}"),
+                            null));
+                    }
+                }
+
                 foreach (var item in deletedItems)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -205,6 +261,15 @@ public sealed class ModLibraryRepository
                     var trash = Path.Combine(Layout.StagingDirectory, $"delete-{Guid.NewGuid():N}");
                     Directory.Move(source, trash);
                     moved.Add((source, trash));
+                }
+
+                foreach (var change in translationChanges)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Directory.Move(change.Source, change.Trash);
+                    appliedTranslationChanges.Add(change);
+                    if (change.Staged is not null)
+                        Directory.Move(change.Staged, change.Source);
                 }
 
                 var updatedCatalog = RemoveBundleMembers(current.BundleCatalog, requestedIds);
@@ -219,17 +284,36 @@ public sealed class ModLibraryRepository
             }
             catch
             {
+                for (var index = appliedTranslationChanges.Count - 1; index >= 0; index--)
+                {
+                    var (source, trash, _) = appliedTranslationChanges[index];
+                    if (Directory.Exists(source))
+                        TryDeleteDirectory(source);
+                    if (Directory.Exists(trash))
+                        Directory.Move(trash, source);
+                }
                 for (var index = moved.Count - 1; index >= 0; index--)
                 {
                     var (source, trash) = moved[index];
                     if (!Directory.Exists(source) && Directory.Exists(trash))
                         Directory.Move(trash, source);
                 }
+                foreach (var (_, _, staged) in translationChanges)
+                {
+                    if (staged is not null)
+                        TryDeleteDirectory(staged);
+                }
                 throw;
             }
 
             foreach (var (_, trash) in moved)
                 TryDeleteDirectory(trash);
+            foreach (var (_, trash, staged) in translationChanges)
+            {
+                TryDeleteDirectory(trash);
+                if (staged is not null)
+                    TryDeleteDirectory(staged);
+            }
             return new ModLibraryDeleteResult(deletedItems, missingItemIds, checked(current.Revision + 1));
         }
         finally
@@ -461,6 +545,7 @@ public sealed class ModLibraryRepository
                 first.RelativeStoragePath != second.RelativeStoragePath ||
                 first.ImportedAtUtc != second.ImportedAtUtc ||
                 first.SourceArchiveName != second.SourceArchiveName ||
+                first.OriginalRootPath != second.OriginalRootPath ||
                 first.FileCount != second.FileCount ||
                 first.TotalBytes != second.TotalBytes ||
                 !ManifestsEqual(first.Manifest, second.Manifest))
@@ -559,6 +644,8 @@ public sealed class ModLibraryRepository
         Directory.CreateDirectory(Layout.StagingDirectory);
         Directory.CreateDirectory(Layout.QuarantineDirectory);
         Directory.CreateDirectory(Layout.ExportsDirectory);
+        Directory.CreateDirectory(Layout.TranslationsDirectory);
+        RecoverTranslationTransactions();
     }
 
     private async ValueTask<ModLibraryIndex> ReadUnlockedAsync(CancellationToken cancellationToken)
