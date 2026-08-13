@@ -1165,6 +1165,7 @@ public sealed class ModsFragment : Fragment
             pendingTranslationTarget = null;
             pendingTranslationTargetItemId = null;
             await transaction.DisposeAsync().ConfigureAwait(false);
+            modManagement?.NotifyLibraryChanged();
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
