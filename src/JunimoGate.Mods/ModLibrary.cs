@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -128,16 +129,19 @@ public sealed class ModLibraryLayout
 public sealed partial class ModLibraryRepository
 {
     private const int MaximumIndexBytes = 8 * 1024 * 1024;
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
     };
-    private readonly SemaphoreSlim operationLock = new(1, 1);
+    private readonly SemaphoreSlim operationLock;
 
     public ModLibraryRepository(string root)
     {
         Layout = new ModLibraryLayout(root);
+        operationLock = OperationLocks.GetOrAdd(Layout.Root, static _ => new SemaphoreSlim(1, 1));
     }
 
     public ModLibraryLayout Layout { get; }
@@ -158,6 +162,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             return await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -191,6 +196,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             if (requestedIds.Count == 0)
@@ -331,6 +337,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var known = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
@@ -481,6 +488,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             if (current.Revision == previousIndex.Revision)
@@ -587,6 +595,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var bundle = current.BundleCatalog.Bundles.FirstOrDefault(candidate => candidate.BundleId == bundleId)
@@ -646,6 +655,30 @@ public sealed partial class ModLibraryRepository
         Directory.CreateDirectory(Layout.ExportsDirectory);
         Directory.CreateDirectory(Layout.TranslationsDirectory);
         RecoverTranslationTransactions();
+    }
+
+    private async ValueTask<FileStream> AcquireProcessOperationLockAsync(CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Layout.Root);
+        var lockPath = Path.Combine(Layout.Root, ".library-operation.lock");
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     private async ValueTask<ModLibraryIndex> ReadUnlockedAsync(CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using JunimoGate.Mods;
@@ -379,6 +380,32 @@ internal static class ModTranslationInstallTests
         {
             transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
+    }
+
+    public static void SerializesRepositoriesForTheSameRoot()
+    {
+        using var fixture = new Fixture();
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var field = typeof(ModLibraryRepository).GetField(
+            "operationLock",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("The Mod library operation lock is missing.");
+        var firstLock = (SemaphoreSlim)field.GetValue(fixture.Repository)!;
+        var secondLock = (SemaphoreSlim)field.GetValue(reopened)!;
+        TestHarness.True(ReferenceEquals(firstLock, secondLock));
+
+        Task<ModLibraryIndex> read;
+        firstLock.Wait();
+        try
+        {
+            read = reopened.ReadAsync().AsTask();
+            TestHarness.False(read.Wait(TimeSpan.FromMilliseconds(100)));
+        }
+        finally
+        {
+            firstLock.Release();
+        }
+        _ = read.GetAwaiter().GetResult();
     }
 
     private static void CopyDirectory(string source, string destination)

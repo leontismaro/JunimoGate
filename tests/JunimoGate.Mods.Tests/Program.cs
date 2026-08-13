@@ -190,6 +190,8 @@ return TestHarness.Run(
         ModTranslationInstallTests.DeletingOneTranslatedBundleMemberPreservesTheOther()),
     ("Interrupted translation restore recovers files and its record", () =>
         ModTranslationInstallTests.RecoversInterruptedRestoreWithItsInstallationRecord()),
+    ("Mod library instances serialize translation recovery for one root", () =>
+        ModTranslationInstallTests.SerializesRepositoriesForTheSameRoot()),
     ("Mod translation commit rejects targets changed after preview", () =>
         ModTranslationInstallTests.RejectsTargetsChangedAfterPreview()),
     ("Mod library keeps same-version different-content items", () =>

@@ -850,6 +850,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var filter = libraryItemIds?.ToHashSet(StringComparer.Ordinal);
             var result = new List<ModTranslationInstallationSummary>();
@@ -885,6 +886,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var installationDirectory = Path.Combine(Layout.TranslationsDirectory, installationId);
             if (!Directory.Exists(installationDirectory))
@@ -985,6 +987,7 @@ public sealed partial class ModLibraryRepository
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var known = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
