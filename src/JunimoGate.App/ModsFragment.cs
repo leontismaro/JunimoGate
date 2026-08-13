@@ -9,6 +9,7 @@ using Android.Views;
 using Android.Widget;
 using AndroidX.Activity.Result;
 using AndroidX.Activity.Result.Contract;
+using AndroidX.Navigation.Fragment;
 using AndroidX.RecyclerView.Widget;
 using Google.Android.Material.AppBar;
 using Google.Android.Material.Button;
@@ -108,6 +109,7 @@ public sealed class ModsFragment : Fragment
             FormatItemSummary,
             FormatItemMetadata,
             ShowDetails,
+            RequestFiles,
             RequestAddToGroup,
             RequestDelete,
             RequestExport,
@@ -717,6 +719,36 @@ public sealed class ModsFragment : Fragment
         dialog.Show();
     }
 
+    private void RequestFiles(ModManagementItem displayItem)
+    {
+        if (busy)
+            return;
+        if (!displayItem.IsBundle)
+        {
+            OpenFiles(displayItem.Members.Single());
+            return;
+        }
+
+        var members = displayItem.Members
+            .OrderBy(member => member.Manifest.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(member => member.Manifest.UniqueId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var labels = members.Select(member => $"{member.Manifest.Name} {member.Manifest.Version}").ToArray();
+        var dialog = new MaterialAlertDialogBuilder(RequireContext());
+        dialog.SetTitle(Resource.String.mod_files_choose_mod);
+        dialog.SetItems(labels, (_, eventArgs) => OpenFiles(members[eventArgs.Which]));
+        dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
+        dialog.Show();
+    }
+
+    private void OpenFiles(ModLibraryItem item)
+    {
+        using var arguments = new Bundle();
+        arguments.PutString("libraryItemId", item.LibraryItemId);
+        arguments.PutString("modName", $"{item.Manifest.Name} {item.Manifest.Version}");
+        NavHostFragment.FindNavController(this).Navigate(Resource.Id.navigation_mod_files, arguments);
+    }
+
     private void RequestAddToGroup(ModManagementItem item)
     {
         if (!busy)
@@ -1284,6 +1316,7 @@ internal sealed class ModLibraryAdapter(
     Func<ModManagementItem, int, string> formatSummary,
     Func<ModManagementItem, string> formatMetadata,
     Action<ModManagementItem> showDetails,
+    Action<ModManagementItem> showFiles,
     Action<ModManagementItem> addToGroup,
     Action<ModManagementItem> delete,
     Action<ModManagementItem> export,
@@ -1398,6 +1431,7 @@ internal sealed class ModLibraryAdapter(
             view,
             formatMetadata,
             showDetails,
+            showFiles,
             addToGroup,
             delete,
             export,
@@ -1475,9 +1509,11 @@ internal sealed class ModLibraryAdapter(
         private readonly MaterialButton addButton;
         private readonly MaterialButton deleteButton;
         private readonly MaterialButton detailsButton;
+        private readonly MaterialButton filesButton;
         private readonly MaterialButton exportButton;
         private readonly MaterialButton restoreButton;
         private readonly Action<ModManagementItem> showDetails;
+        private readonly Action<ModManagementItem> showFiles;
         private readonly Action<ModManagementItem> addToGroup;
         private readonly Action<ModManagementItem> delete;
         private readonly Action<ModManagementItem> export;
@@ -1493,6 +1529,7 @@ internal sealed class ModLibraryAdapter(
             View view,
             Func<ModManagementItem, string> formatMetadata,
             Action<ModManagementItem> showDetails,
+            Action<ModManagementItem> showFiles,
             Action<ModManagementItem> addToGroup,
             Action<ModManagementItem> delete,
             Action<ModManagementItem> export,
@@ -1503,6 +1540,7 @@ internal sealed class ModLibraryAdapter(
         {
             this.formatMetadata = formatMetadata;
             this.showDetails = showDetails;
+            this.showFiles = showFiles;
             this.addToGroup = addToGroup;
             this.delete = delete;
             this.export = export;
@@ -1534,6 +1572,8 @@ internal sealed class ModLibraryAdapter(
                 ?? throw new InvalidOperationException("The Mod item delete button is unavailable.");
             detailsButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_details)
                 ?? throw new InvalidOperationException("The Mod item details button is unavailable.");
+            filesButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_files)
+                ?? throw new InvalidOperationException("The Mod item files button is unavailable.");
             exportButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_export)
                 ?? throw new InvalidOperationException("The Mod item export button is unavailable.");
             restoreButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_restore)
@@ -1542,6 +1582,11 @@ internal sealed class ModLibraryAdapter(
             {
                 if (item is not null)
                     this.showDetails(item);
+            };
+            filesButton.Click += (_, _) =>
+            {
+                if (item is not null)
+                    this.showFiles(item);
             };
             addButton.Click += (_, _) =>
             {
@@ -1594,6 +1639,7 @@ internal sealed class ModLibraryAdapter(
             selected.Enabled = interactionEnabled;
             addButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
             detailsButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
+            filesButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
             exportButton.Visibility = !isSelectionMode && value.IsBundle ? ViewStates.Visible : ViewStates.Gone;
             restoreButton.Visibility = !isSelectionMode && value.RestorableBundle is not null
                 ? ViewStates.Visible
@@ -1604,6 +1650,7 @@ internal sealed class ModLibraryAdapter(
             expand.Rotation = isExpanded ? 180f : 0f;
             addButton.Enabled = interactionEnabled;
             detailsButton.Enabled = interactionEnabled;
+            filesButton.Enabled = interactionEnabled;
             exportButton.Enabled = interactionEnabled;
             restoreButton.Enabled = interactionEnabled;
             deleteButton.Enabled = interactionEnabled;

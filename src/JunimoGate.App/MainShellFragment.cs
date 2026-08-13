@@ -161,6 +161,8 @@ public sealed class MainShellFragment : AndroidX.Fragment.App.Fragment
     {
         if (navigation is null)
             return false;
+        if (navHostFragmentManager?.PrimaryNavigationFragment is IModFileBackHandler modFiles)
+            return modFiles.HandleModFileBack();
         if (navigation.CurrentDestination?.Id != Resource.Id.navigation_main)
         {
             NavigateFromMainRoot(Resource.Id.navigation_main);
@@ -251,13 +253,21 @@ public sealed class MainShellFragment : AndroidX.Fragment.App.Fragment
         Activity?.RunOnUiThread(() => RenderLauncherState(state));
 
     private void OnLaunchClicked(object? sender, EventArgs args) =>
-        ((ILauncherUiHost?)Activity)?.RequestLaunch();
+        RequestLeaveModFile(() => ((ILauncherUiHost?)Activity)?.RequestLaunch());
 
     private void OnBottomHomeClicked(object? sender, EventArgs args)
-        => RequestPrimaryPage(PrimaryPagerFragment.HomePage);
+        => RequestLeaveModFile(() => RequestPrimaryPage(PrimaryPagerFragment.HomePage));
 
     private void OnBottomModsClicked(object? sender, EventArgs args)
-        => RequestPrimaryPage(PrimaryPagerFragment.ModsPage);
+        => RequestLeaveModFile(() => RequestPrimaryPage(PrimaryPagerFragment.ModsPage));
+
+    private void RequestLeaveModFile(Action leave)
+    {
+        if (navHostFragmentManager?.PrimaryNavigationFragment is IModFileBackHandler modFiles)
+            modFiles.RequestModFileLeave(leave);
+        else
+            leave();
+    }
 
     private PrimaryPagerFragment? GetPrimaryPager()
         => navHostFragmentManager?.PrimaryNavigationFragment as PrimaryPagerFragment;
@@ -323,7 +333,9 @@ public sealed class MainShellFragment : AndroidX.Fragment.App.Fragment
         renderedDestinationId = destinationId;
         if (destinationId != Resource.Id.navigation_main)
             primaryPagerIdle = true;
-        if (toolbar is not null && destinationId != Resource.Id.navigation_mod_group_editor)
+        if (toolbar is not null && destinationId is not (Resource.Id.navigation_mod_group_editor or
+                                                          Resource.Id.navigation_mod_files or
+                                                          Resource.Id.navigation_mod_text_editor))
         {
             toolbar.NavigationIcon = null;
             toolbar.Title = destinationId == Resource.Id.navigation_main
@@ -379,6 +391,8 @@ public sealed class MainShellFragment : AndroidX.Fragment.App.Fragment
         if (Activity is MainActivity activity)
         {
             activity.RenderDrawerSelection(destinationId);
+            activity.SetDrawerOpenVisible(destinationId is not (Resource.Id.navigation_mod_files or
+                                                                  Resource.Id.navigation_mod_text_editor));
             activity.SetDrawerSwipeEnabled(isMainDestination &&
                                            primaryPagerIdle &&
                                            primaryHomeBackdropAlpha >= 0.999f &&
@@ -392,7 +406,8 @@ public sealed class MainShellFragment : AndroidX.Fragment.App.Fragment
         var home = effectivePage == PrimaryPagerFragment.HomePage &&
                    renderedDestinationId == Resource.Id.navigation_main;
         var mods = effectivePage >= PrimaryPagerFragment.ModsPage ||
-                   renderedDestinationId == Resource.Id.navigation_mod_group_editor;
+                   renderedDestinationId is Resource.Id.navigation_mod_group_editor or
+                       Resource.Id.navigation_mod_files or Resource.Id.navigation_mod_text_editor;
         if (bottomHome is not null)
             bottomHome.Selected = home;
         if (bottomMods is not null)
@@ -437,6 +452,8 @@ public sealed class MainShellFragment : AndroidX.Fragment.App.Fragment
             SaveBackupsFragment => Resource.Id.navigation_save_backups,
             AboutFragment => Resource.Id.navigation_about,
             ModGroupEditorFragment => Resource.Id.navigation_mod_group_editor,
+            ModFilesFragment => Resource.Id.navigation_mod_files,
+            ModTextEditorFragment => Resource.Id.navigation_mod_text_editor,
             _ => 0,
         };
         return destinationId != 0;

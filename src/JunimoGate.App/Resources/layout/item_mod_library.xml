@@ -117,6 +117,13 @@
                     app:icon="@drawable/ic_info_24" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mod_item_files"
+                    style="@style/JunimoGate.IconButton"
+                    android:contentDescription="@string/mod_files_action"
+                    android:tooltipText="@string/mod_files_action"
+                    app:icon="@drawable/ic_folder_24" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/mod_item_export"
                     style="@style/JunimoGate.IconButton"
                     android:contentDescription="@string/mods_bundle_export"

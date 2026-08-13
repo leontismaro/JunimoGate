@@ -39,4 +39,14 @@
         android:id="@+id/navigation_mod_group_editor"
         android:name="org.junimogate.app.ModGroupEditorFragment"
         android:label="@string/mod_group_editor_title" />
+
+    <fragment
+        android:id="@+id/navigation_mod_files"
+        android:name="org.junimogate.app.ModFilesFragment"
+        android:label="@string/mod_files_title" />
+
+    <fragment
+        android:id="@+id/navigation_mod_text_editor"
+        android:name="org.junimogate.app.ModTextEditorFragment"
+        android:label="@string/mod_file_edit_title" />
 </navigation>

@@ -396,6 +396,12 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
             ApplyDrawerLockMode();
     }
 
+    internal void SetDrawerOpenVisible(bool visible)
+    {
+        if (drawerOpen is not null)
+            drawerOpen.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
+    }
+
     internal void RenderDrawerSelection(int destinationId)
     {
         if (drawerNavigation?.Menu is not { } menu)
