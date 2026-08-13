@@ -475,7 +475,16 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
+            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
+                    RequireContext(),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
+                    RequireContext(),
+                    affectedLibraryItemIds,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (inUse.Count != 0)
             {
                 if (IsAdded)
                     Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
@@ -1123,7 +1132,20 @@ public sealed class ModsFragment : Fragment
     {
         try
         {
-            if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
+            var affectedLibraryItemIds = transaction.ScanResult?.Files
+                .Select(file => file.LibraryItemId)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray() ?? Array.Empty<string>();
+            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
+                    RequireContext(),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
+                    RequireContext(),
+                    affectedLibraryItemIds,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (inUse.Count != 0)
             {
                 await DisposePendingTranslationAsync().ConfigureAwait(false);
                 if (IsAdded)
@@ -1661,6 +1683,10 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
+            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
+                    RequireContext(),
+                    cancellationToken)
+                .ConfigureAwait(false);
             var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
                     RequireContext(),
                     items.Select(item => item.LibraryItemId).ToArray(),

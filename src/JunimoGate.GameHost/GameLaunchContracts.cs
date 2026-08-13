@@ -589,6 +589,7 @@ public static class GameLaunchRegistry
     private static readonly TimeSpan StaleDescriptorAge = TimeSpan.FromDays(1);
     private static readonly TimeSpan PendingLaunchStartupGrace = TimeSpan.FromMinutes(2);
     private static readonly SemaphoreSlim StateLock = new(1, 1);
+    private static readonly SemaphoreSlim ModLibraryCoordinationLock = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -713,6 +714,8 @@ public static class GameLaunchRegistry
         ArgumentNullException.ThrowIfNull(profile);
         if (recoveryLevel is < 0 or > 2)
             throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
+        await using var coordination = await AcquireModLibraryCoordinationAsync(context, cancellationToken)
+            .ConfigureAwait(false);
         var isCurrent = modSelection is null
             ? await IsCurrentLegacyProfileAsync(context, profile, cancellationToken).ConfigureAwait(false)
             : await IsCurrentModSelectionAsync(context, modSelection, cancellationToken).ConfigureAwait(false);
@@ -799,6 +802,64 @@ public static class GameLaunchRegistry
             "JunimoGate.LaunchTrace",
             $"descriptor-issued attempt={key[..8]} level={recoveryLevel} descriptorSnapshotReads=0");
         return new GameLaunchIssueResult(GameLaunchIssueStatus.Issued, new GameLaunchHandle(key));
+    }
+
+    public static async ValueTask<IAsyncDisposable> AcquireModLibraryCoordinationAsync(
+        Context context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        await ModLibraryCoordinationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var root = GetRoot(context);
+            Directory.CreateDirectory(root);
+            var lockPath = Path.Combine(root, "mod-library.lock");
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var stream = new FileStream(
+                        lockPath,
+                        FileMode.OpenOrCreate,
+                        FileAccess.ReadWrite,
+                        FileShare.None,
+                        bufferSize: 1,
+                        FileOptions.Asynchronous);
+                    return new ModLibraryCoordinationLease(stream);
+                }
+                catch (IOException)
+                {
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        catch
+        {
+            ModLibraryCoordinationLock.Release();
+            throw;
+        }
+    }
+
+    private sealed class ModLibraryCoordinationLease(FileStream stream) : IAsyncDisposable
+    {
+        private FileStream? stream = stream;
+
+        public async ValueTask DisposeAsync()
+        {
+            var owned = Interlocked.Exchange(ref stream, null);
+            if (owned is null)
+                return;
+            try
+            {
+                await owned.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                ModLibraryCoordinationLock.Release();
+            }
+        }
     }
 
     public static async ValueTask<ConsumedGameLaunch> ConsumeAsync(
