@@ -286,7 +286,7 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
                 issues.Add(new ModTranslationIssue(ModArchiveIssueSeverity.Error, "unsafe_path", entry.FullName, error));
                 continue;
             }
-            var isDirectory = entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\');
+            var isDirectory = IsDirectory(entry);
             if (pathKinds.TryGetValue(safePath.Value, out var existingDirectory))
             {
                 if (isDirectory && existingDirectory)
@@ -743,6 +743,11 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
         return Path.GetExtension(name).ToLowerInvariant() is ".apk" or ".dll" or ".dex" or ".exe" or ".pdb" or ".so" or ".zip";
     }
 
+    private static bool IsDirectory(ZipArchiveEntry entry) =>
+        entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
+        entry.FullName.EndsWith('\\') ||
+        ((entry.ExternalAttributes >> 16) & 0xF000) == 0x4000;
+
     private static bool IsSpecialEntry(ZipArchiveEntry entry)
     {
         const int fileTypeMask = 0xF000;
@@ -996,7 +1001,7 @@ public sealed partial class ModLibraryRepository
                 throw new KeyNotFoundException("A translation target no longer exists.");
 
             using var archive = ZipFile.OpenRead(archivePath);
-            var entries = archive.Entries.Where(entry => !entry.FullName.EndsWith('/'))
+            var entries = archive.Entries.Where(entry => !IsTranslationArchiveDirectory(entry))
                 .ToDictionary(entry => SafeArchivePath.Parse(entry.FullName).Value, StringComparer.Ordinal);
             var recordDirectory = Path.Combine(transactionDirectory, "record");
             var recordBackups = Path.Combine(recordDirectory, "backups");
@@ -1283,6 +1288,11 @@ public sealed partial class ModLibraryRepository
             throw new InvalidDataException("A translation installation record is malformed.", exception);
         }
     }
+
+    private static bool IsTranslationArchiveDirectory(ZipArchiveEntry entry) =>
+        entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
+        entry.FullName.EndsWith('\\') ||
+        ((entry.ExternalAttributes >> 16) & 0xF000) == 0x4000;
 
     private static void RemoveEmptyParents(string directory, string root)
     {

@@ -408,6 +408,45 @@ internal static class ModTranslationInstallTests
         _ = read.GetAwaiter().GetResult();
     }
 
+    public static void AcceptsUnixModeOnlyDirectories()
+    {
+        using var fixture = new Fixture();
+        var target = fixture.ImportSingle(
+            "Example.UnixZip",
+            "UnixZip",
+            ("i18n/default.json", "{\"Key\":\"Default\"}"));
+        using var translation = new MemoryStream();
+        using (var archive = new ZipArchive(translation, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var directory = archive.CreateEntry("UnixZip/i18n");
+            directory.ExternalAttributes = (0x4000 | 0x1ED) << 16;
+            var locale = archive.CreateEntry("UnixZip/i18n/zh.json", CompressionLevel.Fastest);
+            using var output = locale.Open();
+            output.Write(Encoding.UTF8.GetBytes("{\"Key\":\"值\"}"));
+        }
+        translation.Position = 0;
+
+        var transaction = fixture.Repository.CreateTranslationTransaction(
+            [ModTranslationTarget.FromLibraryItem(target)],
+            "unix-directory.zip");
+        try
+        {
+            transaction.ScanAsync(translation).AsTask().GetAwaiter().GetResult();
+            TestHarness.True(transaction.ScanResult!.CanCommit);
+            TestHarness.Equal(1, transaction.ScanResult.Files.Count);
+            TestHarness.Equal("i18n/zh.json", transaction.ScanResult.Files[0].TargetPath);
+            transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
+            TestHarness.True(File.Exists(Path.Combine(
+                fixture.Repository.Layout.GetItemFilesDirectory(target.LibraryItemId),
+                "i18n",
+                "zh.json")));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
     private static void CopyDirectory(string source, string destination)
     {
         foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))

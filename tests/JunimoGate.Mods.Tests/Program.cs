@@ -192,6 +192,8 @@ return TestHarness.Run(
         ModTranslationInstallTests.RecoversInterruptedRestoreWithItsInstallationRecord()),
     ("Mod library instances serialize translation recovery for one root", () =>
         ModTranslationInstallTests.SerializesRepositoriesForTheSameRoot()),
+    ("Mod translations accept Unix mode-only ZIP directories", () =>
+        ModTranslationInstallTests.AcceptsUnixModeOnlyDirectories()),
     ("Mod translation commit rejects targets changed after preview", () =>
         ModTranslationInstallTests.RejectsTargetsChangedAfterPreview()),
     ("Mod library keeps same-version different-content items", () =>
