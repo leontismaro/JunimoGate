@@ -15,7 +15,7 @@ public sealed record ModProfileMember(
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
-            LibraryItemId is not null && !ModContentId.IsValid(LibraryItemId) ||
+            LibraryItemId is not null && !ModLibraryItemId.IsValid(LibraryItemId) ||
             string.IsNullOrWhiteSpace(ExpectedName) || ExpectedName.Length > 256 ||
             string.IsNullOrWhiteSpace(ExpectedVersion) || ExpectedVersion.Length > 128 ||
             ExpectedAuthor?.Length > 256 || AddedAtUtc == default)

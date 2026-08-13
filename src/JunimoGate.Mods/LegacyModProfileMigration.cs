@@ -84,12 +84,9 @@ public sealed class LegacyModProfileMigrator
 
             var import = await library.CommitAsync(prepared.Select(item => item.Prepared).ToArray(), cancellationToken)
                 .ConfigureAwait(false);
-            var committed = import.AllItems
-                .GroupBy(item => item.LibraryItemId, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
             var members = candidates
                 .GroupBy(candidate => candidate.Manifest.UniqueId, StringComparer.OrdinalIgnoreCase)
-                .Select(group => SelectMember(group, prepared, committed))
+                .Select(group => SelectMember(group, prepared, import.ResolvedItemsByPreparedId))
                 .OrderBy(member => member.ExpectedName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(member => member.UniqueId, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -223,12 +220,13 @@ public sealed class LegacyModProfileMigrator
         }
 
         var contentId = Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
+        var libraryItemId = ModLibraryItemId.Create();
         var item = new ModLibraryItem(
             ModLibraryItem.CurrentSchema,
-            contentId,
+            libraryItemId,
             contentId,
             candidate.Manifest,
-            $"library/{contentId}/files",
+            $"library/{libraryItemId}/files",
             DateTimeOffset.UtcNow,
             $"legacy-{profileId.Value}-{(candidate.Enabled ? "enabled" : "disabled")}",
             files.Length,

@@ -69,6 +69,8 @@ public sealed record ModArchiveImportResult(
 {
     public IReadOnlyList<ModLibraryItem> AllItems => AddedItems.Concat(ReusedItems).ToArray();
     public IReadOnlyList<ModBundleDefinition> Bundles { get; init; } = Array.Empty<ModBundleDefinition>();
+    internal IReadOnlyDictionary<string, ModLibraryItem> ResolvedItemsByPreparedId { get; init; } =
+        new Dictionary<string, ModLibraryItem>(StringComparer.Ordinal);
 }
 
 public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
@@ -394,12 +396,13 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
         }
 
         var contentId = Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
+        var libraryItemId = ModLibraryItemId.Create();
         var item = new ModLibraryItem(
             ModLibraryItem.CurrentSchema,
-            contentId,
+            libraryItemId,
             contentId,
             candidate.Manifest,
-            $"library/{contentId}/files",
+            $"library/{libraryItemId}/files",
             DateTimeOffset.UtcNow,
             sourceArchiveName,
             fileCount,

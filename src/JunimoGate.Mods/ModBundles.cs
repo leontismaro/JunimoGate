@@ -17,7 +17,7 @@ public sealed record ModBundleMember(
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
-            !ModContentId.IsValid(LibraryItemId) || OriginalRootPath.Length > 4096 ||
+            !ModLibraryItemId.IsValid(LibraryItemId) || OriginalRootPath.Length > 4096 ||
             OriginalRootPath.Contains('\\', StringComparison.Ordinal))
         {
             throw new InvalidDataException("A Mod bundle member is malformed.");

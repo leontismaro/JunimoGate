@@ -110,6 +110,8 @@ return TestHarness.Run(
         ModProfileV2Tests.RejectsInvalidMemberMutations()),
     ("Profile v2 migration preserves the legacy fallback", () =>
         ModProfileV2Tests.MigratesLegacyDirectoriesWithoutRemovingFallback()),
+    ("Profile v2 migration reuses resolved library identities", () =>
+        ModProfileV2Tests.ReusesResolvedLibraryIdentityAcrossLegacyProfiles()),
     ("Profile v2 migration rejects ambiguous enabled Mods", () =>
         ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
     ("Active Profile selection uses revision-checked updates", () =>
@@ -162,6 +164,14 @@ return TestHarness.Run(
         ModLibraryTests.RejectsUnsafeArchiveShapes()),
     ("Mod library imports atomically and reuses identical content", () =>
         ModLibraryTests.ImportsAndReusesContent()),
+    ("Mod files list and edit the actual private directory", () =>
+        ModFileServiceTests.ListsAndEditsActualPrivateFiles()),
+    ("Mod files reject unsafe protected and concurrent writes", () =>
+        ModFileServiceTests.RejectsUnsafeProtectedAndConcurrentWrites()),
+    ("Mod files create text files in the current directory", () =>
+        ModFileServiceTests.CreatesTextFilesInTheCurrentDirectory()),
+    ("Mod files accept UTF-8 split at the text probe boundary", () =>
+        ModFileServiceTests.AcceptsUtf8SplitAtTheProbeBoundary()),
     ("Mod library keeps same-version different-content items", () =>
         ModLibraryTests.KeepsDistinctContentCandidates()),
     ("Mod library persists bundles and unlock overrides", () =>

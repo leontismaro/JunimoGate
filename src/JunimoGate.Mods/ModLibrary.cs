@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -36,7 +37,7 @@ public sealed record ModLibraryItem(
 
     public void Validate()
     {
-        if (Schema != CurrentSchema || !ModContentId.IsValid(LibraryItemId) || ContentId != LibraryItemId ||
+        if (Schema != CurrentSchema || !ModLibraryItemId.IsValid(LibraryItemId) || !ModContentId.IsValid(ContentId) ||
             Manifest is null || string.IsNullOrWhiteSpace(Manifest.Name) || string.IsNullOrWhiteSpace(Manifest.Author) ||
             string.IsNullOrWhiteSpace(Manifest.Version) || string.IsNullOrWhiteSpace(Manifest.UniqueId) ||
             ImportedAtUtc == default || FileCount < 1 || TotalBytes < 1 ||
@@ -72,10 +73,11 @@ public sealed record ModLibraryIndex(
             throw new InvalidDataException("The Mod library index is malformed.");
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
+        var contentIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Items)
         {
             item?.Validate();
-            if (item is null || !ids.Add(item.LibraryItemId))
+            if (item is null || !ids.Add(item.LibraryItemId) || !contentIds.Add(item.ContentId))
                 throw new InvalidDataException("The Mod library index contains a duplicate or null item.");
         }
         BundleCatalog.Validate(Items);
@@ -166,7 +168,7 @@ public sealed class ModLibraryRepository
         var requestedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var libraryItemId in libraryItemIds)
         {
-            if (!ModContentId.IsValid(libraryItemId))
+            if (!ModLibraryItemId.IsValid(libraryItemId))
                 throw new ArgumentException("A Mod library item ID is invalid.", nameof(libraryItemIds));
             requestedIds.Add(libraryItemId);
         }
@@ -248,25 +250,51 @@ public sealed class ModLibraryRepository
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var known = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
+            var knownByContent = current.Items.ToDictionary(item => item.ContentId, StringComparer.Ordinal);
             var added = new List<ModLibraryItem>();
             var reused = new List<ModLibraryItem>();
             var recoveredItems = new List<ModLibraryItem>();
             var movedDirectories = new List<string>();
+            var resolvedPreparedByRoot = new Dictionary<string, PreparedModLibraryItem>(StringComparer.Ordinal);
+            var resolvedItemsByPreparedId = new Dictionary<string, ModLibraryItem>(StringComparer.Ordinal);
             try
             {
                 foreach (var prepared in preparedItems)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     prepared.Item.Validate();
-                    if (known.TryGetValue(prepared.Item.LibraryItemId, out var existing))
+                    if (knownByContent.TryGetValue(prepared.Item.ContentId, out var existing))
                     {
                         var existingDirectory = Layout.GetItemDirectory(existing.LibraryItemId);
                         if (!Directory.Exists(existingDirectory))
                         {
+                            await WriteItemMetadataAsync(
+                                    Path.Combine(prepared.Directory, "library-item.json"),
+                                    existing,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
                             Directory.Move(prepared.Directory, existingDirectory);
                             movedDirectories.Add(existingDirectory);
                         }
                         reused.Add(existing);
+                        resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = existing });
+                        resolvedItemsByPreparedId.Add(prepared.Item.LibraryItemId, existing);
+                        continue;
+                    }
+
+                    var orphaned = await FindOrphanByContentAsync(
+                            prepared.Item.ContentId,
+                            known.Keys,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (orphaned is not null)
+                    {
+                        known.Add(orphaned.LibraryItemId, orphaned);
+                        knownByContent.Add(orphaned.ContentId, orphaned);
+                        recoveredItems.Add(orphaned);
+                        reused.Add(orphaned);
+                        resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = orphaned });
+                        resolvedItemsByPreparedId.Add(prepared.Item.LibraryItemId, orphaned);
                         continue;
                     }
 
@@ -284,20 +312,24 @@ public sealed class ModLibraryRepository
                         known.Add(recoveredItem.LibraryItemId, recoveredItem);
                         recoveredItems.Add(recoveredItem);
                         reused.Add(recoveredItem);
+                        resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = recoveredItem });
+                        resolvedItemsByPreparedId.Add(prepared.Item.LibraryItemId, recoveredItem);
                         continue;
                     }
 
                     Directory.Move(prepared.Directory, destination);
                     movedDirectories.Add(destination);
                     known.Add(prepared.Item.LibraryItemId, prepared.Item);
+                    knownByContent.Add(prepared.Item.ContentId, prepared.Item);
                     added.Add(prepared.Item);
+                    resolvedPreparedByRoot.Add(prepared.RootPath, prepared);
+                    resolvedItemsByPreparedId.Add(prepared.Item.LibraryItemId, prepared.Item);
                 }
 
-                var preparedByRoot = preparedItems.ToDictionary(item => item.RootPath, StringComparer.Ordinal);
                 var importedBundles = CreateImportedBundles(
                     current.BundleCatalog,
                     detectedBundles ?? Array.Empty<DetectedModBundle>(),
-                    preparedByRoot,
+                    resolvedPreparedByRoot,
                     bundleOrigin);
                 var catalogChanged = importedBundles.Any(bundle =>
                     current.BundleCatalog.Bundles.All(existing => existing.BundleId != bundle.BundleId));
@@ -335,6 +367,7 @@ public sealed class ModLibraryRepository
                 return new ModArchiveImportResult(added, reused)
                 {
                     Bundles = importedBundles,
+                    ResolvedItemsByPreparedId = resolvedItemsByPreparedId,
                 };
             }
             catch
@@ -563,6 +596,63 @@ public sealed class ModLibraryRepository
         }
     }
 
+    private static async ValueTask WriteItemMetadataAsync(
+        string path,
+        ModLibraryItem item,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+            path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            16 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await JsonSerializer.SerializeAsync(stream, item, JsonOptions, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private async ValueTask<ModLibraryItem?> FindOrphanByContentAsync(
+        string contentId,
+        IEnumerable<string> indexedItemIds,
+        CancellationToken cancellationToken)
+    {
+        var indexed = indexedItemIds.ToHashSet(StringComparer.Ordinal);
+        ModLibraryItem? match = null;
+        foreach (var directory in Directory.EnumerateDirectories(Layout.LibraryDirectory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var info = new DirectoryInfo(directory);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                !ModLibraryItemId.IsValid(info.Name) || indexed.Contains(info.Name))
+            {
+                continue;
+            }
+
+            ModLibraryItem candidate;
+            try
+            {
+                candidate = await ReadItemMetadataAsync(
+                        Path.Combine(directory, "library-item.json"),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            if (candidate.LibraryItemId != info.Name || candidate.ContentId != contentId)
+                continue;
+            if (!Directory.Exists(Path.Combine(directory, "files")))
+                throw new InvalidDataException("An orphaned Mod library directory is incomplete.");
+            if (match is not null)
+                throw new InvalidDataException("Multiple orphaned Mod library items have the same imported content identity.");
+            match = candidate;
+        }
+        return match;
+    }
+
     private static IReadOnlyList<ModBundleDefinition> CreateImportedBundles(
         ModBundleCatalog current,
         IReadOnlyList<DetectedModBundle> detected,
@@ -711,4 +801,11 @@ internal static class ModContentId
 {
     public static bool IsValid(string? value) =>
         value is { Length: 64 } && value.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+}
+
+internal static class ModLibraryItemId
+{
+    public static string Create() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+
+    public static bool IsValid(string? value) => ModContentId.IsValid(value);
 }

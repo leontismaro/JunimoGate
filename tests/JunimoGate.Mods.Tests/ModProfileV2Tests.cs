@@ -211,6 +211,32 @@ internal static class ModProfileV2Tests
             .AsTask().GetAwaiter().GetResult());
     }
 
+    public static void ReusesResolvedLibraryIdentityAcrossLegacyProfiles()
+    {
+        using var fixture = new Fixture();
+        var legacyRepository = new ModProfileRepository(fixture.Root);
+        var library = new ModLibraryRepository(fixture.LibraryRoot);
+        var migrator = new LegacyModProfileMigrator(fixture.Root, library, fixture.Repository);
+        var firstId = ProfileId.Parse("default");
+        var secondId = ProfileId.Parse("secondary");
+
+        _ = legacyRepository.OpenOrCreateAsync(firstId).AsTask().GetAwaiter().GetResult();
+        WriteMod(new ProfileLayout(fixture.Root, firstId).EnabledDirectory,
+            "Shared", "Example.Shared", "1.0.0", "same-content");
+        var first = migrator.MigrateAsync(firstId, "First").AsTask().GetAwaiter().GetResult();
+
+        _ = legacyRepository.OpenOrCreateAsync(secondId).AsTask().GetAwaiter().GetResult();
+        WriteMod(new ProfileLayout(fixture.Root, secondId).EnabledDirectory,
+            "Shared", "Example.Shared", "1.0.0", "same-content");
+        var second = migrator.MigrateAsync(secondId, "Second").AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal(0, second.ImportedItems);
+        TestHarness.Equal(1, second.ReusedItems);
+        TestHarness.Equal(
+            first.Profile.Members.Single().LibraryItemId,
+            second.Profile.Members.Single().LibraryItemId);
+    }
+
     public static void PersistsActiveProfileWithRevisionChecks()
     {
         using var fixture = new Fixture();

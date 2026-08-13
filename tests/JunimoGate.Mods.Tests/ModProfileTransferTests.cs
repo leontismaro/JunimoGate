@@ -108,8 +108,9 @@ internal static class ModProfileTransferTests
             ?? throw new InvalidOperationException("The complete group import result is missing.");
 
         TestHarness.Equal(1, imported.AddedItems.Count);
-        TestHarness.Equal(packagedId, imported.AddedItems[0].LibraryItemId);
-        TestHarness.Equal(packagedId, imported.Profile.Members.Single().LibraryItemId);
+        TestHarness.Equal(packagedId, imported.AddedItems[0].ContentId);
+        TestHarness.False(packagedId == imported.AddedItems[0].LibraryItemId);
+        TestHarness.Equal(imported.AddedItems[0].LibraryItemId, imported.Profile.Members.Single().LibraryItemId);
         TestHarness.Equal("Complete group", imported.Profile.DisplayName);
         TestHarness.Equal("Complete package description", imported.Profile.Description);
         TestHarness.Equal(ModAssemblyBindingPolicy.FirstLoaded, imported.Profile.AssemblyBindingPolicyOverride);

@@ -102,8 +102,12 @@ internal static class ModLibraryTests
         TestHarness.Equal(1, first.AddedItems.Count);
         TestHarness.Equal(0, first.ReusedItems.Count);
         var item = first.AddedItems[0];
+        TestHarness.False(item.LibraryItemId == item.ContentId);
         TestHarness.True(File.Exists(Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "Mod.dll")));
         TestHarness.True(File.Exists(fixture.Repository.Layout.GetItemMetadataPath(item.LibraryItemId)));
+
+        var generated = Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "config.toml");
+        File.WriteAllText(generated, "speed = 2");
 
         var afterFirst = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(2L, afterFirst.Revision);
@@ -114,6 +118,7 @@ internal static class ModLibraryTests
         TestHarness.Equal(0, second.AddedItems.Count);
         TestHarness.Equal(1, second.ReusedItems.Count);
         TestHarness.Equal(item.LibraryItemId, second.ReusedItems[0].LibraryItemId);
+        TestHarness.Equal("speed = 2", File.ReadAllText(generated));
         var afterSecond = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(afterFirst.Revision, afterSecond.Revision);
         TestHarness.Equal(1, afterSecond.Items.Count);

@@ -24,7 +24,7 @@ public sealed record ModProfileTransferMember(
     public void Validate(ModProfileTransferKind kind)
     {
         if (string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
-            SourceLibraryItemId is not null && !ModContentId.IsValid(SourceLibraryItemId) ||
+            SourceLibraryItemId is not null && !ModLibraryItemId.IsValid(SourceLibraryItemId) ||
             PackagedContentId is not null && !ModContentId.IsValid(PackagedContentId) ||
             kind == ModProfileTransferKind.Manifest && PackagedContentId is not null ||
             string.IsNullOrWhiteSpace(ExpectedName) || ExpectedName.Length > 256 ||
@@ -44,7 +44,7 @@ public sealed record ModProfileTransferBundleMember(
     public void Validate(ModProfileTransferKind kind)
     {
         if (string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
-            SourceLibraryItemId is not null && !ModContentId.IsValid(SourceLibraryItemId) ||
+            SourceLibraryItemId is not null && !ModLibraryItemId.IsValid(SourceLibraryItemId) ||
             PackagedContentId is not null && !ModContentId.IsValid(PackagedContentId) ||
             kind == ModProfileTransferKind.Manifest && PackagedContentId is not null ||
             kind == ModProfileTransferKind.Complete && PackagedContentId is null)
@@ -566,7 +566,7 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         var addedIds = imported.AddedItems.Select(item => item.LibraryItemId).ToArray();
         try
         {
-            var packaged = imported.AllItems.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
+            var packaged = imported.AllItems.ToDictionary(item => item.ContentId, StringComparer.Ordinal);
             foreach (var member in Document.Members.Where(member => member.PackagedContentId is not null))
             {
                 if (!packaged.TryGetValue(member.PackagedContentId!, out var item) ||

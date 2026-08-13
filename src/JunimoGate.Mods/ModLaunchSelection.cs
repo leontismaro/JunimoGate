@@ -7,7 +7,7 @@ public sealed record ModLaunchSelectionItem(
 {
     public void Validate()
     {
-        if (!ModContentId.IsValid(LibraryItemId) || string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
+        if (!ModLibraryItemId.IsValid(LibraryItemId) || string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
             RelativeModRoot != $"library/{LibraryItemId}/files")
         {
             throw new InvalidDataException("The Mod launch selection item is malformed.");
