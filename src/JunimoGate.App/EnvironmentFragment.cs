@@ -1,4 +1,3 @@
-using Android.Content.PM;
 using Android.OS;
 using Android.Runtime;
 using Android.Views;
@@ -10,12 +9,14 @@ using Fragment = AndroidX.Fragment.App.Fragment;
 using JObject = Java.Lang.Object;
 using JString = Java.Lang.String;
 using OperationCanceledException = System.OperationCanceledException;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.App;
 
 [Register("org.junimogate.app.EnvironmentFragment")]
 public sealed class EnvironmentFragment : Fragment
 {
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(15);
     private TextView? appVersion;
     private LinearLayout? games;
     private TextView? gamesEmpty;
@@ -23,6 +24,7 @@ public sealed class EnvironmentFragment : Fragment
     private LinearProgressIndicator? progress;
     private MaterialButton? refresh;
     private CancellationTokenSource? cancellation;
+    private readonly EnvironmentReadGeneration readGeneration = new();
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
         inflater.Inflate(Resource.Layout.fragment_environment, container, false)
@@ -48,6 +50,7 @@ public sealed class EnvironmentFragment : Fragment
 
     public override void OnStop()
     {
+        readGeneration.Invalidate();
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = null;
@@ -71,13 +74,14 @@ public sealed class EnvironmentFragment : Fragment
 
     private void Refresh()
     {
+        var generation = readGeneration.Begin();
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = new CancellationTokenSource();
-        _ = LoadAsync(cancellation.Token);
+        _ = LoadAsync(generation, cancellation.Token);
     }
 
-    private async Task LoadAsync(CancellationToken cancellationToken)
+    private async Task LoadAsync(long generation, CancellationToken cancellationToken)
     {
         if (progress is not null)
             progress.Visibility = ViewStates.Visible;
@@ -85,57 +89,110 @@ public sealed class EnvironmentFragment : Fragment
             refresh.Enabled = false;
         try
         {
-            var info = await new ProductInformationService(RequireContext())
-                .ReadEnvironmentAsync(cancellationToken);
-            if (cancellationToken.IsCancellationRequested)
+            var service = new ProductInformationService(RequireContext());
+            var local = await service.ReadLocalEnvironmentAsync(cancellationToken);
+            PostIfCurrent(generation, cancellationToken, () => RenderLocal(local));
+            var packageRead = service
+                .ReadEnvironmentAsync(generation, local, ReadTimeout, cancellationToken)
+                .AsTask();
+            var info = await packageRead;
+            if (!readGeneration.IsCurrent(generation) || cancellationToken.IsCancellationRequested)
                 return;
-            Activity?.RunOnUiThread(() => Render(info));
+            PostIfCurrent(generation, cancellationToken, () => Render(info));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Leaving or refreshing cancels the previous read.
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+        catch (TimeoutException)
         {
-            global::Android.Util.Log.Warn("JunimoGate.Environment", $"environment-unavailable:{exception.GetType().Name}");
-            Activity?.RunOnUiThread(() =>
-            {
-                if (gamesEmpty is not null)
-                {
-                    gamesEmpty.Text = GetString(Resource.String.environment_read_failed);
-                    gamesEmpty.Visibility = ViewStates.Visible;
-                }
-            });
+            Log.Warn("JunimoGate.Environment", $"environment-read-timeout generation={generation} elapsedMs={(long)ReadTimeout.TotalMilliseconds}");
+            PostIfCurrent(generation, cancellationToken, RenderReadFailure);
+        }
+        catch (Exception exception) when (IsRecoverable(exception))
+        {
+            Log.Warn(
+                "JunimoGate.Environment",
+                $"environment-read-failed generation={generation} exception={exception.GetType().Name}");
+            PostIfCurrent(generation, cancellationToken, RenderReadFailure);
         }
         finally
         {
-            if (!cancellationToken.IsCancellationRequested)
-            {
-                Activity?.RunOnUiThread(() =>
-                {
-                    if (progress is not null)
-                        progress.Visibility = ViewStates.Gone;
-                    if (refresh is not null)
-                        refresh.Enabled = true;
-                });
-            }
+            PostIfCurrent(generation, cancellationToken, FinishLoading);
         }
+    }
+
+    private void PostIfCurrent(long generation, CancellationToken cancellationToken, Action action)
+    {
+        if (!readGeneration.IsCurrent(generation) || cancellationToken.IsCancellationRequested)
+            return;
+        Activity?.RunOnUiThread(() =>
+        {
+            if (readGeneration.IsCurrent(generation) && !cancellationToken.IsCancellationRequested && IsAdded)
+                action();
+        });
+    }
+
+    private void FinishLoading()
+    {
+        if (progress is not null)
+            progress.Visibility = ViewStates.Gone;
+        if (refresh is not null)
+            refresh.Enabled = true;
+    }
+
+    private void RenderLocal(LocalEnvironmentDisplayInfo info)
+    {
+        if (appVersion is null || smapi is null)
+            return;
+        appVersion.Text = FormatString(
+            Resource.String.environment_app_version_value,
+            new JString(info.AppVersion));
+        smapi.Text = FormatString(
+            Resource.String.environment_smapi_value,
+            new JString(info.Smapi.SmapiApiVersion));
     }
 
     private void Render(EnvironmentDisplayInfo info)
     {
         if (appVersion is null || games is null || gamesEmpty is null || smapi is null)
             return;
-        appVersion.Text = FormatString(
-            Resource.String.environment_app_version_value,
-            new JString(info.AppVersion));
+        RenderLocal(new LocalEnvironmentDisplayInfo(info.AppVersion, info.Smapi));
         games.RemoveAllViews();
         foreach (var game in info.Games)
             games.AddView(CreateGameView(game));
-        gamesEmpty.Visibility = info.Games.Count == 0 ? ViewStates.Visible : ViewStates.Gone;
-        smapi.Text = FormatString(
-            Resource.String.environment_smapi_value,
-            new JString(info.Smapi.SmapiApiVersion));
+        gamesEmpty.Text = GetString(info.PackageReadStatus switch
+        {
+            EnvironmentPackageReadStatus.Complete => Resource.String.environment_no_installed_game,
+            EnvironmentPackageReadStatus.Partial => Resource.String.environment_read_partial,
+            EnvironmentPackageReadStatus.Failed => Resource.String.environment_read_failed,
+            _ => throw new InvalidOperationException("The package read status is invalid."),
+        });
+        gamesEmpty.Visibility = info.PackageReadStatus == EnvironmentPackageReadStatus.Complete && info.Games.Count > 0
+            ? ViewStates.Gone
+            : ViewStates.Visible;
+    }
+
+    private void RenderReadFailure()
+    {
+        if (appVersion is not null && appVersion.Text == GetString(Resource.String.environment_loading))
+        {
+            appVersion.Text = FormatString(
+                Resource.String.environment_app_version_value,
+                new JString("—"));
+        }
+        if (smapi is not null && smapi.Text == GetString(Resource.String.environment_loading))
+        {
+            smapi.Text = FormatString(
+                Resource.String.environment_smapi_value,
+                new JString("—"));
+        }
+        games?.RemoveAllViews();
+        if (gamesEmpty is not null)
+        {
+            gamesEmpty.Text = GetString(Resource.String.environment_read_failed);
+            gamesEmpty.Visibility = ViewStates.Visible;
+        }
     }
 
     private View CreateGameView(InstalledGameDisplayInfo game)
@@ -159,33 +216,15 @@ public sealed class EnvironmentFragment : Fragment
             _ => throw new InvalidOperationException("The installed game status is invalid."),
         };
         status!.Text = statusText;
-        TrySetGameIcon(icon, game.PackageName);
+        if (game.Icon is not null)
+            icon?.SetImageDrawable(game.Icon);
         return view;
     }
 
-    private void TrySetGameIcon(ImageView? icon, string packageName)
-    {
-        if (icon is null)
-            return;
-        try
-        {
-            var manager = RequireContext().PackageManager;
-            var application = manager is null
-                ? null
-                : OperatingSystem.IsAndroidVersionAtLeast(33)
-                    ? manager.GetApplicationInfo(
-                        packageName,
-                        PackageManager.ApplicationInfoFlags.Of(0L))
-                    : manager.GetApplicationInfo(packageName, (PackageInfoFlags)0);
-            var drawable = application?.LoadIcon(manager);
-            if (drawable is not null)
-                icon.SetImageDrawable(drawable);
-        }
-        catch (PackageManager.NameNotFoundException)
-        {
-            // The package can disappear between the snapshot and UI render; the fallback icon remains.
-        }
-    }
+    private static bool IsRecoverable(Exception exception) => exception is not (
+        OutOfMemoryException or
+        StackOverflowException or
+        AccessViolationException);
 
     private string FormatString(int resourceId, params JObject[] arguments) =>
         Resources?.GetString(resourceId, arguments)

@@ -414,6 +414,7 @@
     <string name="environment_smapi_value">版本 %1$s\n已内置于 JunimoGate，并随应用更新。</string>
     <string name="environment_refresh">重新检测</string>
     <string name="environment_read_failed">无法读取已安装包信息。</string>
+    <string name="environment_read_partial">部分安装包信息读取失败，已显示其余可用结果。</string>
     <plurals name="environment_file_count">
         <item quantity="one">%1$d 个文件</item>
         <item quantity="other">%1$d 个文件</item>

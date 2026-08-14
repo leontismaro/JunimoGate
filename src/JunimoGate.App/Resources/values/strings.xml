@@ -414,6 +414,7 @@
     <string name="environment_smapi_value">Version %1$s\nIncluded with JunimoGate and updated with the app.</string>
     <string name="environment_refresh">Refresh</string>
     <string name="environment_read_failed">Package information could not be read.</string>
+    <string name="environment_read_partial">Some installed package information could not be read. The available results are shown above.</string>
     <plurals name="environment_file_count">
         <item quantity="one">%1$d file</item>
         <item quantity="other">%1$d files</item>

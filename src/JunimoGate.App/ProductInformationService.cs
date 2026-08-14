@@ -1,10 +1,12 @@
 using Android.Content;
 using Android.Content.PM;
+using Android.Graphics.Drawables;
 using JunimoGate.Android;
 using JunimoGate.Core;
 using JunimoGate.GameHost;
 using JunimoGate.Mods;
 using System.Xml;
+using Log = JunimoGate.Android.JunimoGateLog;
 
 namespace JunimoGate.App;
 
@@ -20,11 +22,17 @@ internal sealed record InstalledGameDisplayInfo(
     string DisplayName,
     string? VersionName,
     long? VersionCode,
-    InstalledGameStatus Status);
+    InstalledGameStatus Status,
+    Drawable? Icon);
 
 internal sealed record EnvironmentDisplayInfo(
     string AppVersion,
     IReadOnlyList<InstalledGameDisplayInfo> Games,
+    GameHostRuntimeInformation Smapi,
+    EnvironmentPackageReadStatus PackageReadStatus);
+
+internal sealed record LocalEnvironmentDisplayInfo(
+    string AppVersion,
     GameHostRuntimeInformation Smapi);
 
 internal sealed record HomeSummary(
@@ -35,68 +43,80 @@ internal sealed record HomeSummary(
 
 internal sealed class ProductInformationService
 {
+    private static readonly BoundedRetirableTaskGate EnvironmentPackageReadGate = new(2);
     private readonly Context context;
+    private readonly AndroidInstalledPackageSummaryReader packageSummaryReader;
+    private readonly EnvironmentPackageReadService environmentPackageReader;
 
     public ProductInformationService(Context context)
     {
         ArgumentNullException.ThrowIfNull(context);
         this.context = context.ApplicationContext ?? context;
+        packageSummaryReader = new AndroidInstalledPackageSummaryReader(this.context);
+        environmentPackageReader = new EnvironmentPackageReadService(
+            packageSummaryReader,
+            new ProductEnvironmentPackageReadLog(),
+            [
+                ("play", AndroidPlatformBoundary.PlayPackageName),
+                ("galaxy", AndroidPlatformBoundary.SamsungPackageName),
+            ]);
     }
 
-    public async ValueTask<EnvironmentDisplayInfo> ReadEnvironmentAsync(CancellationToken cancellationToken)
+    public Task<LocalEnvironmentDisplayInfo> ReadLocalEnvironmentAsync(CancellationToken cancellationToken) =>
+        Task.Run(
+            () => new LocalEnvironmentDisplayInfo(
+                ReadAppVersion(),
+                GameHostRuntimeInformationReader.Read(context)),
+            cancellationToken);
+
+    public async ValueTask<EnvironmentDisplayInfo> ReadEnvironmentAsync(
+        long generation,
+        LocalEnvironmentDisplayInfo local,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        var provider = new AndroidPackageInstallationSnapshotProvider(context);
+        ArgumentNullException.ThrowIfNull(local);
+        return await EnvironmentPackageReadGate.RunAsync(
+            token => ReadEnvironment(generation, local, token),
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private EnvironmentDisplayInfo ReadEnvironment(
+        long generation,
+        LocalEnvironmentDisplayInfo local,
+        CancellationToken cancellationToken)
+    {
+        var packageResult = environmentPackageReader.Read(generation, cancellationToken);
         var games = new List<InstalledGameDisplayInfo>(2);
-        foreach (var packageName in new[]
-                 {
-                     AndroidPlatformBoundary.PlayPackageName,
-                     AndroidPlatformBoundary.SamsungPackageName,
-                 })
+        foreach (var result in packageResult.Packages)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var snapshot = await provider.GetSnapshotAsync(packageName, cancellationToken).ConfigureAwait(false);
-            if (snapshot is null)
+            if (result.Status != InstalledPackageSummaryStatus.Found || result.Summary is not { } summary)
                 continue;
 
-            var certificate = snapshot.SigningIdentity is null
+            var certificate = summary.SigningIdentity is null
                 ? null
-                : KnownGameCertificate.Verify(packageName, snapshot.SigningIdentity);
-            var selectable = packageName == AndroidPlatformBoundary.PlayPackageName &&
+                : KnownGameCertificate.Verify(summary.PackageName, summary.SigningIdentity);
+            var selectable = summary.PackageName == AndroidPlatformBoundary.PlayPackageName &&
                              certificate?.AllowsCodeExecution == true;
             games.Add(new InstalledGameDisplayInfo(
-                packageName,
-                ReadApplicationLabel(packageName),
-                snapshot.VersionName,
-                snapshot.LongVersionCode,
+                summary.PackageName,
+                summary.DisplayName,
+                summary.VersionName,
+                summary.VersionCode,
                 Status: selectable
                     ? InstalledGameStatus.Supported
                     : certificate?.Status == GameCertificateStatus.Unrecognized
                         ? InstalledGameStatus.Unrecognized
-                        : InstalledGameStatus.DetectedUnsupported));
+                        : InstalledGameStatus.DetectedUnsupported,
+                packageSummaryReader.GetIcon(summary.PackageName)));
         }
 
-        return new EnvironmentDisplayInfo(ReadAppVersion(), games, GameHostRuntimeInformationReader.Read(context));
-    }
-
-    private string ReadApplicationLabel(string packageName)
-    {
-        var manager = context.PackageManager
-            ?? throw new InvalidOperationException("Android PackageManager is unavailable.");
-        try
-        {
-            var application = OperatingSystem.IsAndroidVersionAtLeast(33)
-                ? manager.GetApplicationInfo(
-                    packageName,
-                    PackageManager.ApplicationInfoFlags.Of(0L))
-                : manager.GetApplicationInfo(packageName, (PackageInfoFlags)0);
-            return application?.LoadLabel(manager)?.ToString() is { Length: > 0 } label
-                ? label
-                : "Stardew Valley";
-        }
-        catch (PackageManager.NameNotFoundException)
-        {
-            return "Stardew Valley";
-        }
+        return new EnvironmentDisplayInfo(
+            local.AppVersion,
+            games,
+            local.Smapi,
+            packageResult.Status);
     }
 
     public HomeSummary ReadHomeSummary()
@@ -217,5 +237,14 @@ internal sealed class ProductInformationService
         var package = manager.GetPackageInfo(context.PackageName!, (PackageInfoFlags)0)
             ?? throw new InvalidOperationException("JunimoGate package metadata is unavailable.");
         return package.VersionName ?? "—";
+    }
+
+    private sealed class ProductEnvironmentPackageReadLog : IEnvironmentPackageReadLog
+    {
+        private const string Tag = "JunimoGate.Environment";
+
+        public void Info(string message) => Log.Info(Tag, message);
+
+        public void Warn(string message) => Log.Warn(Tag, message);
     }
 }
