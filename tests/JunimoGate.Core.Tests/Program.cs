@@ -8,6 +8,20 @@ var digest2 = Sha256Digest.Parse(new string('2', 64));
 var digest3 = Sha256Digest.Parse(new string('3', 64));
 
 return TestHarness.Run(
+    ("Environment package reading preserves independent results", () =>
+        EnvironmentPackageReadingTests.PreservesIndependentPackageResults()),
+    ("Environment package reading leaves the caller thread immediately", () =>
+        EnvironmentPackageReadingTests.ReturnsImmediatelyWhileReaderIsBlocked()),
+    ("Environment package reading replaces a timed-out read", () =>
+        EnvironmentPackageReadingTests.ReplacesATimedOutRead()),
+    ("Environment package reading bounds blocked workers", () =>
+        EnvironmentPackageReadingTests.BoundsBlockedWorkers()),
+    ("Environment package reading serializes healthy reads", () =>
+        EnvironmentPackageReadingTests.SerializesHealthyReads()),
+    ("Environment package reading rejects stale generations", () =>
+        EnvironmentPackageReadingTests.RejectsStaleGenerations()),
+    ("Environment package reading writes redacted terminal logs", () =>
+        EnvironmentPackageReadingTests.WritesRedactedTerminalLogs()),
     ("SMAPI logs parse levels, multiline messages, and critical errors", () =>
     {
         var parsed = ProductLogParser.ParseSmapi("""

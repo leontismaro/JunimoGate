@@ -8,6 +8,7 @@
     <Compile Include="../../src/JunimoGate.App/GitHubUpdateService.cs" Link="App/GitHubUpdateService.cs" />
     <Compile Include="../../src/JunimoGate.App/ModDocumentPickerPolicy.cs" Link="App/ModDocumentPickerPolicy.cs" />
     <Compile Include="../../src/JunimoGate.App/SmapiLogUploadClient.cs" Link="App/SmapiLogUploadClient.cs" />
+    <Compile Include="../../src/JunimoGate.App/EnvironmentPackageReading.cs" Link="App/EnvironmentPackageReading.cs" />
     <ProjectReference Include="../../src/JunimoGate.Core/JunimoGate.Core.csproj" />
   </ItemGroup>
 </Project>
