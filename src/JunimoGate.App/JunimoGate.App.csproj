@@ -5,8 +5,8 @@
     <OutputType>Exe</OutputType>
     <ApplicationId>org.junimogate.app</ApplicationId>
     <ApplicationTitle>JunimoGate</ApplicationTitle>
-    <ApplicationVersion>5</ApplicationVersion>
-    <ApplicationDisplayVersion>0.3.0-beta.1</ApplicationDisplayVersion>
+    <ApplicationVersion>7</ApplicationVersion>
+    <ApplicationDisplayVersion>0.3.0</ApplicationDisplayVersion>
     <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
