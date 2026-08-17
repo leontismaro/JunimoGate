@@ -280,8 +280,12 @@ return TestHarness.Run(
         AndroidMainThreadTaskQueueTests.PreservesTaskFailureForTheWaitingProducer()),
     ("SMAPI Android main-thread queue executes reentrant work inline", () =>
         AndroidMainThreadTaskQueueTests.ExecutesInlineWhenAlreadyOnTheGameThread()),
+    ("SMAPI Android main-thread queue can defer reentrant work", () =>
+        AndroidMainThreadTaskQueueTests.DefersWorkWhenAlreadyOnTheGameThread()),
     ("SMAPI Android main-thread queue releases pending work on reset", () =>
         AndroidMainThreadTaskQueueTests.ResetFaultsPendingProducers()),
+    ("SMAPI Android main-thread queue tracks queued and inline work", () =>
+        AndroidMainThreadTaskQueueTests.WrapsQueuedAndInlineWorkInTrackingScopes()),
     ("SMAPI Android update failures bound repeated log detail", () =>
         AndroidUpdateFailureTrackerTests.LogsOnlyTheFirstFailureAndOneSuppressionNotice()),
     ("SMAPI Android update failures reset after recovery", () =>
