@@ -45,6 +45,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private Task? checkpointTask;
     private CancellationTokenSource? backgroundPersistenceCancellation;
     private Task? backgroundPersistenceTask;
+    private int smapiStartupReady;
+    private int runtimeFailureHandled;
     private static readonly TimeSpan BackgroundPersistenceDelay = TimeSpan.FromMilliseconds(250);
     private const long LoadingFadeDurationMilliseconds = 180L;
 
@@ -196,6 +198,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             ReportModLoadingReady = () =>
             {
                 Log.Info("JunimoGate.SMAPI", "mod-loading-ready");
+                Interlocked.Exchange(ref smapiStartupReady, 1);
                 startupCompletion.TrySetResult(null);
             },
             ReportGameViewReady = () => RunOnUiThread(RevealGameView),
@@ -206,7 +209,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                     Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code} message={failure.Message}");
                 else
                     Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code}", failure.Exception);
-                startupCompletion.TrySetResult(failure);
+                if (startupCompletion.TrySetResult(failure))
+                    return;
+                if (Volatile.Read(ref smapiStartupReady) != 0)
+                    HandleRuntimeFailure(failure);
             },
         });
         session = runtime.CreateSession();
@@ -315,6 +321,26 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             Toast.MakeText(
                 this,
                 "Stardew Valley could not start. Returning to JunimoGate.",
+                ToastLength.Long)?.Show();
+            Finish();
+        });
+    }
+
+    private void HandleRuntimeFailure(SmapiFailure failure)
+    {
+        if (Interlocked.Exchange(ref runtimeFailureHandled, 1) != 0)
+            return;
+
+        lastSmapiFailureCode = failure.Code;
+        Log.Error("JunimoGate.SMAPI", $"runtime-failed code={failure.Code}");
+        CompletePlaySession(GamePlaySessionOutcomes.Failed, failure.Code);
+        RunOnUiThread(() =>
+        {
+            if (destroyed || IsFinishing)
+                return;
+            Toast.MakeText(
+                this,
+                "Stardew Valley stopped after an unrecoverable game error. Returning to JunimoGate.",
                 ToastLength.Long)?.Show();
             Finish();
         });

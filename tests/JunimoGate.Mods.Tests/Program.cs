@@ -282,6 +282,10 @@ return TestHarness.Run(
         AndroidMainThreadTaskQueueTests.ExecutesInlineWhenAlreadyOnTheGameThread()),
     ("SMAPI Android main-thread queue releases pending work on reset", () =>
         AndroidMainThreadTaskQueueTests.ResetFaultsPendingProducers()),
+    ("SMAPI Android update failures bound repeated log detail", () =>
+        AndroidUpdateFailureTrackerTests.LogsOnlyTheFirstFailureAndOneSuppressionNotice()),
+    ("SMAPI Android update failures reset after recovery", () =>
+        AndroidUpdateFailureTrackerTests.SuccessfulUpdateResetsTheFailureSequence()),
     ("SMAPI Android save serializer uses the native fallback", () =>
         AndroidSaveSerializerRegistryTests.UsesTheNativeSerializerUntilOverridden()),
     ("SMAPI Android save serializer publishes overrides", () =>
