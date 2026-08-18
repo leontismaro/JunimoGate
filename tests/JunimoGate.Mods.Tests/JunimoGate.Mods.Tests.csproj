@@ -23,6 +23,12 @@
              Link="SMAPI/AndroidBackgroundTaskTracker.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidMainThreadTaskQueue.cs"
              Link="SMAPI/AndroidMainThreadTaskQueue.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidDrawGatedTaskQueue.cs"
+             Link="SMAPI/AndroidDrawGatedTaskQueue.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidWorldEntryGate.cs"
+             Link="SMAPI/AndroidWorldEntryGate.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidUpdateFailureTracker.cs"
+             Link="SMAPI/AndroidUpdateFailureTracker.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/Serialization/AndroidSaveSerializerRegistry.cs"
              Link="SMAPI/AndroidSaveSerializerRegistry.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/SMAPIAndroidBuild.cs"

@@ -52,6 +52,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private int gameSafeAreaXEdge;
     private int gameSafeAreaToolbarPadding;
     private int appliedCutoutPadding = -1;
+    private int smapiStartupReady;
+    private int runtimeFailureHandled;
     private static readonly TimeSpan BackgroundPersistenceDelay = TimeSpan.FromMilliseconds(250);
     private const long LoadingFadeDurationMilliseconds = 180L;
 
@@ -205,6 +207,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             ReportModLoadingReady = () =>
             {
                 Log.Info("JunimoGate.SMAPI", "mod-loading-ready");
+                Interlocked.Exchange(ref smapiStartupReady, 1);
                 startupCompletion.TrySetResult(null);
             },
             ReportGameViewReady = () => RunOnUiThread(RevealGameView),
@@ -215,7 +218,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                     Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code} message={failure.Message}");
                 else
                     Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code}", failure.Exception);
-                startupCompletion.TrySetResult(failure);
+                if (startupCompletion.TrySetResult(failure))
+                    return;
+                if (Volatile.Read(ref smapiStartupReady) != 0)
+                    HandleRuntimeFailure(failure);
             },
         });
         session = runtime.CreateSession();
@@ -294,27 +300,49 @@ public sealed class SmapiGameActivity : AndroidGameActivity
 
     protected override void OnDestroy()
     {
-        var terminateGameProcess = IsFinishing;
-        Log.Info(
-            "JunimoGate.SMAPI",
-            $"activity-destroyed finishing={(IsFinishing ? 1 : 0)} changingConfiguration={(IsChangingConfigurations ? 1 : 0)} terminateProcess={(terminateGameProcess ? 1 : 0)}");
-        destroyed = true;
-        if (OperatingSystem.IsAndroidVersionAtLeast(33))
-            UnregisterBackInvokedCallback();
-        Window?.DecorView?.SetOnApplyWindowInsetsListener(null);
-        windowInsetsListener?.Dispose();
-        windowInsetsListener = null;
-        gameViewAttached = false;
-        CompletePlaySession(GamePlaySessionOutcomes.Completed, failureCode: null);
-        session?.Dispose();
-        session = null;
-        loadingOverlay = null;
-        gameViewContainer = null;
-        GameSessionRegistry.ClearCurrentProcess(this);
-        ReleaseRuntimeHooks();
-        base.OnDestroy();
-        if (terminateGameProcess)
-            global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
+        var finishing = IsFinishing;
+        var changingConfiguration = IsChangingConfigurations;
+        try
+        {
+            Log.Info(
+                "JunimoGate.SMAPI",
+                $"activity-destroyed finishing={(finishing ? 1 : 0)} changingConfiguration={(changingConfiguration ? 1 : 0)} terminateProcess=1");
+            destroyed = true;
+            if (OperatingSystem.IsAndroidVersionAtLeast(33))
+                UnregisterBackInvokedCallback();
+            Window?.DecorView?.SetOnApplyWindowInsetsListener(null);
+            windowInsetsListener?.Dispose();
+            windowInsetsListener = null;
+            gameViewAttached = false;
+            CompletePlaySession(
+                finishing ? GamePlaySessionOutcomes.Completed : GamePlaySessionOutcomes.Interrupted,
+                failureCode: null);
+            session?.Dispose();
+            session = null;
+            loadingOverlay = null;
+            gameViewContainer = null;
+            GameSessionRegistry.ClearCurrentProcess(this);
+            ReleaseRuntimeHooks();
+        }
+        finally
+        {
+            try
+            {
+                if (!finishing)
+                    Finish();
+            }
+            finally
+            {
+                try
+                {
+                    base.OnDestroy();
+                }
+                finally
+                {
+                    global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
+                }
+            }
+        }
     }
 
     private void FailStartup()
@@ -331,6 +359,26 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             Toast.MakeText(
                 this,
                 "Stardew Valley could not start. Returning to JunimoGate.",
+                ToastLength.Long)?.Show();
+            Finish();
+        });
+    }
+
+    private void HandleRuntimeFailure(SmapiFailure failure)
+    {
+        if (Interlocked.Exchange(ref runtimeFailureHandled, 1) != 0)
+            return;
+
+        lastSmapiFailureCode = failure.Code;
+        Log.Error("JunimoGate.SMAPI", $"runtime-failed code={failure.Code}");
+        CompletePlaySession(GamePlaySessionOutcomes.Failed, failure.Code);
+        RunOnUiThread(() =>
+        {
+            if (destroyed || IsFinishing)
+                return;
+            Toast.MakeText(
+                this,
+                "Stardew Valley stopped after an unrecoverable game error. Returning to JunimoGate.",
                 ToastLength.Long)?.Show();
             Finish();
         });
