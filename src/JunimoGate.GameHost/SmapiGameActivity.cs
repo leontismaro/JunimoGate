@@ -280,29 +280,6 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         QueuePlaySessionBackgroundPersistence();
         base.OnPause();
     }
-    public override bool DispatchKeyEvent(KeyEvent? e)
-    {
-        var startedAt = SystemClock.ElapsedRealtime();
-        Log.Info(
-            "JunimoGate.Input",
-            $"android-input-diagnostic dispatch-start action={e?.Action.ToString() ?? "null"} keyCode={e?.KeyCode.ToString() ?? "null"} eventTime={e?.EventTime ?? -1}");
-        try
-        {
-            bool handled = base.DispatchKeyEvent(e);
-            Log.Info(
-                "JunimoGate.Input",
-                $"android-input-diagnostic dispatch-end handled={(handled ? 1 : 0)} elapsedMs={SystemClock.ElapsedRealtime() - startedAt}");
-            return handled;
-        }
-        catch (Exception exception)
-        {
-            Log.Error(
-                "JunimoGate.Input",
-                $"android-input-diagnostic dispatch-failed elapsedMs={SystemClock.ElapsedRealtime() - startedAt}",
-                exception);
-            throw;
-        }
-    }
     protected override void OnNewIntent(global::Android.Content.Intent? intent) { base.OnNewIntent(intent); Log.Info("JunimoGate.SMAPI", "session-routed-to-front"); }
     public override void OnWindowFocusChanged(bool hasFocus) { base.OnWindowFocusChanged(hasFocus); session?.OnWindowFocusChanged(hasFocus); if (hasFocus) SetImmersive(); }
 #pragma warning disable CS0672
