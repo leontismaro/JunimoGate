@@ -282,23 +282,45 @@ public sealed class SmapiGameActivity : AndroidGameActivity
 
     protected override void OnDestroy()
     {
-        var terminateGameProcess = IsFinishing;
-        Log.Info(
-            "JunimoGate.SMAPI",
-            $"activity-destroyed finishing={(IsFinishing ? 1 : 0)} changingConfiguration={(IsChangingConfigurations ? 1 : 0)} terminateProcess={(terminateGameProcess ? 1 : 0)}");
-        destroyed = true;
-        if (OperatingSystem.IsAndroidVersionAtLeast(33))
-            UnregisterBackInvokedCallback();
-        CompletePlaySession(GamePlaySessionOutcomes.Completed, failureCode: null);
-        session?.Dispose();
-        session = null;
-        loadingOverlay = null;
-        gameViewContainer = null;
-        GameSessionRegistry.ClearCurrentProcess(this);
-        ReleaseRuntimeHooks();
-        base.OnDestroy();
-        if (terminateGameProcess)
-            global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
+        var finishing = IsFinishing;
+        var changingConfiguration = IsChangingConfigurations;
+        try
+        {
+            Log.Info(
+                "JunimoGate.SMAPI",
+                $"activity-destroyed finishing={(finishing ? 1 : 0)} changingConfiguration={(changingConfiguration ? 1 : 0)} terminateProcess=1");
+            destroyed = true;
+            if (OperatingSystem.IsAndroidVersionAtLeast(33))
+                UnregisterBackInvokedCallback();
+            CompletePlaySession(
+                finishing ? GamePlaySessionOutcomes.Completed : GamePlaySessionOutcomes.Interrupted,
+                failureCode: null);
+            session?.Dispose();
+            session = null;
+            loadingOverlay = null;
+            gameViewContainer = null;
+            GameSessionRegistry.ClearCurrentProcess(this);
+            ReleaseRuntimeHooks();
+        }
+        finally
+        {
+            try
+            {
+                if (!finishing)
+                    Finish();
+            }
+            finally
+            {
+                try
+                {
+                    base.OnDestroy();
+                }
+                finally
+                {
+                    global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
+                }
+            }
+        }
     }
 
     private void FailStartup()
