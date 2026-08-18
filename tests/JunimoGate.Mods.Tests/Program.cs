@@ -274,6 +274,8 @@ return TestHarness.Run(
         AndroidBackgroundTaskTrackerTests.TracksBlockedWorkUntilCompletion()),
     ("SMAPI Android background tracker releases failed work", () =>
         AndroidBackgroundTaskTrackerTests.ReleasesFailedWork()),
+    ("SMAPI Android non-blocking background work leaves game updates unblocked", () =>
+        AndroidBackgroundTaskTrackerTests.NonBlockingWorkDoesNotBlockGameUpdates()),
     ("SMAPI Android Mod entry queue pumps one task in FIFO order", () =>
         AndroidMainThreadTaskQueueTests.RunsOneQueuedTaskPerPumpInFifoOrder()),
     ("SMAPI Android Mod entry queue preserves task failures", () =>
@@ -286,6 +288,16 @@ return TestHarness.Run(
         AndroidMainThreadTaskQueueTests.ResetFaultsPendingProducers()),
     ("SMAPI Android main-thread queue tracks queued and inline work", () =>
         AndroidMainThreadTaskQueueTests.WrapsQueuedAndInlineWorkInTrackingScopes()),
+    ("SMAPI Android draw gate runs one batch task per draw", () =>
+        AndroidDrawGatedTaskQueueTests.RunsAtMostOneTaskUntilDrawReleasesTheGate()),
+    ("SMAPI Android draw gate resets pending batch work", () =>
+        AndroidDrawGatedTaskQueueTests.ResetFaultsPendingWorkAndReleasesTheGate()),
+    ("SMAPI Android world entry gate ignores background preparation before entry", () =>
+        AndroidWorldEntryGateTests.DoesNotBlockWithoutAWorldEntryRequest()),
+    ("SMAPI Android world entry gate waits for shared dependencies", () =>
+        AndroidWorldEntryGateTests.BlocksRequestedWorldEntryUntilReady()),
+    ("SMAPI Android world entry gate resets pending entry", () =>
+        AndroidWorldEntryGateTests.ResetClearsARequestedWorldEntry()),
     ("SMAPI Android update failures bound repeated log detail", () =>
         AndroidUpdateFailureTrackerTests.LogsOnlyTheFirstFailureAndOneSuppressionNotice()),
     ("SMAPI Android update failures reset after recovery", () =>
