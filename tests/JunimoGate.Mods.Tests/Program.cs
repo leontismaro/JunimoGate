@@ -286,24 +286,34 @@ return TestHarness.Run(
         AndroidMainThreadTaskQueueTests.ExecutesInlineWhenAlreadyOnTheGameThread()),
     ("SMAPI Android main-thread queue can defer reentrant work", () =>
         AndroidMainThreadTaskQueueTests.DefersWorkWhenAlreadyOnTheGameThread()),
-    ("SMAPI Android main-thread queue releases pending work on reset", () =>
-        AndroidMainThreadTaskQueueTests.ResetFaultsPendingProducers()),
+    ("SMAPI Android main-thread queue rejects work after close", () =>
+        AndroidMainThreadTaskQueueTests.CloseFaultsPendingAndLateProducers()),
     ("SMAPI Android main-thread queue tracks queued and inline work", () =>
         AndroidMainThreadTaskQueueTests.WrapsQueuedAndInlineWorkInTrackingScopes()),
     ("SMAPI Android draw gate runs one batch task per draw", () =>
         AndroidDrawGatedTaskQueueTests.RunsAtMostOneTaskUntilDrawReleasesTheGate()),
-    ("SMAPI Android draw gate resets pending batch work", () =>
-        AndroidDrawGatedTaskQueueTests.ResetFaultsPendingWorkAndReleasesTheGate()),
+    ("SMAPI Android draw gate rejects work after close", () =>
+        AndroidDrawGatedTaskQueueTests.CloseFaultsPendingAndLateWork()),
+    ("SMAPI Android audio preparation distinguishes ready and error results", () =>
+        AndroidAudioPreparationStateTests.DistinguishesReadyAndErrorCompletion()),
+    ("SMAPI Android audio preparation supersedes old generations", () =>
+        AndroidAudioPreparationStateTests.SupersededGenerationCannotComplete()),
+    ("SMAPI Android audio preparation closes terminal failures", () =>
+        AndroidAudioPreparationStateTests.TerminalFailureCompletesRemainingWork()),
     ("SMAPI Android world entry gate ignores background preparation before entry", () =>
         AndroidWorldEntryGateTests.DoesNotBlockWithoutAWorldEntryRequest()),
     ("SMAPI Android world entry gate waits for shared dependencies", () =>
         AndroidWorldEntryGateTests.BlocksRequestedWorldEntryUntilReady()),
     ("SMAPI Android world entry gate resets pending entry", () =>
         AndroidWorldEntryGateTests.ResetClearsARequestedWorldEntry()),
+    ("SMAPI Android world entry gate owns loader waiting and completion", () =>
+        AndroidWorldEntryGateTests.TracksLoaderWaitingAndCompletion()),
     ("SMAPI Android update failures bound repeated log detail", () =>
         AndroidUpdateFailureTrackerTests.LogsOnlyTheFirstFailureAndOneSuppressionNotice()),
     ("SMAPI Android update failures reset after recovery", () =>
         AndroidUpdateFailureTrackerTests.SuccessfulUpdateResetsTheFailureSequence()),
+    ("SMAPI Android update failures own the terminal threshold", () =>
+        AndroidUpdateFailureTrackerTests.TerminatesAfterTheRecoveryBudget()),
     ("SMAPI Android save serializer uses the native fallback", () =>
         AndroidSaveSerializerRegistryTests.UsesTheNativeSerializerUntilOverridden()),
     ("SMAPI Android save serializer publishes overrides", () =>
@@ -321,7 +331,15 @@ return TestHarness.Run(
     ("GameHost snapshots omit the SMAPI bundle identity", () =>
         GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()),
     ("GameHost retains pending v4 descriptor compatibility", () =>
-        GameLaunchSchemaTests.RetainsThePreviousDescriptorSchemaForPendingLaunches()));
+        GameLaunchSchemaTests.RetainsThePreviousDescriptorSchemaForPendingLaunches()),
+    ("GameHost SMAPI session state preserves the first startup failure", () =>
+        SmapiSessionStateTests.PreservesTheFirstStartupFailure()),
+    ("GameHost SMAPI session state accepts one runtime failure", () =>
+        SmapiSessionStateTests.AcceptsOneFailureAfterRunning()),
+    ("GameHost SMAPI session state rejects late transitions after disposal", () =>
+        SmapiSessionStateTests.RejectsLateTransitionsAfterDisposal()),
+    ("GameHost SMAPI session state serializes running and failure races", () =>
+        SmapiSessionStateTests.SerializesConcurrentRunningAndFailure()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

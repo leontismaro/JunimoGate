@@ -27,6 +27,8 @@
              Link="SMAPI/AndroidDrawGatedTaskQueue.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidWorldEntryGate.cs"
              Link="SMAPI/AndroidWorldEntryGate.cs" />
+    <Compile Include="../../smapi/src/SMAPI/Mobile/Audio/AndroidAudioPreparationState.cs"
+             Link="SMAPI/AndroidAudioPreparationState.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/AndroidUpdateFailureTracker.cs"
              Link="SMAPI/AndroidUpdateFailureTracker.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/Serialization/AndroidSaveSerializerRegistry.cs"
@@ -39,6 +41,8 @@
              Link="GameHost/GameLaunchSchemas.cs" />
     <Compile Include="../../src/JunimoGate.GameHost/PreparedGameSnapshot.cs"
              Link="GameHost/PreparedGameSnapshot.cs" />
+    <Compile Include="../../src/JunimoGate.GameHost/SmapiSessionState.cs"
+             Link="GameHost/SmapiSessionState.cs" />
     <PackageReference Include="Mono.Cecil" Version="[0.11.6]" />
     <ProjectReference Include="../../src/JunimoGate.Mods/JunimoGate.Mods.csproj" />
   </ItemGroup>

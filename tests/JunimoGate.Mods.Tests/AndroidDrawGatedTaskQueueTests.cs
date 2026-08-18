@@ -30,21 +30,21 @@ internal static class AndroidDrawGatedTaskQueueTests
         TestHarness.True(second.IsCompletedSuccessfully);
     }
 
-    public static void ResetFaultsPendingWorkAndReleasesTheGate()
+    public static void CloseFaultsPendingAndLateWork()
     {
         var queue = new AndroidDrawGatedTaskQueue();
         Task first = queue.Enqueue(() => { });
         Task pending = queue.Enqueue(() => { });
         queue.Pump(TimeSpan.FromSeconds(1));
 
-        queue.Reset(new InvalidOperationException("session failed"));
-        Task nextSession = queue.Enqueue(() => { });
-        var nextPump = queue.Pump(TimeSpan.FromSeconds(1));
+        queue.Close(new InvalidOperationException("session failed"));
+        Task late = queue.Enqueue(() => { });
 
         TestHarness.True(first.IsCompletedSuccessfully);
         TestHarness.True(pending.IsFaulted);
         TestHarness.Throws<InvalidOperationException>(() => pending.GetAwaiter().GetResult());
-        TestHarness.Equal(1, nextPump.ExecutedItems);
-        TestHarness.True(nextSession.IsCompletedSuccessfully);
+        TestHarness.True(late.IsFaulted);
+        TestHarness.Throws<InvalidOperationException>(() => late.GetAwaiter().GetResult());
+        TestHarness.Equal(0, queue.Pump(TimeSpan.FromSeconds(1)).ExecutedItems);
     }
 }

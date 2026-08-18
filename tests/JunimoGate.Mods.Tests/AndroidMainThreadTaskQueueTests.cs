@@ -85,15 +85,18 @@ internal static class AndroidMainThreadTaskQueueTests
         TestHarness.True(task.IsCompletedSuccessfully);
     }
 
-    public static void ResetFaultsPendingProducers()
+    public static void CloseFaultsPendingAndLateProducers()
     {
         var queue = new AndroidMainThreadTaskQueue();
         Task task = queue.Enqueue(() => { });
 
-        queue.Reset(new InvalidOperationException("session failed"));
+        queue.Close(new InvalidOperationException("session failed"));
+        Task late = queue.Enqueue(() => { });
 
         TestHarness.True(task.IsFaulted);
         TestHarness.Throws<InvalidOperationException>(() => task.GetAwaiter().GetResult());
+        TestHarness.True(late.IsFaulted);
+        TestHarness.Throws<InvalidOperationException>(() => late.GetAwaiter().GetResult());
     }
 
     private sealed class TrackingScope : IDisposable

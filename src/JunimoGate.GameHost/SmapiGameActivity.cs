@@ -39,7 +39,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private bool destroyed;
     private bool activityResumed;
     private bool playSessionRunning;
-    private string? lastSmapiFailureCode;
+    private SmapiSessionState? smapiState;
     private GamePlaySessionRepository? playSessions;
     private string? playSessionId;
     private CancellationTokenSource? checkpointCancellation;
@@ -52,8 +52,6 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private int gameSafeAreaXEdge;
     private int gameSafeAreaToolbarPadding;
     private int appliedCutoutPadding = -1;
-    private int smapiStartupReady;
-    private int runtimeFailureHandled;
     private static readonly TimeSpan BackgroundPersistenceDelay = TimeSpan.FromMilliseconds(250);
     private const long LoadingFadeDurationMilliseconds = 180L;
 
@@ -109,16 +107,20 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 $"session-starting:build={GameHostRuntimeIdentity.BuildId}:bundle={smapiBundle.BundleId}:smapi=4.5.2");
             stage = GameStartupStage.SmapiSession;
             PreservePreviousSmapiLog(snapshot.LogDirectory);
-            var startupCompletion = new TaskCompletionSource<SmapiFailure?>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            CreateAndRunSession(snapshot, launch, smapiBundle, loader, startupCompletion);
-            var reportedFailure = await startupCompletion.Task;
-            if (reportedFailure is not null)
+            var sessionState = new SmapiSessionState();
+            smapiState = sessionState;
+            CreateAndRunSession(snapshot, launch, smapiBundle, loader, sessionState);
+            var startupSnapshot = await sessionState.StartupCompletion;
+            if (startupSnapshot.Status == SmapiSessionStatus.Failed)
             {
+                var failure = startupSnapshot.Failure
+                    ?? throw new InvalidOperationException("SMAPI entered the failed state without failure details.");
                 throw new InvalidOperationException(
-                    $"SMAPI reported startup failure '{reportedFailure.Code}'.",
-                    reportedFailure.Exception);
+                    $"SMAPI reported startup failure '{failure.Code}'.",
+                    failure.Exception);
             }
+            if (startupSnapshot.Status != SmapiSessionStatus.Running)
+                throw new OperationCanceledException("The SMAPI session was disposed before startup completed.");
             await TryMarkPlaySessionRunningAsync();
             stage = GameStartupStage.Running;
             try
@@ -138,9 +140,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         }
         catch (Exception ex)
         {
+            string? failureCode = smapiState?.Snapshot.Failure?.Code;
             Log.Error(
                 "JunimoGate.SMAPI",
-                $"startup-failed stage={stage} code={lastSmapiFailureCode ?? "unclassified"}",
+                $"startup-failed stage={stage} code={failureCode ?? "unclassified"}",
                 ex);
             if (attemptId is not null)
             {
@@ -151,7 +154,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                         attemptId,
                         GameLaunchOutcomeStatus.Failed,
                         stage,
-                        lastSmapiFailureCode ?? $"startup_{stage.ToString().ToLowerInvariant()}",
+                        failureCode ?? $"startup_{stage.ToString().ToLowerInvariant()}",
                         CancellationToken.None);
                 }
                 catch (Exception outcomeException)
@@ -169,7 +172,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         ConsumedGameLaunch launch,
         PreparedSmapiBundle smapiBundle,
         SmapiDefaultAssemblyLoader assemblyLoader,
-        TaskCompletionSource<SmapiFailure?> startupCompletion)
+        SmapiSessionState sessionState)
     {
         var runtime = new SmapiRuntime(new SmapiRuntimeOptions
         {
@@ -204,25 +207,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 _ => throw new InvalidDataException("The launch Profile binding policy is invalid."),
             },
             AttachGameView = view => RunOnUiThread(() => AttachGameView(view)),
-            ReportModLoadingReady = () =>
-            {
-                Log.Info("JunimoGate.SMAPI", "mod-loading-ready");
-                Interlocked.Exchange(ref smapiStartupReady, 1);
-                startupCompletion.TrySetResult(null);
-            },
             ReportGameViewReady = () => RunOnUiThread(RevealGameView),
-            ReportFailure = failure =>
-            {
-                lastSmapiFailureCode = failure.Code;
-                if (failure.Exception is null)
-                    Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code} message={failure.Message}");
-                else
-                    Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code}", failure.Exception);
-                if (startupCompletion.TrySetResult(failure))
-                    return;
-                if (Volatile.Read(ref smapiStartupReady) != 0)
-                    HandleRuntimeFailure(failure);
-            },
+            ReportState = transition => ObserveSmapiTransition(sessionState, transition),
         });
         session = runtime.CreateSession();
         session.Run();
@@ -308,6 +294,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                 "JunimoGate.SMAPI",
                 $"activity-destroyed finishing={(finishing ? 1 : 0)} changingConfiguration={(changingConfiguration ? 1 : 0)} terminateProcess=1");
             destroyed = true;
+            smapiState?.Dispose();
+            smapiState = null;
             if (OperatingSystem.IsAndroidVersionAtLeast(33))
                 UnregisterBackInvokedCallback();
             Window?.DecorView?.SetOnApplyWindowInsetsListener(null);
@@ -347,7 +335,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
 
     private void FailStartup()
     {
-        CompletePlaySession(GamePlaySessionOutcomes.Failed, lastSmapiFailureCode);
+        string? failureCode = smapiState?.Snapshot.Failure?.Code;
+        smapiState?.Dispose();
+        smapiState = null;
+        CompletePlaySession(GamePlaySessionOutcomes.Failed, failureCode);
         GameSessionRegistry.ClearCurrentProcess(this);
         session?.Dispose();
         session = null;
@@ -364,12 +355,39 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         });
     }
 
-    private void HandleRuntimeFailure(SmapiFailure failure)
+    private void ObserveSmapiTransition(
+        SmapiSessionState sessionState,
+        SmapiSessionTransition transition)
     {
-        if (Interlocked.Exchange(ref runtimeFailureHandled, 1) != 0)
+        SmapiSessionStateChange change = transition.Kind switch
+        {
+            SmapiSessionTransitionKind.Running => sessionState.Apply(SmapiSessionStatus.Running),
+            SmapiSessionTransitionKind.Failed when transition.Failure is { } failure => sessionState.Apply(
+                SmapiSessionStatus.Failed,
+                new SmapiSessionFailure(failure.Code, failure.Message, failure.Exception)),
+            _ => default,
+        };
+        if (!change.Accepted)
             return;
 
-        lastSmapiFailureCode = failure.Code;
+        if (change.Snapshot.Status == SmapiSessionStatus.Running)
+        {
+            Log.Info("JunimoGate.SMAPI", "session-running");
+            return;
+        }
+
+        var acceptedFailure = change.Snapshot.Failure
+            ?? throw new InvalidOperationException("SMAPI entered the failed state without failure details.");
+        if (acceptedFailure.Exception is null)
+            Log.Error("JunimoGate.SMAPI", $"smapi-failure code={acceptedFailure.Code} message={acceptedFailure.Message}");
+        else
+            Log.Error("JunimoGate.SMAPI", $"smapi-failure code={acceptedFailure.Code}", acceptedFailure.Exception);
+        if (change.PreviousStatus == SmapiSessionStatus.Running)
+            HandleRuntimeFailure(acceptedFailure);
+    }
+
+    private void HandleRuntimeFailure(SmapiSessionFailure failure)
+    {
         Log.Error("JunimoGate.SMAPI", $"runtime-failed code={failure.Code}");
         CompletePlaySession(GamePlaySessionOutcomes.Failed, failure.Code);
         RunOnUiThread(() =>
