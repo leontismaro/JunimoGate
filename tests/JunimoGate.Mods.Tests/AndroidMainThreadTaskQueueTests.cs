@@ -3,6 +3,26 @@ using StardewModdingAPI.Mobile;
 
 internal static class AndroidMainThreadTaskQueueTests
 {
+    public static void WrapsQueuedAndInlineWorkInTrackingScopes()
+    {
+        var tracked = new List<string>();
+        var disposed = new List<string>();
+        var queue = new AndroidMainThreadTaskQueue(name => new TrackingScope(name ?? "<unnamed>", tracked, disposed));
+
+        Task queued = queue.Enqueue(() => tracked.Add("queued-action"), "queued");
+        queue.Pump(TimeSpan.FromSeconds(1), maxItems: 1);
+        Task inline = queue.Enqueue(() => tracked.Add("inline-action"), "inline");
+
+        TestHarness.True(queued.IsCompletedSuccessfully);
+        TestHarness.True(inline.IsCompletedSuccessfully);
+        TestHarness.Equal("queued", tracked[0]);
+        TestHarness.Equal("queued-action", tracked[1]);
+        TestHarness.Equal("inline", tracked[2]);
+        TestHarness.Equal("inline-action", tracked[3]);
+        TestHarness.Equal("queued", disposed[0]);
+        TestHarness.Equal("inline", disposed[1]);
+    }
+
     public static void RunsOneQueuedTaskPerPumpInFifoOrder()
     {
         var queue = new AndroidMainThreadTaskQueue();
@@ -50,6 +70,21 @@ internal static class AndroidMainThreadTaskQueueTests
         TestHarness.True(task.IsCompletedSuccessfully);
     }
 
+    public static void DefersWorkWhenAlreadyOnTheGameThread()
+    {
+        var queue = new AndroidMainThreadTaskQueue();
+        queue.Pump(TimeSpan.FromSeconds(1), maxItems: 1);
+        int calls = 0;
+
+        Task task = queue.EnqueueDeferred(() => calls++);
+
+        TestHarness.Equal(0, calls);
+        TestHarness.False(task.IsCompleted);
+        TestHarness.Equal(1, queue.Pump(TimeSpan.FromSeconds(1), maxItems: 1).ExecutedItems);
+        TestHarness.Equal(1, calls);
+        TestHarness.True(task.IsCompletedSuccessfully);
+    }
+
     public static void ResetFaultsPendingProducers()
     {
         var queue = new AndroidMainThreadTaskQueue();
@@ -59,5 +94,20 @@ internal static class AndroidMainThreadTaskQueueTests
 
         TestHarness.True(task.IsFaulted);
         TestHarness.Throws<InvalidOperationException>(() => task.GetAwaiter().GetResult());
+    }
+
+    private sealed class TrackingScope : IDisposable
+    {
+        private readonly string name;
+        private readonly List<string> disposed;
+
+        public TrackingScope(string name, List<string> tracked, List<string> disposed)
+        {
+            this.name = name;
+            this.disposed = disposed;
+            tracked.Add(name);
+        }
+
+        public void Dispose() => this.disposed.Add(this.name);
     }
 }

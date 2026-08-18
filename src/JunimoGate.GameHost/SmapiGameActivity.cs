@@ -45,6 +45,8 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private Task? checkpointTask;
     private CancellationTokenSource? backgroundPersistenceCancellation;
     private Task? backgroundPersistenceTask;
+    private int smapiStartupReady;
+    private int runtimeFailureHandled;
     private static readonly TimeSpan BackgroundPersistenceDelay = TimeSpan.FromMilliseconds(250);
     private const long LoadingFadeDurationMilliseconds = 180L;
 
@@ -196,6 +198,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             ReportModLoadingReady = () =>
             {
                 Log.Info("JunimoGate.SMAPI", "mod-loading-ready");
+                Interlocked.Exchange(ref smapiStartupReady, 1);
                 startupCompletion.TrySetResult(null);
             },
             ReportGameViewReady = () => RunOnUiThread(RevealGameView),
@@ -206,7 +209,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
                     Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code} message={failure.Message}");
                 else
                     Log.Error("JunimoGate.SMAPI", $"smapi-failure code={failure.Code}", failure.Exception);
-                startupCompletion.TrySetResult(failure);
+                if (startupCompletion.TrySetResult(failure))
+                    return;
+                if (Volatile.Read(ref smapiStartupReady) != 0)
+                    HandleRuntimeFailure(failure);
             },
         });
         session = runtime.CreateSession();
@@ -274,6 +280,29 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         QueuePlaySessionBackgroundPersistence();
         base.OnPause();
     }
+    public override bool DispatchKeyEvent(KeyEvent? e)
+    {
+        var startedAt = SystemClock.ElapsedRealtime();
+        Log.Info(
+            "JunimoGate.Input",
+            $"android-input-diagnostic dispatch-start action={e?.Action.ToString() ?? "null"} keyCode={e?.KeyCode.ToString() ?? "null"} eventTime={e?.EventTime ?? -1}");
+        try
+        {
+            bool handled = base.DispatchKeyEvent(e);
+            Log.Info(
+                "JunimoGate.Input",
+                $"android-input-diagnostic dispatch-end handled={(handled ? 1 : 0)} elapsedMs={SystemClock.ElapsedRealtime() - startedAt}");
+            return handled;
+        }
+        catch (Exception exception)
+        {
+            Log.Error(
+                "JunimoGate.Input",
+                $"android-input-diagnostic dispatch-failed elapsedMs={SystemClock.ElapsedRealtime() - startedAt}",
+                exception);
+            throw;
+        }
+    }
     protected override void OnNewIntent(global::Android.Content.Intent? intent) { base.OnNewIntent(intent); Log.Info("JunimoGate.SMAPI", "session-routed-to-front"); }
     public override void OnWindowFocusChanged(bool hasFocus) { base.OnWindowFocusChanged(hasFocus); session?.OnWindowFocusChanged(hasFocus); if (hasFocus) SetImmersive(); }
 #pragma warning disable CS0672
@@ -337,6 +366,26 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             Toast.MakeText(
                 this,
                 "Stardew Valley could not start. Returning to JunimoGate.",
+                ToastLength.Long)?.Show();
+            Finish();
+        });
+    }
+
+    private void HandleRuntimeFailure(SmapiFailure failure)
+    {
+        if (Interlocked.Exchange(ref runtimeFailureHandled, 1) != 0)
+            return;
+
+        lastSmapiFailureCode = failure.Code;
+        Log.Error("JunimoGate.SMAPI", $"runtime-failed code={failure.Code}");
+        CompletePlaySession(GamePlaySessionOutcomes.Failed, failure.Code);
+        RunOnUiThread(() =>
+        {
+            if (destroyed || IsFinishing)
+                return;
+            Toast.MakeText(
+                this,
+                "Stardew Valley stopped after an unrecoverable game error. Returning to JunimoGate.",
                 ToastLength.Long)?.Show();
             Finish();
         });
