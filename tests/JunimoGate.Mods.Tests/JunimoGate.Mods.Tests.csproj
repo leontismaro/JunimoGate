@@ -27,6 +27,8 @@
              Link="SMAPI/AndroidSaveSerializerRegistry.cs" />
     <Compile Include="../../smapi/src/SMAPI/Mobile/SMAPIAndroidBuild.cs"
              Link="SMAPI/SMAPIAndroidBuild.cs" />
+    <Compile Include="../../smapi/src/SMAPI/AndroidHost/AndroidCulturePolicy.cs"
+             Link="SMAPI/AndroidCulturePolicy.cs" />
     <Compile Include="../../src/JunimoGate.GameHost/GameLaunchSchemas.cs"
              Link="GameHost/GameLaunchSchemas.cs" />
     <Compile Include="../../src/JunimoGate.GameHost/PreparedGameSnapshot.cs"

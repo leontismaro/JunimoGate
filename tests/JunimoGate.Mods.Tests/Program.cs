@@ -290,6 +290,8 @@ return TestHarness.Run(
         AndroidSaveSerializerRegistryTests.RollsBackAnUnobservableOverride()),
     ("SMAPI Android save serializer rejects ambiguous caches", () =>
         AndroidSaveSerializerRegistryTests.RejectsAnAmbiguousCacheShape()),
+    ("SMAPI Android culture policy covers Indonesian game threads", () =>
+        AndroidCulturePolicyTests.AppliesInvariantDataCultureToGameThreads()),
     ("GameHost reads v7 snapshots without binding the SMAPI bundle", () =>
         GameLaunchSchemaTests.ReadsLegacySnapshotWithoutBundleIdentity()),
     ("GameHost rejects unsupported snapshot schemas", () =>
