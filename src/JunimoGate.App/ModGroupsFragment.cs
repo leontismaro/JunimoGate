@@ -46,6 +46,7 @@ public sealed class ModGroupsFragment : Fragment
     private TextView? empty;
     private int exportProgressText;
     private ModProfileV2? pendingExportProfile;
+    private bool pendingExportIncludeConfig;
     private ModProfilePackageImportTransaction? pendingPackageImport;
 
     public override View OnCreateView(LayoutInflater inflater, ViewGroup? container, Bundle? savedInstanceState) =>
@@ -115,6 +116,7 @@ public sealed class ModGroupsFragment : Fragment
         viewCancellation?.Dispose();
         viewCancellation = null;
         pendingExportProfile = null;
+        pendingExportIncludeConfig = false;
         var pendingImport = Interlocked.Exchange(ref pendingPackageImport, null);
         if (pendingImport is not null)
             _ = pendingImport.DisposeAsync();
@@ -138,7 +140,10 @@ public sealed class ModGroupsFragment : Fragment
     {
         base.OnActivityResult(requestCode, resultCode, data);
         if (requestCode is ExportManifestRequestCode or ExportPackageRequestCode && resultCode != (int)Result.Ok)
+        {
             pendingExportProfile = null;
+            pendingExportIncludeConfig = false;
+        }
         if (resultCode != (int)Result.Ok || data?.Data is not { } uri ||
             viewCancellation is not { IsCancellationRequested: false } lifetime)
         {
@@ -150,10 +155,13 @@ public sealed class ModGroupsFragment : Fragment
         else if (requestCode is ExportManifestRequestCode or ExportPackageRequestCode && pendingExportProfile is { } profile)
         {
             pendingExportProfile = null;
+            var includeConfig = pendingExportIncludeConfig;
+            pendingExportIncludeConfig = false;
             _ = ExportGroupAsync(
                 uri,
                 profile,
                 requestCode == ExportPackageRequestCode ? ModProfileTransferKind.Complete : ModProfileTransferKind.Manifest,
+                includeConfig,
                 lifetime.Token);
         }
     }
@@ -207,17 +215,29 @@ public sealed class ModGroupsFragment : Fragment
 
     private void RequestShare(ModProfileV2 profile)
     {
+        var content = LayoutInflater.From(RequireContext())?.Inflate(
+            Resource.Layout.dialog_mod_group_share,
+            null,
+            false)
+            ?? throw new InvalidOperationException("The share-group dialog layout could not be created.");
+        var includeConfig = content.FindViewById<CheckBox>(Resource.Id.mod_group_include_config)
+            ?? throw new InvalidOperationException("The Mod configuration option is unavailable.");
+        var includeConfigRow = content.FindViewById<LinearLayout>(Resource.Id.mod_group_include_config_row)
+            ?? throw new InvalidOperationException("The Mod configuration option row is unavailable.");
+        includeConfigRow.Click += (_, _) => includeConfig.Checked = !includeConfig.Checked;
         var dialog = new MaterialAlertDialogBuilder(RequireContext());
         dialog.SetTitle(FormatString(Resource.String.mod_groups_share_title, new JString(GetDisplayName(profile))));
+        dialog.SetView(content);
         dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) => { });
-        dialog.SetNeutralButton(Resource.String.mod_groups_export_manifest, (_, _) => StartExport(profile, ModProfileTransferKind.Manifest));
-        dialog.SetPositiveButton(Resource.String.mod_groups_export_package, (_, _) => StartExport(profile, ModProfileTransferKind.Complete));
+        dialog.SetNeutralButton(Resource.String.mod_groups_export_manifest, (_, _) => StartExport(profile, ModProfileTransferKind.Manifest, includeConfig.Checked));
+        dialog.SetPositiveButton(Resource.String.mod_groups_export_package, (_, _) => StartExport(profile, ModProfileTransferKind.Complete, includeConfig.Checked));
         dialog.Show();
     }
 
-    private void StartExport(ModProfileV2 profile, ModProfileTransferKind kind)
+    private void StartExport(ModProfileV2 profile, ModProfileTransferKind kind, bool includeConfig)
     {
         pendingExportProfile = profile;
+        pendingExportIncludeConfig = kind == ModProfileTransferKind.Complete && includeConfig;
         var intent = new Intent(Intent.ActionCreateDocument);
         intent.AddCategory(Intent.CategoryOpenable);
         intent.SetType(kind == ModProfileTransferKind.Complete ? "application/zip" : "application/json");
@@ -231,6 +251,7 @@ public sealed class ModGroupsFragment : Fragment
         global::Android.Net.Uri uri,
         ModProfileV2 profile,
         ModProfileTransferKind kind,
+        bool includeConfig,
         CancellationToken cancellationToken)
     {
         exportProgressText = kind == ModProfileTransferKind.Complete
@@ -244,7 +265,7 @@ public sealed class ModGroupsFragment : Fragment
             await using var output = RequireContext().ContentResolver?.OpenOutputStream(uri, "w")
                 ?? throw new IOException("The selected export document could not be opened.");
             var result = kind == ModProfileTransferKind.Complete
-                ? await service.ExportPackageAsync(ProfileId.Parse(profile.Id), output, cancellationToken).ConfigureAwait(false)
+                ? await service.ExportPackageAsync(ProfileId.Parse(profile.Id), output, cancellationToken, includeConfig).ConfigureAwait(false)
                 : await service.ExportManifestAsync(ProfileId.Parse(profile.Id), output, cancellationToken).ConfigureAwait(false);
             var remainingProgressDuration = MinimumExportProgressDuration - progressDuration.Elapsed;
             if (remainingProgressDuration > TimeSpan.Zero)
@@ -252,9 +273,11 @@ public sealed class ModGroupsFragment : Fragment
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() => ShowMessage(FormatString(
-                    Resource.String.mod_groups_export_result,
+                    includeConfig
+                        ? Resource.String.mod_groups_export_result_with_config
+                        : Resource.String.mod_groups_export_result,
                     Java.Lang.Integer.ValueOf(result.PackagedItems),
-                    Java.Lang.Integer.ValueOf(result.ExcludedConfigFiles),
+                    Java.Lang.Integer.ValueOf(includeConfig ? result.IncludedConfigFiles : result.ExcludedConfigFiles),
                     Java.Lang.Integer.ValueOf(result.MissingItems))));
             }
         }

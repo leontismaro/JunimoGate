@@ -81,12 +81,15 @@
     <string name="mod_groups_share_title">Share “%1$s”</string>
     <string name="mod_groups_export_manifest">Manifest only</string>
     <string name="mod_groups_export_package">Complete package</string>
+    <string name="mod_groups_include_config">Include Mod configs</string>
+    <string name="mod_groups_include_config_summary">Applies only to the complete package export.</string>
     <string name="mod_groups_exporting_manifest">Exporting group manifest…</string>
     <string name="mod_groups_exporting_package">Packing Mod files…</string>
     <string name="mod_groups_package_confirm_title">Import Mod group?</string>
     <string name="mod_groups_package_confirm_message">%1$s\n\n%2$d members · %3$d packaged Mods</string>
     <string name="mod_groups_import_result">Imported “%1$s”: %2$d new, %3$d reused, %4$d missing, %5$d alternate-content candidates.</string>
     <string name="mod_groups_export_result">Exported %1$d Mods; excluded %2$d config files; %3$d members were missing.</string>
+    <string name="mod_groups_export_result_with_config">Exported %1$d Mods with %2$d config files; %3$d members were missing.</string>
     <string name="mod_groups_import_failed">The Mod group could not be imported.</string>
     <string name="mod_groups_export_failed">The Mod group could not be exported.</string>
     <string name="mod_groups_delete_title">Delete Mod group?</string>

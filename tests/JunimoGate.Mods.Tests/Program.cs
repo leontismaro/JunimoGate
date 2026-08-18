@@ -138,6 +138,8 @@ return TestHarness.Run(
         ModProfileTransferTests.ImportsLegacyV1ManifestWithoutBundles()),
     ("Complete Mod Profile package excludes config and binds content", () =>
         ModProfileTransferTests.CompletePackageExcludesConfigAndBindsExportedContent()),
+    ("Complete Mod Profile package includes config when requested", () =>
+        ModProfileTransferTests.CompletePackageIncludesConfigWhenRequested()),
     ("Complete Mod Profile package rejects forged content identity", () =>
         ModProfileTransferTests.RejectsForgedPackageIdentityWithoutLibraryChanges()),
     ("Complete Mod Profile package supports an empty group", () =>

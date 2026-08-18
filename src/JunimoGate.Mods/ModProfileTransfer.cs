@@ -100,6 +100,9 @@ public sealed record ModProfileTransferDocument(
     public const string PackageEntryName = "junimogate-profile.json";
     public const int MaximumDocumentBytes = 2 * 1024 * 1024;
 
+    // Optional in v1 so older shared packages remain readable.
+    public bool IncludesConfigFiles { get; init; }
+
     public void Validate()
     {
         if (Schema != CurrentSchema || !Enum.IsDefined(Kind) ||
@@ -140,7 +143,10 @@ public sealed record ModProfileExportResult(
     int PackagedItems,
     int MissingItems,
     int ExcludedConfigFiles,
-    long PackagedBytes);
+    long PackagedBytes)
+{
+    public int IncludedConfigFiles { get; init; }
+}
 
 public sealed record ModProfileImportResult(
     ModProfileV2 Profile,
@@ -183,18 +189,20 @@ public sealed class ModProfileTransferService
     public async ValueTask<ModProfileExportResult> ExportPackageAsync(
         ProfileId profileId,
         Stream destination,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool includeConfig = false)
     {
         ArgumentNullException.ThrowIfNull(destination);
         var profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
         var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
-        return await ExportPackageCoreAsync(profile, index, destination, cancellationToken).ConfigureAwait(false);
+        return await ExportPackageCoreAsync(profile, index, destination, cancellationToken, includeConfig).ConfigureAwait(false);
     }
 
     public async ValueTask<ModProfileExportResult> ExportBundlePackageAsync(
         string bundleId,
         Stream destination,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool includeConfig = false)
     {
         ArgumentNullException.ThrowIfNull(destination);
         if (!ModContentId.IsValid(bundleId))
@@ -214,20 +222,22 @@ public sealed class ModProfileTransferService
             now,
             now,
             Description: null);
-        return await ExportPackageCoreAsync(profile, index, destination, cancellationToken).ConfigureAwait(false);
+        return await ExportPackageCoreAsync(profile, index, destination, cancellationToken, includeConfig).ConfigureAwait(false);
     }
 
     private async ValueTask<ModProfileExportResult> ExportPackageCoreAsync(
         ModProfileV2 profile,
         ModLibraryIndex index,
         Stream destination,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeConfig)
     {
         var indexed = index.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
         var packagedIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var packagedItems = 0;
         var missingItems = 0;
         var excludedConfigs = 0;
+        var includedConfigs = 0;
         long packagedBytes = 0;
 
         using (var archive = new ZipArchive(destination, ZipArchiveMode.Create, leaveOpen: true))
@@ -257,11 +267,13 @@ public sealed class ModProfileTransferService
                 foreach (var file in files)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (file.Relative.Equals("config.json", StringComparison.OrdinalIgnoreCase))
+                    if (file.Relative.Equals("config.json", StringComparison.OrdinalIgnoreCase) && !includeConfig)
                     {
                         excludedConfigs++;
                         continue;
                     }
+                    if (file.Relative.Equals("config.json", StringComparison.OrdinalIgnoreCase))
+                        includedConfigs++;
 
                     var info = new FileInfo(file.Path);
                     if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0)
@@ -301,20 +313,23 @@ public sealed class ModProfileTransferService
                 packagedItems++;
             }
 
-            var document = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds, index);
+            var document = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds, index, includeConfig);
             var metadataEntry = archive.CreateEntry(ModProfileTransferDocument.PackageEntryName, CompressionLevel.Fastest);
             await using var metadata = metadataEntry.Open();
             await JsonSerializer.SerializeAsync(metadata, document, JsonOptions, cancellationToken).ConfigureAwait(false);
         }
 
         await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
-        var resultDocument = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds, index);
+        var resultDocument = CreateDocument(profile, ModProfileTransferKind.Complete, packagedIds, index, includeConfig);
         return new ModProfileExportResult(
             resultDocument,
             packagedItems,
             missingItems,
             excludedConfigs,
-            packagedBytes);
+            packagedBytes)
+        {
+            IncludedConfigFiles = includedConfigs,
+        };
     }
 
     public async ValueTask<ModProfileImportResult> ImportManifestAsync(
@@ -351,7 +366,8 @@ public sealed class ModProfileTransferService
         ModProfileV2 profile,
         ModProfileTransferKind kind,
         IReadOnlyDictionary<string, string>? packagedIds,
-        ModLibraryIndex library)
+        ModLibraryIndex library,
+        bool includesConfigFiles = false)
     {
         profile.Validate();
         library.Validate();
@@ -374,6 +390,7 @@ public sealed class ModProfileTransferService
             transferMembers,
             CreateTransferBundles(profile, library, kind, packagedIds),
             DateTimeOffset.UtcNow);
+        document = document with { IncludesConfigFiles = kind == ModProfileTransferKind.Complete && includesConfigFiles };
         document.Validate();
         return document;
     }

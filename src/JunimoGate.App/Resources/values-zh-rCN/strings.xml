@@ -81,12 +81,15 @@
     <string name="mod_groups_share_title">分享“%1$s”</string>
     <string name="mod_groups_export_manifest">仅清单</string>
     <string name="mod_groups_export_package">完整包</string>
+    <string name="mod_groups_include_config">包含 Mod 配置</string>
+    <string name="mod_groups_include_config_summary">仅对完整包导出生效。</string>
     <string name="mod_groups_exporting_manifest">正在导出分组清单…</string>
     <string name="mod_groups_exporting_package">正在打包 Mod 文件…</string>
     <string name="mod_groups_package_confirm_title">导入 Mod 分组？</string>
     <string name="mod_groups_package_confirm_message">%1$s\n\n%2$d 个成员 · %3$d 个随包 Mod</string>
     <string name="mod_groups_import_result">已导入“%1$s”：新增 %2$d、复用 %3$d、缺失 %4$d、同版本不同内容候选 %5$d。</string>
     <string name="mod_groups_export_result">已导出 %1$d 个 Mod；排除 %2$d 个配置文件；%3$d 个成员缺失。</string>
+    <string name="mod_groups_export_result_with_config">已导出 %1$d 个 Mod，包含 %2$d 个配置文件；%3$d 个成员缺失。</string>
     <string name="mod_groups_import_failed">无法导入 Mod 分组。</string>
     <string name="mod_groups_export_failed">无法导出 Mod 分组。</string>
     <string name="mod_groups_delete_title">删除 Mod 分组？</string>

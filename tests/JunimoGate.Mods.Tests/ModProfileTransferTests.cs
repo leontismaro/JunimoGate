@@ -118,6 +118,50 @@ internal static class ModProfileTransferTests
         TestHarness.Equal(0, imported.MissingMembers);
     }
 
+    public static void CompletePackageIncludesConfigWhenRequested()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.PackageWithConfig", includeConfig: true);
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Configured group",
+                null,
+                null,
+                new[] { ModProfileMember.FromLibraryItem(sourceItem, enabled: true) })
+            .AsTask().GetAwaiter().GetResult();
+        var sourceService = new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles);
+        using var package = new MemoryStream();
+
+        var exported = sourceService.ExportPackageAsync(
+                ProfileId.Parse(sourceProfile.Id),
+                package,
+                includeConfig: true)
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(1, exported.PackagedItems);
+        TestHarness.Equal(0, exported.ExcludedConfigFiles);
+        TestHarness.Equal(1, exported.IncludedConfigFiles);
+        TestHarness.True(exported.Document.IncludesConfigFiles);
+        var packagedId = exported.Document.Members.Single().PackagedContentId;
+        package.Position = 0;
+        using (var archive = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true))
+        {
+            TestHarness.True(archive.Entries.Any(entry => entry.FullName.EndsWith("/config.json", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        using var destinationFixture = new TransferFixture();
+        var destinationService = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles);
+        package.Position = 0;
+        using var transaction = new AsyncTransactionScope(destinationService.CreatePackageImportTransaction("configured.zip"));
+        transaction.Value.ScanAsync(package).AsTask().GetAwaiter().GetResult();
+        transaction.Value.CommitAsync().AsTask().GetAwaiter().GetResult();
+        var imported = transaction.Value.ImportResult
+            ?? throw new InvalidOperationException("The configured group import result is missing.");
+
+        TestHarness.Equal(packagedId, imported.AddedItems.Single().ContentId);
+        var importedRoot = destinationFixture.Library.Layout.GetItemFilesDirectory(imported.AddedItems.Single().LibraryItemId);
+        TestHarness.True(File.Exists(Path.Combine(importedRoot, "config.json")));
+        TestHarness.Equal("{\"private\":true}", File.ReadAllText(Path.Combine(importedRoot, "config.json")));
+    }
+
     public static void RejectsForgedPackageIdentityWithoutLibraryChanges()
     {
         using var fixture = new TransferFixture();
