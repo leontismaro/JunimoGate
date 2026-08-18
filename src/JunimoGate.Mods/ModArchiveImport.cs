@@ -279,62 +279,53 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
             .ToArray();
         if (manifestEntries.Length == 0)
             issues.Add(new ModArchiveIssue(ModArchiveIssueSeverity.Error, "manifest_not_found"));
-        if (manifestEntries.Length > limits.MaximumMods)
+
+        var manifestRoots = manifestEntries
+            .Select(entry => new ManifestRoot(entry, GetParentPath(entry.Path)))
+            .ToArray();
+        var candidateManifests = manifestRoots
+            .Where(candidate => !manifestRoots.Any(other =>
+                other.RootPath.Length < candidate.RootPath.Length &&
+                IsSameOrChild(other.RootPath, candidate.RootPath)))
+            .ToArray();
+        if (candidateManifests.Length > limits.MaximumMods)
             issues.Add(new ModArchiveIssue(ModArchiveIssueSeverity.Error, "too_many_mods"));
 
-        var roots = manifestEntries.Select(entry => GetParentPath(entry.Path)).ToArray();
-        for (var first = 0; first < roots.Length; first++)
+        var candidates = new List<ModArchiveCandidate>();
+        foreach (var candidateManifest in candidateManifests)
         {
-            for (var second = first + 1; second < roots.Length; second++)
+            cancellationToken.ThrowIfCancellationRequested();
+            var manifestEntry = candidateManifest.Entry;
+            var root = candidateManifest.RootPath;
+            try
             {
-                if (IsSameOrChild(roots[first], roots[second]) || IsSameOrChild(roots[second], roots[first]))
+                var manifest = await ReadManifestAsync(manifestEntry.Entry, cancellationToken).ConfigureAwait(false);
+                var files = normalizedEntries
+                    .Where(entry => !entry.IsDirectory && IsSameOrChild(root, entry.Path))
+                    .OrderBy(entry => entry.Path, StringComparer.Ordinal)
+                    .ToArray();
+                candidates.Add(new ModArchiveCandidate(
+                    root,
+                    manifest,
+                    files.Length,
+                    files.Sum(entry => entry.Entry.Length),
+                    files.Select(entry => entry.Path).ToArray()));
+                if (manifest.EntryDll is null && manifest.ContentPackForUniqueId is null)
                 {
                     issues.Add(new ModArchiveIssue(
-                        ModArchiveIssueSeverity.Error,
-                        "overlapping_mod_roots",
-                        roots[first],
-                        roots[second]));
+                        ModArchiveIssueSeverity.Warning,
+                        "manifest_has_no_entrypoint",
+                        manifestEntry.Path,
+                        manifest.UniqueId));
                 }
             }
-        }
-
-        var candidates = new List<ModArchiveCandidate>();
-        if (issues.All(issue => issue.Code != "overlapping_mod_roots"))
-        {
-            foreach (var manifestEntry in manifestEntries)
+            catch (InvalidDataException exception)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var root = GetParentPath(manifestEntry.Path);
-                try
-                {
-                    var manifest = await ReadManifestAsync(manifestEntry.Entry, cancellationToken).ConfigureAwait(false);
-                    var files = normalizedEntries
-                        .Where(entry => !entry.IsDirectory && IsSameOrChild(root, entry.Path))
-                        .OrderBy(entry => entry.Path, StringComparer.Ordinal)
-                        .ToArray();
-                    candidates.Add(new ModArchiveCandidate(
-                        root,
-                        manifest,
-                        files.Length,
-                        files.Sum(entry => entry.Entry.Length),
-                        files.Select(entry => entry.Path).ToArray()));
-                    if (manifest.EntryDll is null && manifest.ContentPackForUniqueId is null)
-                    {
-                        issues.Add(new ModArchiveIssue(
-                            ModArchiveIssueSeverity.Warning,
-                            "manifest_has_no_entrypoint",
-                            manifestEntry.Path,
-                            manifest.UniqueId));
-                    }
-                }
-                catch (InvalidDataException exception)
-                {
-                    issues.Add(new ModArchiveIssue(
-                        ModArchiveIssueSeverity.Error,
-                        "invalid_manifest",
-                        manifestEntry.Path,
-                        exception.Message));
-                }
+                issues.Add(new ModArchiveIssue(
+                    ModArchiveIssueSeverity.Error,
+                    "invalid_manifest",
+                    manifestEntry.Path,
+                    exception.Message));
             }
         }
 
@@ -498,4 +489,6 @@ public sealed class ModArchiveInstallTransaction : IModArchiveInstallTransaction
     }
 
     private sealed record ScannedArchiveEntry(ZipArchiveEntry Entry, string Path, bool IsDirectory);
+
+    private sealed record ManifestRoot(ScannedArchiveEntry Entry, string RootPath);
 }

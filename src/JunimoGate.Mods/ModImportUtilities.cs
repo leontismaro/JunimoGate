@@ -52,8 +52,10 @@ internal static class ModImportUtilities
                     throw new InvalidDataException("UpdateKeys must be an array.");
                 foreach (var updateKey in updateKeyArray.EnumerateArray())
                 {
-                    if (updateKey.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(updateKey.GetString()))
-                        throw new InvalidDataException("Each UpdateKeys entry must be a non-empty string.");
+                    if (updateKey.ValueKind != JsonValueKind.String)
+                        throw new InvalidDataException("Each UpdateKeys entry must be a string.");
+                    if (string.IsNullOrWhiteSpace(updateKey.GetString()))
+                        continue;
                     var value = updateKey.GetString()!.Trim();
                     if (value.Length > 4096)
                         throw new InvalidDataException("A Mod UpdateKeys entry is too long.");

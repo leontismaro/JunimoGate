@@ -162,8 +162,18 @@ return TestHarness.Run(
         ModBundleDetectorTests.LeavesDuplicateUniqueIdVersionsStandalone()),
     ("Mod archive scanner accepts repeated directory entries", () =>
         ModLibraryTests.AllowsRepeatedDirectoryEntries()),
-    ("Mod archive scanner rejects traversal and overlapping roots", () =>
-        ModLibraryTests.RejectsUnsafeArchiveShapes()),
+    ("Mod archive scanner rejects unsafe paths", () =>
+        ModLibraryTests.RejectsUnsafeArchivePaths()),
+    ("Mod archive scanner gives nested manifests to the outer Mod", () =>
+        ModLibraryTests.UsesOutermostManifestRoot()),
+    ("Mod archive scanner limits collapsed outer Mod roots", () =>
+        ModLibraryTests.RejectsTooManyOutermostManifestRoots()),
+    ("Mod archive scanner rejects an invalid outer manifest", () =>
+        ModLibraryTests.RejectsInvalidOutermostManifest()),
+    ("Mod archive scanner ignores blank update keys", () =>
+        ModLibraryTests.IgnoresBlankUpdateKeys()),
+    ("Mod archive scanner rejects malformed update-key shapes", () =>
+        ModLibraryTests.RejectsMalformedUpdateKeys()),
     ("Mod library imports atomically and reuses identical content", () =>
         ModLibraryTests.ImportsAndReusesContent()),
     ("Mod files list and edit the actual private directory", () =>

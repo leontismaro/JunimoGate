@@ -53,7 +53,7 @@ internal static class ModLibraryTests
         }
     }
 
-    public static void RejectsUnsafeArchiveShapes()
+    public static void RejectsUnsafeArchivePaths()
     {
         using var fixture = new ModLibraryFixture();
         using (var traversal = CreateArchive(
@@ -73,24 +73,158 @@ internal static class ModLibraryTests
                 transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
         }
+    }
 
-        using (var overlapping = CreateArchive(
-                   ("manifest.json", Manifest("Example.Root", "1.0.0", entryDll: "Root.dll")),
-                   ("Root.dll", "root"),
-                   ("Nested/manifest.json", Manifest("Example.Nested", "1.0.0", entryDll: "Nested.dll")),
-                   ("Nested/Nested.dll", "nested")))
+    public static void UsesOutermostManifestRoot()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Bush/manifest.json", Manifest("Example.Bush", "1.0.0", entryDll: "Bush.dll")),
+            ("Bush/Bush.dll", "root"),
+            ("Bush/examples/Valid/manifest.json", Manifest("Example.Valid", "1.0.0", contentPackFor: "Example.Bush")),
+            ("Bush/examples/Valid/content.json", "{}"),
+            ("Bush/examples/Invalid/manifest.json", "{ invalid"),
+            ("Bush/examples/Invalid/readme.txt", "example"));
+        var limits = ModArchiveImportLimits.Default with { MaximumMods = 1 };
+        var transaction = fixture.Repository.CreateInstallTransaction("nested-examples.zip", limits);
+        try
         {
-            var transaction = fixture.Repository.CreateInstallTransaction();
-            try
-            {
-                transaction.ScanAsync(overlapping).AsTask().GetAwaiter().GetResult();
-                TestHarness.False(transaction.ScanResult!.CanCommit);
-                TestHarness.True(transaction.ScanResult.Issues.Any(issue => issue.Code == "overlapping_mod_roots"));
-            }
-            finally
-            {
-                transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            }
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.True(scan.CanCommit);
+            TestHarness.Equal(1, scan.Candidates.Count);
+            TestHarness.Equal(0, scan.IgnoredFileCount);
+            var candidate = scan.Candidates.Single();
+            TestHarness.Equal("Bush", candidate.RootPath);
+            TestHarness.Equal("Example.Bush", candidate.Manifest.UniqueId);
+            TestHarness.Equal(6, candidate.FileCount);
+            TestHarness.True(candidate.EntryPaths.Contains("Bush/examples/Invalid/manifest.json"));
+
+            transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
+            var imported = transaction.ImportResult?.AddedItems.Single()
+                ?? throw new InvalidOperationException("The imported Mod is missing.");
+            var files = fixture.Repository.Layout.GetItemFilesDirectory(imported.LibraryItemId);
+            TestHarness.Equal("{ invalid", File.ReadAllText(Path.Combine(files, "examples", "Invalid", "manifest.json")));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void RejectsTooManyOutermostManifestRoots()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Alpha/manifest.json", Manifest("Example.Alpha", "1.0.0", entryDll: "Alpha.dll")),
+            ("Alpha/Alpha.dll", "alpha"),
+            ("Beta/manifest.json", Manifest("Example.Beta", "1.0.0", entryDll: "Beta.dll")),
+            ("Beta/Beta.dll", "beta"));
+        var limits = ModArchiveImportLimits.Default with { MaximumMods = 1 };
+        var transaction = fixture.Repository.CreateInstallTransaction("two-mods.zip", limits);
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.False(scan.CanCommit);
+            TestHarness.Equal(2, scan.Candidates.Count);
+            TestHarness.True(scan.Issues.Any(issue => issue.Code == "too_many_mods"));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void RejectsInvalidOutermostManifest()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Parent/manifest.json", "{ invalid"),
+            ("Parent/data.json", "{}"),
+            ("Parent/Nested/manifest.json", Manifest("Example.Nested", "1.0.0", entryDll: "Nested.dll")),
+            ("Parent/Nested/Nested.dll", "nested"));
+        var transaction = fixture.Repository.CreateInstallTransaction();
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.False(scan.CanCommit);
+            TestHarness.Equal(0, scan.Candidates.Count);
+            TestHarness.True(scan.Issues.Any(issue =>
+                issue.Code == "invalid_manifest" && issue.Path == "Parent/manifest.json"));
+            TestHarness.False(scan.Issues.Any(issue => issue.Path == "Parent/Nested/manifest.json"));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void IgnoresBlankUpdateKeys()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Mod/manifest.json", """
+                {"Name":"Example","Author":"Test","Version":"1.0.0","UniqueID":"Example.Keys","EntryDll":"Mod.dll","UpdateKeys":["", "   ", " Nexus:123 "]}
+                """),
+            ("Mod/Mod.dll", "content"));
+        var transaction = fixture.Repository.CreateInstallTransaction();
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.True(scan.CanCommit);
+            TestHarness.Equal(1, scan.Candidates.Count);
+            TestHarness.Equal(1, scan.Candidates[0].Manifest.UpdateKeys.Count);
+            TestHarness.Equal("Nexus:123", scan.Candidates[0].Manifest.UpdateKeys[0]);
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void RejectsMalformedUpdateKeys()
+    {
+        using var fixture = new ModLibraryFixture();
+        using (var nonArray = CreateArchive(
+                   ("Mod/manifest.json", """
+                       {"Name":"Example","Author":"Test","Version":"1.0.0","UniqueID":"Example.Keys","EntryDll":"Mod.dll","UpdateKeys":{}}
+                       """),
+                   ("Mod/Mod.dll", "content")))
+        {
+            AssertInvalidManifest(fixture.Repository, nonArray);
+        }
+
+        using (var nonString = CreateArchive(
+                   ("Mod/manifest.json", """
+                       {"Name":"Example","Author":"Test","Version":"1.0.0","UniqueID":"Example.Keys","EntryDll":"Mod.dll","UpdateKeys":[123]}
+                       """),
+                   ("Mod/Mod.dll", "content")))
+        {
+            AssertInvalidManifest(fixture.Repository, nonString);
+        }
+
+        var longKey = new string('x', 4097);
+        using var oversized = CreateArchive(
+            ("Mod/manifest.json", $"{{\"Name\":\"Example\",\"Author\":\"Test\",\"Version\":\"1.0.0\",\"UniqueID\":\"Example.Keys\",\"EntryDll\":\"Mod.dll\",\"UpdateKeys\":[\"{longKey}\"]}}"),
+            ("Mod/Mod.dll", "content"));
+        AssertInvalidManifest(fixture.Repository, oversized);
+    }
+
+    private static void AssertInvalidManifest(ModLibraryRepository repository, Stream archive)
+    {
+        var transaction = repository.CreateInstallTransaction();
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            TestHarness.False(transaction.ScanResult!.CanCommit);
+            TestHarness.True(transaction.ScanResult.Issues.Any(issue => issue.Code == "invalid_manifest"));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
 
