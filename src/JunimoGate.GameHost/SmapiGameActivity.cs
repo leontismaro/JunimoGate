@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 using Android.App;
@@ -50,7 +49,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
 
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
-        Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture; // per StardewValley.Program.Main
+        AndroidCulturePolicy.ApplyInvariantDataCulture();
         base.OnCreate(savedInstanceState);
         Log.Initialize(this, "game", GameHostRuntimeIdentity.BuildId);
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
