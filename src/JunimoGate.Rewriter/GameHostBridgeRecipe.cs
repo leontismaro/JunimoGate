@@ -29,6 +29,13 @@ internal sealed record GameHostBridgeMethodPlan(
     bool RewriteActivityLocal,
     string TargetMemberSignature);
 
+internal sealed record GameHostBridgeRequiredFieldPlan(
+    string Type,
+    string Name,
+    string FieldType,
+    bool IsStatic,
+    string MemberSignature);
+
 public sealed record GameHostBridgeRuleContract(
     string RuleId,
     string InputRelativePath,
@@ -43,7 +50,7 @@ public static class GameHostBridgeRecipe
     public const string FamilyId = GameCompatibilityIds.StardewAndroidMainActivityBridgeV1;
 
     public static RewriteRecipeIdentity Identity { get; } =
-        new("stardew-android-mainactivity-bridge", "1");
+        new("stardew-android-mainactivity-bridge", "2");
 
     internal static ImmutableArray<GameHostBridgeMethodPlan> Plans { get; } =
     [
@@ -60,6 +67,12 @@ public static class GameHostBridgeRecipe
         Plan("title-menu-permission", "StardewValley.Menus.TitleMenu", "releaseLeftClick", "System.Void", ["System.Int32", "System.Int32"], [Method("get_HasPermissions", "System.Boolean", [], "HasPermissions")], false, isInstance: true),
         Plan("title-menu-migration-state", "StardewValley.Menus.TitleMenu", "update", "System.Void", ["Microsoft.Xna.Framework.GameTime"], [Field("IsDoingStorageMigration", "System.Boolean", "IsDoingStorageMigration")], false, isInstance: true),
         Plan("mobile-display-activity", "StardewValley.Mobile.MobileDisplay", "SetupDisplaySettings", "System.Void", [], [Activity()], true),
+    ];
+
+    internal static ImmutableArray<GameHostBridgeRequiredFieldPlan> RequiredFields { get; } =
+    [
+        RequiredField("StardewValley.Game1", "xEdge", "System.Int32", isStatic: true),
+        RequiredField("StardewValley.Game1", "toolbarPaddingX", "System.Int32", isStatic: true),
     ];
 
     public static ImmutableArray<GameHostBridgeRuleContract> Rules =>
@@ -97,6 +110,18 @@ public static class GameHostBridgeRecipe
     private static GameHostBridgeActionPlan Field(string sourceName, string fieldType, string bridgeName) =>
         new(GameHostBridgeActionKind.Field, sourceName, fieldType, [], bridgeName);
 
+    private static GameHostBridgeRequiredFieldPlan RequiredField(
+        string type,
+        string name,
+        string fieldType,
+        bool isStatic) =>
+        new(
+            type,
+            name,
+            fieldType,
+            isStatic,
+            $"{(isStatic ? "static" : "instance")};{fieldType} {type}::{name}");
+
     internal static string FormatReplacement(GameHostBridgeActionPlan action) =>
         action.Kind == GameHostBridgeActionKind.Activity
             ? "StardewValley.MainActivity::instance -> JunimoGate.GameHost.GameHostBridge::GetActivity"
@@ -122,6 +147,7 @@ internal static class GameHostBridgeRecipeEngine
     internal static ImmutableArray<AppliedRewriteMutationEvidence> Apply(AssemblyDefinition assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
+        ValidateRequiredMembers(assembly.MainModule);
         var module = assembly.MainModule;
         var hostReference = GetOrAddHostReference(module);
         var bridgeType = new TypeReference("JunimoGate.GameHost", "GameHostBridge", module, hostReference, false);
@@ -156,6 +182,7 @@ internal static class GameHostBridgeRecipeEngine
     internal static ImmutableArray<AppliedRewriteMutationEvidence> ValidatePostconditions(AssemblyDefinition assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
+        ValidateRequiredMembers(assembly.MainModule);
         var module = assembly.MainModule;
         var hostReferences = module.AssemblyReferences.Where(static reference => reference.Name == HostAssemblyName).ToArray();
         if (hostReferences.Length != 1 || hostReferences[0].Version != new Version(1, 0, 0, 0))
@@ -183,6 +210,34 @@ internal static class GameHostBridgeRecipeEngine
         }
 
         return evidence.MoveToImmutable();
+    }
+
+    internal static void ValidateRequiredMembers(ModuleDefinition module)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        foreach (var required in GameHostBridgeRecipe.RequiredFields)
+        {
+            var types = AllTypes(module)
+                .Where(type => Normalize(type.FullName) == required.Type)
+                .ToArray();
+            if (types.Length != 1)
+            {
+                throw new InvalidDataException(
+                    $"Required GameHost field type guard failed for '{required.MemberSignature}'.");
+            }
+
+            var fields = types[0].Fields
+                .Where(field => field.Name == required.Name &&
+                    Normalize(field.FieldType.FullName) == required.FieldType &&
+                    field.IsStatic == required.IsStatic &&
+                    field.IsPublic)
+                .ToArray();
+            if (fields.Length != 1)
+            {
+                throw new InvalidDataException(
+                    $"Required GameHost field guard failed for '{required.MemberSignature}'.");
+            }
+        }
     }
 
     private static MethodDefinition FindMethod(ModuleDefinition module, GameHostBridgeMethodPlan plan)

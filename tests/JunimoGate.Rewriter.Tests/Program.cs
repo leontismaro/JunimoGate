@@ -60,6 +60,12 @@ try
                 Path.Combine(root, "semantic-stack"),
                 new SyntheticGameOptions(InvalidStackRuleId: "rumble-activity")));
         }),
+        ("Semantic bridge rejects missing GameHost runtime fields", () =>
+        {
+            AssertGuardRejected(SyntheticGameAssemblies.Create(
+                Path.Combine(root, "semantic-required-field"),
+                new SyntheticGameOptions(MissingRequiredFieldName: "xEdge")));
+        }),
         ("Applied request rejects source and overlay path overlap", () =>
             AppliedWorkspacePreparationTests.RequestGuards(root)),
         ("Applied workspace rewrites once then uses cache", () =>

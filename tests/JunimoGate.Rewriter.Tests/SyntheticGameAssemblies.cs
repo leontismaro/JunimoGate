@@ -14,7 +14,8 @@ internal sealed record SyntheticGameOptions(
     bool AddExtraLocal = false,
     string? MissingRuleId = null,
     string? DuplicateRuleId = null,
-    string? InvalidStackRuleId = null);
+    string? InvalidStackRuleId = null,
+    string? MissingRequiredFieldName = null);
 
 internal sealed record SyntheticGameFixture(
     string WorkspacePath,
@@ -108,6 +109,17 @@ internal static class SyntheticGameAssemblies
             mainActivity.Fields.Add(field);
         foreach (var method in sourceMethods.Values)
             mainActivity.Methods.Add(method);
+
+        var game1 = GetOrAddType(module, mainActivity, "StardewValley.Game1");
+        foreach (var required in GameHostBridgeRecipe.RequiredFields)
+        {
+            if (required.Name == options.MissingRequiredFieldName)
+                continue;
+            game1.Fields.Add(new FieldDefinition(
+                required.Name,
+                required.IsStatic ? FieldAttributes.Public | FieldAttributes.Static : FieldAttributes.Public,
+                ResolveType(module, mainActivity, monoAndroid, monoGame, androidX, required.FieldType)));
+        }
 
         var finish = new MethodReference("Finish", module.TypeSystem.Void, activityType) { HasThis = true };
         var helper = AddHelper(module);

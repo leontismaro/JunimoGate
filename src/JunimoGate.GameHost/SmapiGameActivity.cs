@@ -11,6 +11,7 @@ using Android.Window;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI.AndroidHost;
 using JunimoGate.Mods;
+using StardewValley;
 using Log = JunimoGate.Android.JunimoGateLog;
 using OperationCanceledException = System.OperationCanceledException;
 
@@ -22,6 +23,7 @@ namespace JunimoGate.GameHost;
     Exported = false,
     Process = ":game",
     LaunchMode = LaunchMode.SingleTop,
+    Theme = "@style/Theme.JunimoGate.GameHost",
     ScreenOrientation = ScreenOrientation.SensorLandscape,
     ConfigurationChanges = ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden | ConfigChanges.Orientation |
         ConfigChanges.ScreenLayout | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
@@ -45,12 +47,19 @@ public sealed class SmapiGameActivity : AndroidGameActivity
     private Task? checkpointTask;
     private CancellationTokenSource? backgroundPersistenceCancellation;
     private Task? backgroundPersistenceTask;
+    private View.IOnApplyWindowInsetsListener? windowInsetsListener;
+    private bool gameViewAttached;
+    private bool gameSafeAreaCaptured;
+    private int gameSafeAreaXEdge;
+    private int gameSafeAreaToolbarPadding;
+    private int appliedCutoutPadding = -1;
     private static readonly TimeSpan BackgroundPersistenceDelay = TimeSpan.FromMilliseconds(250);
     private const long LoadingFadeDurationMilliseconds = 180L;
 
     protected override async void OnCreate(Bundle? savedInstanceState)
     {
         Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture; // per StardewValley.Program.Main
+        ConfigureGameWindow();
         base.OnCreate(savedInstanceState);
         Log.Initialize(this, "game", GameHostRuntimeIdentity.BuildId);
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
@@ -60,6 +69,7 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             ?? throw new InvalidOperationException("The SMAPI game view container is unavailable.");
         loadingOverlay = FindViewById(Resource.Id.smapi_loading_overlay)
             ?? throw new InvalidOperationException("The SMAPI loading overlay is unavailable.");
+        InstallWindowInsetsListener();
         if (savedInstanceState is not null)
         {
             Log.Warn("JunimoGate.SMAPI", "session-recreation-returning-to-launcher");
@@ -229,12 +239,15 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MatchParent,
                 ViewGroup.LayoutParams.MatchParent));
+        gameViewAttached = true;
+        ApplyGameDisplayCutoutInsets(Window?.DecorView?.RootWindowInsets);
     }
 
     private void RevealGameView()
     {
         if (destroyed || IsFinishing || loadingOverlay is not { } overlay)
             return;
+        ReapplyGameDisplayCutoutInsets();
         overlay.Animate()?.Cancel();
         overlay.Animate()
             ?.Alpha(0f)
@@ -289,6 +302,10 @@ public sealed class SmapiGameActivity : AndroidGameActivity
         destroyed = true;
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
             UnregisterBackInvokedCallback();
+        Window?.DecorView?.SetOnApplyWindowInsetsListener(null);
+        windowInsetsListener?.Dispose();
+        windowInsetsListener = null;
+        gameViewAttached = false;
         CompletePlaySession(GamePlaySessionOutcomes.Completed, failureCode: null);
         session?.Dispose();
         session = null;
@@ -619,6 +636,87 @@ public sealed class SmapiGameActivity : AndroidGameActivity
             decor.SystemUiFlags = SystemUiFlags.ImmersiveSticky | SystemUiFlags.Fullscreen |
                 SystemUiFlags.HideNavigation | SystemUiFlags.LayoutFullscreen |
                 SystemUiFlags.LayoutHideNavigation | SystemUiFlags.LayoutStable;
+    }
+
+    private void ConfigureGameWindow()
+    {
+        var window = Window ?? throw new InvalidOperationException("The GameHost window is unavailable.");
+        window.AddFlags(WindowManagerFlags.Fullscreen | WindowManagerFlags.KeepScreenOn);
+        if (OperatingSystem.IsAndroidVersionAtLeast(28))
+            ConfigureDisplayCutout(window);
+        if (OperatingSystem.IsAndroidVersionAtLeast(30) &&
+            !OperatingSystem.IsAndroidVersionAtLeast(35))
+            ConfigureEdgeToEdge(window);
+    }
+
+    [SupportedOSPlatform("android28.0")]
+    private static void ConfigureDisplayCutout(Window window)
+    {
+        var attributes = window.Attributes
+            ?? throw new InvalidOperationException("The GameHost window attributes are unavailable.");
+        attributes.LayoutInDisplayCutoutMode = LayoutInDisplayCutoutMode.ShortEdges;
+    }
+
+    [SupportedOSPlatform("android30.0")]
+    [UnsupportedOSPlatform("android35.0")]
+    private static void ConfigureEdgeToEdge(Window window) => window.SetDecorFitsSystemWindows(false);
+
+    private void InstallWindowInsetsListener()
+    {
+        var decor = Window?.DecorView ?? throw new InvalidOperationException("The GameHost decor view is unavailable.");
+        windowInsetsListener = new GameWindowInsetsListener(this);
+        decor.SetOnApplyWindowInsetsListener(windowInsetsListener);
+        decor.RequestApplyInsets();
+    }
+
+    private void ApplyGameDisplayCutoutInsets(WindowInsets? insets)
+    {
+        if (!gameViewAttached || !OperatingSystem.IsAndroidVersionAtLeast(28))
+            return;
+        if (!gameSafeAreaCaptured)
+        {
+            gameSafeAreaXEdge = Game1.xEdge;
+            gameSafeAreaToolbarPadding = Game1.toolbarPaddingX;
+            gameSafeAreaCaptured = true;
+        }
+
+        var cutout = insets?.DisplayCutout;
+        int cutoutPadding = cutout is null
+            ? 0
+            : Math.Max(cutout.SafeInsetLeft, cutout.SafeInsetRight);
+        if (cutoutPadding == appliedCutoutPadding)
+            return;
+
+        Game1.xEdge = cutoutPadding > 0
+            ? Math.Min(90, cutoutPadding)
+            : gameSafeAreaXEdge;
+        Game1.toolbarPaddingX = cutoutPadding > 0
+            ? cutoutPadding
+            : gameSafeAreaToolbarPadding;
+        appliedCutoutPadding = cutoutPadding;
+        Log.Info(
+            "JunimoGate.GameHost",
+            $"display-safe-area cutout={cutoutPadding} x-edge={Game1.xEdge} toolbar={Game1.toolbarPaddingX}");
+    }
+
+    private void ReapplyGameDisplayCutoutInsets()
+    {
+        appliedCutoutPadding = -1;
+        ApplyGameDisplayCutoutInsets(Window?.DecorView?.RootWindowInsets);
+    }
+
+    private sealed class GameWindowInsetsListener(SmapiGameActivity activity) :
+        Java.Lang.Object,
+        View.IOnApplyWindowInsetsListener
+    {
+        private readonly WeakReference<SmapiGameActivity> target = new(activity);
+
+        public WindowInsets OnApplyWindowInsets(View view, WindowInsets insets)
+        {
+            if (target.TryGetTarget(out var current) && current.gameViewAttached)
+                current.ApplyGameDisplayCutoutInsets(insets);
+            return insets;
+        }
     }
 
     private sealed class ActivityDispatcher(Activity activity) : IMainThreadDispatcher
