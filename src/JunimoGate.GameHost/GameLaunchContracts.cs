@@ -665,18 +665,6 @@ public static class GameLaunchRegistry
     public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
         Context context,
         PreparedGameHandle preparedGame,
-        ProfileLaunchSelection legacyProfile,
-        CancellationToken cancellationToken) =>
-        await TryIssueLegacyLaunchAsync(
-            context,
-            preparedGame,
-            legacyProfile,
-            recoveryLevel: 0,
-            cancellationToken).ConfigureAwait(false);
-
-    public static async ValueTask<GameLaunchIssueResult> TryIssueLaunchAsync(
-        Context context,
-        PreparedGameHandle preparedGame,
         ModLaunchSelectionSnapshot modSelection,
         int recoveryLevel,
         CancellationToken cancellationToken)
@@ -688,25 +676,11 @@ public static class GameLaunchRegistry
             recoveryLevel,
             cancellationToken).ConfigureAwait(false);
 
-    public static async ValueTask<GameLaunchIssueResult> TryIssueLegacyLaunchAsync(
-        Context context,
-        PreparedGameHandle preparedGame,
-        ProfileLaunchSelection legacyProfile,
-        int recoveryLevel,
-        CancellationToken cancellationToken) =>
-        await TryIssueCoreAsync(
-            context,
-            preparedGame,
-            legacyProfile,
-            modSelection: null,
-            recoveryLevel,
-            cancellationToken).ConfigureAwait(false);
-
     private static async ValueTask<GameLaunchIssueResult> TryIssueCoreAsync(
         Context context,
         PreparedGameHandle preparedGame,
         ProfileLaunchSelection profile,
-        ModLaunchSelectionSnapshot? modSelection,
+        ModLaunchSelectionSnapshot modSelection,
         int recoveryLevel,
         CancellationToken cancellationToken)
     {
@@ -716,10 +690,8 @@ public static class GameLaunchRegistry
             throw new ArgumentOutOfRangeException(nameof(recoveryLevel));
         await using var coordination = await AcquireModLibraryCoordinationAsync(context, cancellationToken)
             .ConfigureAwait(false);
-        var isCurrent = modSelection is null
-            ? await IsCurrentLegacyProfileAsync(context, profile, cancellationToken).ConfigureAwait(false)
-            : await IsCurrentModSelectionAsync(context, modSelection, cancellationToken).ConfigureAwait(false);
-        if (!isCurrent || modSelection is not null && ProfileLaunchSelection.From(modSelection) != profile)
+        var isCurrent = await IsCurrentModSelectionAsync(context, modSelection, cancellationToken).ConfigureAwait(false);
+        if (!isCurrent || ProfileLaunchSelection.From(modSelection) != profile)
             return new GameLaunchIssueResult(GameLaunchIssueStatus.ProfileChanged, null);
         var state = await TryReadStateAsync(context, cancellationToken).ConfigureAwait(false);
         if (!preparedGame.SnapshotId.Equals(state.ActiveSnapshotId, StringComparison.Ordinal) || state.Pending is not null)
@@ -732,7 +704,7 @@ public static class GameLaunchRegistry
         var root = GetRoot(context);
         CleanupStaleDescriptors(root);
         var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-        var selectionPath = modSelection is null ? null : GetModSelectionPath(context, modSelection.SelectionId);
+        var selectionPath = GetModSelectionPath(context, modSelection.SelectionId);
         if (selectionPath is not null)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(selectionPath)!);
@@ -746,7 +718,7 @@ public static class GameLaunchRegistry
             key,
             recoveryLevel,
             profile,
-            modSelection?.SelectionId,
+            modSelection.SelectionId,
             DateTimeOffset.UtcNow);
         try
         {
@@ -780,7 +752,7 @@ public static class GameLaunchRegistry
                         preparedGame.SnapshotId,
                         recoveryLevel,
                         profile,
-                        modSelection?.SelectionId,
+                        modSelection.SelectionId,
                         DateTimeOffset.UtcNow),
                     UpdatedAtUtc = DateTimeOffset.UtcNow,
                 };
@@ -889,9 +861,8 @@ public static class GameLaunchRegistry
                     MaximumDescriptorBytes,
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The launch request is invalid.");
-            var isLegacyDescriptor = descriptor.Schema == GameLaunchSchema.LegacyDescriptorV4;
-            if (descriptor.Schema != GameLaunchSchema.Descriptor && !isLegacyDescriptor ||
-                isLegacyDescriptor && descriptor.ModSelectionId is not null ||
+            if (descriptor.Schema != GameLaunchSchema.Descriptor ||
+                descriptor.ModSelectionId is null ||
                 descriptor.CapabilityKey != key ||
                 !IsSnapshotId(descriptor.SnapshotId) || descriptor.RecoveryLevel is < 0 or > 2 ||
                 descriptor.ModSelectionId is not null && !IsSnapshotId(descriptor.ModSelectionId))
@@ -913,10 +884,8 @@ public static class GameLaunchRegistry
                     throw new InvalidDataException("The Mod launch selection changed before it was consumed.");
                 }
             }
-            else if (!await IsCurrentLegacyProfileAsync(context, descriptor.Profile, cancellationToken).ConfigureAwait(false))
-            {
-                throw new InvalidDataException("The legacy Mod Profile changed before it was consumed.");
-            }
+            else
+                throw new InvalidDataException("The launch request does not contain a v2 Mod selection.");
 
             var snapshotPath = Path.Combine(root, $"snapshot-{descriptor.SnapshotId}.json");
             var snapshot = await ReadJsonAsync<PreparedGameSnapshot>(
@@ -925,20 +894,8 @@ public static class GameLaunchRegistry
                     cancellationToken)
                 .ConfigureAwait(false) ?? throw new InvalidDataException("The prepared game snapshot is invalid.");
             snapshot.ValidateEnvelope(context);
-            string modsRoot;
-            IReadOnlyList<string>? modDirectories;
-            if (modSelection is null)
-            {
-                var profileLayout = new ProfileLayout(GetProfilesRoot(context), descriptor.Profile.Validate());
-                Directory.CreateDirectory(profileLayout.EnabledDirectory);
-                modsRoot = profileLayout.EnabledDirectory;
-                modDirectories = null;
-            }
-            else
-            {
-                modsRoot = GetModsRoot(context);
-                modDirectories = ModLaunchSelectionPathResolver.ResolveExistingRoots(modsRoot, modSelection);
-            }
+            var modsRoot = GetModsRoot(context);
+            var modDirectories = ModLaunchSelectionPathResolver.ResolveExistingRoots(modsRoot, modSelection);
             Log.Info(
                 "JunimoGate.LaunchTrace",
                 $"descriptor-consumed attempt={key[..8]} level={descriptor.RecoveryLevel} gameSnapshotReads=1");
@@ -996,18 +953,16 @@ public static class GameLaunchRegistry
             return null;
         if (!IsSnapshotId(pending.AttemptId) || !IsSnapshotId(pending.SnapshotId) ||
             pending.RecoveryLevel is < 0 or > 2 || pending.Profile is null ||
-            pending.ModSelectionId is not null && !IsSnapshotId(pending.ModSelectionId))
+            pending.ModSelectionId is null || !IsSnapshotId(pending.ModSelectionId))
         {
             await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
             return null;
         }
 
         var snapshot = await TryReadSnapshotAsync(context, pending.SnapshotId, cancellationToken).ConfigureAwait(false);
-        var modSelection = pending.ModSelectionId is null
-            ? null
-            : await TryReadModSelectionAsync(context, pending.ModSelectionId, cancellationToken).ConfigureAwait(false);
-        if (snapshot is null || pending.ModSelectionId is not null &&
-            (modSelection is null || ProfileLaunchSelection.From(modSelection) != pending.Profile))
+        var modSelection = await TryReadModSelectionAsync(context, pending.ModSelectionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (snapshot is null || modSelection is null || ProfileLaunchSelection.From(modSelection) != pending.Profile)
         {
             await ClearInvalidPendingAsync(context, state, pending, cancellationToken).ConfigureAwait(false);
             return null;
@@ -1604,44 +1559,10 @@ public static class GameLaunchRegistry
             var library = await new ModLibraryRepository(GetModsRoot(context))
                 .ReadAsync(cancellationToken)
                 .ConfigureAwait(false);
-            var legacyDefault = await new ModProfileRepository(GetProfilesRoot(context))
-                .ReadAsync(ProfileId.Parse("default"), cancellationToken)
-                .ConfigureAwait(false);
             var globalSettings = await new LauncherSettingsRepository(GetSettingsRoot(context))
-                .OpenOrCreateAsync(legacyDefault.AssemblyBindingPolicy, cancellationToken)
+                .OpenOrCreateAsync(ModAssemblyBindingPolicy.HighestCompatible, cancellationToken)
                 .ConfigureAwait(false);
             return selection.Matches(profile, library, globalSettings.DefaultAssemblyBindingPolicy);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            return false;
-        }
-    }
-
-    private static async ValueTask<bool> IsCurrentLegacyProfileAsync(
-        Context context,
-        ProfileLaunchSelection? selection,
-        CancellationToken cancellationToken)
-    {
-        if (selection is null)
-            return false;
-        ProfileId profileId;
-        try
-        {
-            profileId = selection.Validate();
-        }
-        catch (InvalidDataException)
-        {
-            return false;
-        }
-
-        try
-        {
-            var profile = await new ModProfileRepository(GetProfilesRoot(context))
-                .ReadAsync(profileId, cancellationToken)
-                .ConfigureAwait(false);
-            return profile.Revision == selection.Revision &&
-                   profile.AssemblyBindingPolicy == selection.AssemblyBindingPolicy;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {

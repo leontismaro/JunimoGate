@@ -702,17 +702,16 @@ public sealed class ModsFragment : Fragment
             if (repository is not null && profiles is not null)
             {
                 var migrator = new LegacyModProfileMigrator(profilesRoot, repository, profiles);
-                var migration = await migrator
-                    .MigrateAsync(ProfileId.Parse("default"), "Default", cancellationToken)
-                    .ConfigureAwait(false);
-                if (!migration.AlreadyMigrated)
+                var migrations = await migrator.MigrateAllAsync(cancellationToken).ConfigureAwait(false);
+                _ = await profiles.OpenOrCreateDefaultAsync("Default", cancellationToken).ConfigureAwait(false);
+                if (migrations.Any(migration => !migration.AlreadyMigrated))
                 {
                     modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
                     modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
                 }
                 Log.Info(
                     "JunimoGate.Mods",
-                    $"profile-migration already={(migration.AlreadyMigrated ? 1 : 0)} imported={migration.ImportedItems} reused={migration.ReusedItems} enabled={migration.EnabledMembers} disabled={migration.DisabledMembers}");
+                    $"profile-migration count={migrations.Count} imported={migrations.Sum(value => value.ImportedItems)} reused={migrations.Sum(value => value.ReusedItems)}");
             }
             if (settingsRepository is not null)
                 launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);

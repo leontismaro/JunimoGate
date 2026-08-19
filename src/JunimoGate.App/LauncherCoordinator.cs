@@ -52,7 +52,6 @@ internal sealed record LauncherState(
 internal sealed class LauncherCoordinator : IDisposable
 {
     private readonly Context context;
-    private readonly ModProfileRepository profiles;
     private readonly ModProfileV2Repository profilesV2;
     private readonly ActiveModProfileSelectionRepository activeProfiles;
     private readonly ModLibraryRepository library;
@@ -62,7 +61,6 @@ internal sealed class LauncherCoordinator : IDisposable
     private ProfileId profileId = ProfileId.Parse("default");
     private PreparedGameHandle? preparedGame;
     private PendingGameLaunchOutcome? pendingRecovery;
-    private ModProfile? profile;
     private LauncherSettings? settings;
     private bool disposed;
 
@@ -72,7 +70,6 @@ internal sealed class LauncherCoordinator : IDisposable
         this.context = context.ApplicationContext ?? context;
         var userData = AndroidPrivateStorage.GetUserDataRoot(this.context);
         profilesRoot = Path.Combine(userData, "profiles");
-        profiles = new ModProfileRepository(profilesRoot);
         profilesV2 = new ModProfileV2Repository(profilesRoot);
         activeProfiles = new ActiveModProfileSelectionRepository(profilesRoot);
         library = new ModLibraryRepository(Path.Combine(userData, "mods"));
@@ -185,22 +182,13 @@ internal sealed class LauncherCoordinator : IDisposable
                 PublishPreparationResult(retried);
             }
 
-            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null || profile is null)
+            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null)
                 return null;
 
             PublishLaunching();
             var modSelection = await BuildCurrentModSelectionAsync(cancellationToken).ConfigureAwait(false);
-            var issue = modSelection is null
-                ? await GameLaunchRegistry.TryIssueLaunchAsync(
-                    context,
-                    preparedGame,
-                    ProfileLaunchSelection.From(profile),
-                    cancellationToken).ConfigureAwait(false)
-                : await GameLaunchRegistry.TryIssueLaunchAsync(
-                    context,
-                    preparedGame,
-                    modSelection,
-                    cancellationToken).ConfigureAwait(false);
+            var issue = await GameLaunchRegistry.TryIssueLaunchAsync(
+                context, preparedGame, modSelection, cancellationToken).ConfigureAwait(false);
             if (issue.IsIssued)
                 return issue.Launch;
 
@@ -242,17 +230,8 @@ internal sealed class LauncherCoordinator : IDisposable
 
             PublishLaunching();
             modSelection = await BuildCurrentModSelectionAsync(cancellationToken).ConfigureAwait(false);
-            issue = modSelection is null
-                ? await GameLaunchRegistry.TryIssueLaunchAsync(
-                    context,
-                    preparedGame,
-                    ProfileLaunchSelection.From(profile),
-                    cancellationToken).ConfigureAwait(false)
-                : await GameLaunchRegistry.TryIssueLaunchAsync(
-                    context,
-                    preparedGame,
-                    modSelection,
-                    cancellationToken).ConfigureAwait(false);
+            issue = await GameLaunchRegistry.TryIssueLaunchAsync(
+                context, preparedGame, modSelection, cancellationToken).ConfigureAwait(false);
             if (issue.IsIssued)
                 return issue.Launch;
 
@@ -293,7 +272,7 @@ internal sealed class LauncherCoordinator : IDisposable
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null || profile is null)
+            if (CurrentState.Status != LauncherStatus.Ready || preparedGame is null)
                 return;
             settings = await launcherSettings.UpdateAsync(
                     settings?.Revision ?? throw new InvalidOperationException("The Launcher settings are unavailable."),
@@ -452,14 +431,12 @@ internal sealed class LauncherCoordinator : IDisposable
 
             preparedGame = prepared.PreparedGame;
             PublishLaunching();
-            var issue = pending.ModSelection is null
-                ? await GameLaunchRegistry.TryIssueLegacyLaunchAsync(
-                    context,
-                    preparedGame!,
-                    pending.Profile,
-                    level,
-                    cancellationToken).ConfigureAwait(false)
-                : await GameLaunchRegistry.TryIssueLaunchAsync(
+            if (pending.ModSelection is null)
+            {
+                Log.Warn("JunimoGate.Recovery", "legacy-launch-request-rejected");
+                continue;
+            }
+            var issue = await GameLaunchRegistry.TryIssueLaunchAsync(
                     context,
                     preparedGame!,
                     pending.ModSelection,
@@ -490,66 +467,26 @@ internal sealed class LauncherCoordinator : IDisposable
             .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
             .ConfigureAwait(false);
         profileId = active.Validate();
-        profile = await profiles
-            .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
+        _ = await new LegacyModProfileMigrator(profilesRoot, library, profilesV2)
+            .MigrateAllAsync(cancellationToken)
             .ConfigureAwait(false);
-        try
-        {
-            _ = await profilesV2
-                .ReadAsync(ProfileId.Parse("default"), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (InvalidDataException)
-        {
-            _ = await new LegacyModProfileMigrator(profilesRoot, library, profilesV2)
-                .MigrateAsync(ProfileId.Parse("default"), "Default", cancellationToken)
-                .ConfigureAwait(false);
-            profile = await profiles
-                .ReadAsync(ProfileId.Parse("default"), cancellationToken)
-                .ConfigureAwait(false);
-        }
+        var currentV2 = await profilesV2.OpenOrCreateDefaultAsync("Default", cancellationToken)
+            .ConfigureAwait(false);
         settings = await LauncherSettingsMigration.MigrateLegacyDefaultPolicyAsync(
                 launcherSettings,
                 profilesV2,
-                profile.AssemblyBindingPolicy,
+                currentV2.AssemblyBindingPolicyOverride ?? ModAssemblyBindingPolicy.HighestCompatible,
                 cancellationToken)
             .ConfigureAwait(false);
     }
 
-    private async ValueTask<ModLaunchSelectionSnapshot?> BuildCurrentModSelectionAsync(
+    private async ValueTask<ModLaunchSelectionSnapshot> BuildCurrentModSelectionAsync(
         CancellationToken cancellationToken)
     {
         try
         {
             await LoadActiveProfileAsync(cancellationToken).ConfigureAwait(false);
-            ModProfileV2 selectedProfile;
-            try
-            {
-                selectedProfile = await profilesV2.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
-            }
-            catch (InvalidDataException) when (profileId.Value == "default")
-            {
-                try
-                {
-                    var migration = await new LegacyModProfileMigrator(profilesRoot, library, profilesV2)
-                        .MigrateAsync(profileId, "Default", cancellationToken)
-                        .ConfigureAwait(false);
-                    selectedProfile = migration.Profile;
-                    profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
-                    settings = await LauncherSettingsMigration.MigrateLegacyDefaultPolicyAsync(
-                            launcherSettings,
-                            profilesV2,
-                            profile.AssemblyBindingPolicy,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  InvalidDataException or InvalidOperationException)
-                {
-                    Log.Warn("JunimoGate.Mods", "legacy-profile-migration-fallback", exception);
-                    return null;
-                }
-            }
+            var selectedProfile = await profilesV2.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
 
             var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
             var globalBindingPolicy = settings?.DefaultAssemblyBindingPolicy

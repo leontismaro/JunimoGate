@@ -102,6 +102,8 @@ public sealed class LegacyModProfileMigrator
                 now < legacy.UpdatedAtUtc ? legacy.UpdatedAtUtc : now,
                 Description: null);
             var stored = await profiles.WriteMigratedAsync(migratedProfile, cancellationToken).ConfigureAwait(false);
+            await ValidateMigratedProfileAsync(stored, cancellationToken).ConfigureAwait(false);
+            await DeleteLegacyDirectoriesAsync(layout, cancellationToken).ConfigureAwait(false);
             return new LegacyModProfileMigrationResult(
                 stored,
                 import.AddedItems.Count,
@@ -114,6 +116,62 @@ public sealed class LegacyModProfileMigrator
         {
             ModLibraryRepository.TryDeleteDirectory(transactionRoot);
         }
+    }
+
+    private async ValueTask ValidateMigratedProfileAsync(
+        ModProfileV2 migrated,
+        CancellationToken cancellationToken)
+    {
+        var verified = await profiles.ReadAsync(ProfileId.Parse(migrated.Id), cancellationToken)
+            .ConfigureAwait(false);
+        var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var known = index.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
+        foreach (var member in verified.Members)
+        {
+            if (member.LibraryItemId is not { } itemId || !known.ContainsKey(itemId) ||
+                !Directory.Exists(library.Layout.GetItemFilesDirectory(itemId)))
+            {
+                throw new InvalidDataException("The migrated Profile references missing Mod content.");
+            }
+        }
+    }
+
+    public async ValueTask<IReadOnlyList<LegacyModProfileMigrationResult>> MigrateAllAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(profilesRoot))
+            return Array.Empty<LegacyModProfileMigrationResult>();
+        var results = new List<LegacyModProfileMigrationResult>();
+        foreach (var directory in Directory.EnumerateDirectories(profilesRoot)
+                     .OrderBy(Path.GetFileName, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(directory);
+            if (!ProfileId.TryParse(name, out var profileId) || profileId.Value == ModProfileV2.NoModsId ||
+                !File.Exists(Path.Combine(directory, "profile.json")))
+            {
+                continue;
+            }
+            results.Add(await MigrateAsync(profileId, profileId.Value == "default" ? "Default" : profileId.Value,
+                    cancellationToken)
+                .ConfigureAwait(false));
+        }
+        return results;
+    }
+
+    private static ValueTask DeleteLegacyDirectoriesAsync(ProfileLayout layout, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var path in new[]
+                 {
+                     layout.ModsDirectory,
+                     layout.DownloadsDirectory,
+                     layout.StagingDirectory,
+                 })
+        {
+            ModLibraryRepository.TryDeleteDirectory(path);
+        }
+        return ValueTask.CompletedTask;
     }
 
     private async ValueTask<IReadOnlyList<LegacyModDirectoryCandidate>> DiscoverAsync(

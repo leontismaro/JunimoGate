@@ -142,7 +142,7 @@ internal static class ModProfileV2Tests
             .AsTask().GetAwaiter().GetResult());
     }
 
-    public static void MigratesLegacyDirectoriesWithoutRemovingFallback()
+    public static void MigratesLegacyDirectoriesAndRemovesFallback()
     {
         using var fixture = new Fixture();
         var profileId = ProfileId.Parse("default");
@@ -169,8 +169,9 @@ internal static class ModProfileV2Tests
         TestHarness.Equal("2.0.0", selected.ExpectedVersion);
         var optional = result.Profile.Members.Single(member => member.UniqueId == "Example.Optional");
         TestHarness.False(optional.Enabled);
-        TestHarness.True(Directory.Exists(layout.EnabledDirectory));
-        TestHarness.True(Directory.Exists(layout.DisabledDirectory));
+        TestHarness.False(Directory.Exists(layout.ModsDirectory));
+        TestHarness.False(Directory.Exists(layout.DownloadsDirectory));
+        TestHarness.False(Directory.Exists(layout.StagingDirectory));
         TestHarness.Equal(3, library.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
 
         var compatible = legacyRepository.ReadAsync(profileId).AsTask().GetAwaiter().GetResult();
@@ -190,6 +191,18 @@ internal static class ModProfileV2Tests
         var repeated = migrator.MigrateAsync(profileId, "Ignored").AsTask().GetAwaiter().GetResult();
         TestHarness.True(repeated.AlreadyMigrated);
         TestHarness.Equal(0, repeated.ImportedItems);
+    }
+
+    public static void CreatesDefaultV2WithoutLegacyDirectories()
+    {
+        using var fixture = new Fixture();
+        var profile = fixture.Repository.OpenOrCreateDefaultAsync().AsTask().GetAwaiter().GetResult();
+        var layout = new ProfileLayout(fixture.Root, ProfileId.Parse("default"));
+
+        TestHarness.Equal(ModProfileV2.CurrentSchema, profile.Schema);
+        TestHarness.False(Directory.Exists(layout.ModsDirectory));
+        TestHarness.False(Directory.Exists(layout.DownloadsDirectory));
+        TestHarness.False(Directory.Exists(layout.StagingDirectory));
     }
 
     public static void RejectsAmbiguousLegacyEnabledMods()

@@ -107,24 +107,13 @@ internal sealed class ProductInformationService
             .OpenOrCreateAsync(ProfileId.Parse("default"))
             .AsTask().GetAwaiter().GetResult();
         var activeId = active.Validate();
-        int enabledMods;
-        try
-        {
-            var selected = new ModProfileV2Repository(profilesRoot)
-                .ReadAsync(activeId).AsTask().GetAwaiter().GetResult();
-            var library = new ModLibraryRepository(Path.Combine(userData, "mods"))
-                .ReadAsync().AsTask().GetAwaiter().GetResult();
-            var available = library.Items.Select(static item => item.LibraryItemId).ToHashSet(StringComparer.Ordinal);
-            enabledMods = selected.Members.Count(member =>
-                member.Enabled && member.LibraryItemId is not null && available.Contains(member.LibraryItemId));
-        }
-        catch (InvalidDataException) when (activeId.Value == "default")
-        {
-            var legacy = new ProfileLayout(profilesRoot, activeId);
-            enabledMods = Directory.Exists(legacy.EnabledDirectory)
-                ? Directory.EnumerateFiles(legacy.EnabledDirectory, "manifest.json", SearchOption.AllDirectories).Count()
-                : 0;
-        }
+        var selected = new ModProfileV2Repository(profilesRoot)
+            .ReadAsync(activeId).AsTask().GetAwaiter().GetResult();
+        var library = new ModLibraryRepository(Path.Combine(userData, "mods"))
+            .ReadAsync().AsTask().GetAwaiter().GetResult();
+        var available = library.Items.Select(static item => item.LibraryItemId).ToHashSet(StringComparer.Ordinal);
+        var enabledMods = selected.Members.Count(member =>
+            member.Enabled && member.LibraryItemId is not null && available.Contains(member.LibraryItemId));
 
         var savesRoot = AndroidPrivateStorage.GetGameSaveRoot(context);
         var latest = FindLatestSave(savesRoot);

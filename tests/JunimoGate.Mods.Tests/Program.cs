@@ -108,8 +108,10 @@ return TestHarness.Run(
         ModProfileV2Tests.MutatesProfileMembersAtomically()),
     ("Profile member mutations reject ambiguous versions and no-Mods", () =>
         ModProfileV2Tests.RejectsInvalidMemberMutations()),
-    ("Profile v2 migration preserves the legacy fallback", () =>
-        ModProfileV2Tests.MigratesLegacyDirectoriesWithoutRemovingFallback()),
+    ("Profile v2 migration removes legacy directories after verification", () =>
+        ModProfileV2Tests.MigratesLegacyDirectoriesAndRemovesFallback()),
+    ("Profile v2 default is created without legacy directories", () =>
+        ModProfileV2Tests.CreatesDefaultV2WithoutLegacyDirectories()),
     ("Profile v2 migration reuses resolved library identities", () =>
         ModProfileV2Tests.ReusesResolvedLibraryIdentityAcrossLegacyProfiles()),
     ("Profile v2 migration rejects ambiguous enabled Mods", () =>
@@ -328,8 +330,8 @@ return TestHarness.Run(
         GameLaunchSchemaTests.RejectsUnknownSnapshotSchemas()),
     ("GameHost snapshots omit the SMAPI bundle identity", () =>
         GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()),
-    ("GameHost retains pending v4 descriptor compatibility", () =>
-        GameLaunchSchemaTests.RetainsThePreviousDescriptorSchemaForPendingLaunches()));
+    ("GameHost uses only the current descriptor schema", () =>
+        GameLaunchSchemaTests.UsesOnlyTheCurrentDescriptorSchema()));
 
 internal sealed class ProfileRepositoryFixture : IDisposable
 {

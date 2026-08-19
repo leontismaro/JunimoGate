@@ -197,6 +197,41 @@ public sealed class ModProfileV2Repository
         }
     }
 
+    public async ValueTask<ModProfileV2> OpenOrCreateDefaultAsync(
+        string displayName = "Default",
+        CancellationToken cancellationToken = default)
+    {
+        var profileId = ProfileId.Parse("default");
+        var normalizedName = NormalizeDisplayName(displayName);
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Directory.CreateDirectory(profilesRoot);
+            await EnsureNoModsUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var path = GetProfilePath(profileId);
+            if (File.Exists(path))
+                return await ReadV2UnlockedAsync(profileId, cancellationToken).ConfigureAwait(false);
+            Directory.CreateDirectory(GetProfileDirectory(profileId));
+            var now = DateTimeOffset.UtcNow;
+            var profile = new ModProfileV2(
+                ModProfileV2.CurrentSchema,
+                profileId.Value,
+                normalizedName,
+                1,
+                null,
+                Array.Empty<ModProfileMember>(),
+                now,
+                now,
+                null);
+            await WriteAtomicAsync(path, profile, overwrite: false, cancellationToken).ConfigureAwait(false);
+            return profile;
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
     public async ValueTask<ModProfileV2> CreateImportedAsync(
         string displayName,
         string? description,
