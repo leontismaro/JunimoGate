@@ -123,7 +123,9 @@ internal sealed class ProductInformationService
         var savesRoot = AndroidPrivateStorage.GetGameSaveRoot(context);
         var latest = FindLatestSave(savesRoot);
         var playSummary = new GamePlaySessionRepository(Path.Combine(userData, "sessions"))
-            .ReadSummaryAsync(GameSessionRegistry.IsGameProcessActive(context), cancellationToken)
+            .ReadSummaryAsync(
+                GameSessionRegistry.IsGameProcessActive(context),
+                cancellationToken: cancellationToken)
             .AsTask().GetAwaiter().GetResult();
         return new HomeSummary(
             enabledMods,
