@@ -479,10 +479,9 @@ public sealed class ModProfileTransferService
             ModLibraryItem? bound = null;
             if (member.PackagedContentId is not null && packagedItems is not null)
                 packagedItems.TryGetValue(member.PackagedContentId, out bound);
-            if (bound is null && member.SourceLibraryItemId is not null)
-                indexed.TryGetValue(member.SourceLibraryItemId, out bound);
             if (bound is not null && !bound.Manifest.UniqueId.Equals(member.UniqueId, StringComparison.OrdinalIgnoreCase))
                 bound = null;
+            bound ??= ResolveInstalledMember(member, library.Items, indexed);
             result.Add(new ModProfileMember(
                 member.UniqueId,
                 bound?.LibraryItemId,
@@ -493,6 +492,30 @@ public sealed class ModProfileTransferService
                 member.AddedAtUtc));
         }
         return result;
+    }
+
+    private static ModLibraryItem? ResolveInstalledMember(
+        ModProfileTransferMember member,
+        IReadOnlyList<ModLibraryItem> items,
+        IReadOnlyDictionary<string, ModLibraryItem> indexed)
+    {
+        if (member.SourceLibraryItemId is not null &&
+            indexed.TryGetValue(member.SourceLibraryItemId, out var exact) &&
+            exact.Manifest.UniqueId.Equals(member.UniqueId, StringComparison.OrdinalIgnoreCase))
+        {
+            return exact;
+        }
+
+        var logicalCandidates = items
+            .Where(item => item.Manifest.UniqueId.Equals(member.UniqueId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (logicalCandidates.Length == 1)
+            return logicalCandidates[0];
+
+        var versionCandidates = logicalCandidates
+            .Where(item => item.Manifest.Version.Equals(member.ExpectedVersion, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        return versionCandidates.Length == 1 ? versionCandidates[0] : null;
     }
 
     private static string GetSafeRelativePath(string root, string path)
@@ -583,7 +606,7 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         var addedIds = imported.AddedItems.Select(item => item.LibraryItemId).ToArray();
         try
         {
-            var packaged = imported.AllItems.ToDictionary(item => item.ContentId, StringComparer.Ordinal);
+            var packaged = imported.AllItems.ToDictionary(item => item.ImportedContentId, StringComparer.Ordinal);
             foreach (var member in Document.Members.Where(member => member.PackagedContentId is not null))
             {
                 if (!packaged.TryGetValue(member.PackagedContentId!, out var item) ||

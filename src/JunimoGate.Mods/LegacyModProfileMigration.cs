@@ -219,12 +219,12 @@ public sealed class LegacyModProfileMigrator
                 throw new InvalidDataException("A legacy Mod file changed while being copied.");
         }
 
-        var contentId = Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
+        var importedContentId = Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
         var libraryItemId = ModLibraryItemId.Create();
         var item = new ModLibraryItem(
             ModLibraryItem.CurrentSchema,
             libraryItemId,
-            contentId,
+            importedContentId,
             candidate.Manifest,
             $"library/{libraryItemId}/files",
             DateTimeOffset.UtcNow,

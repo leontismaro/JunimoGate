@@ -28,8 +28,8 @@ internal static class ModFileServiceTests
             .AsTask().GetAwaiter().GetResult();
         TestHarness.Equal("speed = 2\n", saved.Text);
         TestHarness.Equal("speed = 2\n", File.ReadAllText(Path.Combine(root, "config.toml")));
-        TestHarness.Equal(item.ContentId, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult()
-            .Items.Single().ContentId);
+        TestHarness.Equal(item.ImportedContentId, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult()
+            .Items.Single().ImportedContentId);
     }
 
     public static void RejectsUnsafeProtectedAndConcurrentWrites()

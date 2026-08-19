@@ -837,7 +837,27 @@ public sealed class ModsFragment : Fragment
             Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
             ModProfileAutoAssignmentResult? assignment = null;
+            var reconnectedMembers = 0;
             var assignmentFailed = false;
+            ModLibraryIndex? currentIndex = null;
+            if (repository is not null && profiles is not null)
+            {
+                try
+                {
+                    currentIndex = await repository.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    reconnectedMembers = await ModProfileMissingMemberReconnector.ReconnectAsync(
+                            profiles,
+                            currentIndex.Items,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  UnauthorizedAccessException or InvalidOperationException)
+                {
+                    assignmentFailed = true;
+                    Log.Error("JunimoGate.Mods", "archive-profile-reconnection-failed", exception);
+                }
+            }
             if (settingsRepository is not null)
             {
                 launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -848,6 +868,7 @@ public sealed class ModsFragment : Fragment
                         assignment = await ModProfileAutoAssignment.AddImportedToActiveProfileAsync(
                                 activeProfile,
                                 profiles,
+                                currentIndex?.Items ?? result.AllItems,
                                 result.AllItems,
                                 cancellationToken)
                             .ConfigureAwait(false);
@@ -861,7 +882,7 @@ public sealed class ModsFragment : Fragment
                 }
             }
             modManagement?.NotifyLibraryChanged();
-            if (assignment?.AddedMembers > 0)
+            if (assignment?.AddedMembers > 0 || reconnectedMembers > 0)
                 modManagement?.NotifyProfilesChanged();
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)

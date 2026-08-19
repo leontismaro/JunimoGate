@@ -26,7 +26,7 @@ public sealed record ModManifestSummary(
 public sealed record ModLibraryItem(
     string Schema,
     string LibraryItemId,
-    string ContentId,
+    [property: JsonPropertyName("contentId")] string ImportedContentId,
     ModManifestSummary Manifest,
     string RelativeStoragePath,
     DateTimeOffset ImportedAtUtc,
@@ -39,7 +39,7 @@ public sealed record ModLibraryItem(
 
     public void Validate()
     {
-        if (Schema != CurrentSchema || !ModLibraryItemId.IsValid(LibraryItemId) || !ModContentId.IsValid(ContentId) ||
+        if (Schema != CurrentSchema || !ModLibraryItemId.IsValid(LibraryItemId) || !ModContentId.IsValid(ImportedContentId) ||
             Manifest is null || string.IsNullOrWhiteSpace(Manifest.Name) || string.IsNullOrWhiteSpace(Manifest.Author) ||
             string.IsNullOrWhiteSpace(Manifest.Version) || string.IsNullOrWhiteSpace(Manifest.UniqueId) ||
             ImportedAtUtc == default || FileCount < 1 || TotalBytes < 1 ||
@@ -81,11 +81,10 @@ public sealed record ModLibraryIndex(
             throw new InvalidDataException("The Mod library index is malformed.");
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        var contentIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Items)
         {
             item?.Validate();
-            if (item is null || !ids.Add(item.LibraryItemId) || !contentIds.Add(item.ContentId))
+            if (item is null || !ids.Add(item.LibraryItemId))
                 throw new InvalidDataException("The Mod library index contains a duplicate or null item.");
         }
         BundleCatalog.Validate(Items);
@@ -341,7 +340,9 @@ public sealed partial class ModLibraryRepository
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var known = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
-            var knownByContent = current.Items.ToDictionary(item => item.ContentId, StringComparer.Ordinal);
+            var knownByImportedContent = current.Items
+                .GroupBy(item => item.ImportedContentId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
             var added = new List<ModLibraryItem>();
             var reused = new List<ModLibraryItem>();
             var recoveredItems = new List<ModLibraryItem>();
@@ -354,7 +355,25 @@ public sealed partial class ModLibraryRepository
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     prepared.Item.Validate();
-                    if (knownByContent.TryGetValue(prepared.Item.ContentId, out var existing))
+                    knownByImportedContent.TryGetValue(prepared.Item.ImportedContentId, out var matchingItems);
+                    var existing = matchingItems?.FirstOrDefault(item =>
+                        !Directory.Exists(Layout.GetItemDirectory(item.LibraryItemId)));
+                    if (existing is null && matchingItems is not null)
+                    {
+                        foreach (var candidate in matchingItems)
+                        {
+                            var currentDigest = await ModImportUtilities.ComputeDirectoryContentDigestAsync(
+                                    Layout.GetItemFilesDirectory(candidate.LibraryItemId),
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                            if (currentDigest == candidate.ImportedContentId)
+                            {
+                                existing = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    if (existing is not null)
                     {
                         var existingDirectory = Layout.GetItemDirectory(existing.LibraryItemId);
                         if (!Directory.Exists(existingDirectory))
@@ -373,15 +392,15 @@ public sealed partial class ModLibraryRepository
                         continue;
                     }
 
-                    var orphaned = await FindOrphanByContentAsync(
-                            prepared.Item.ContentId,
+                    var orphaned = await FindOrphanByImportedContentAsync(
+                            prepared.Item.ImportedContentId,
                             known.Keys,
                             cancellationToken)
                         .ConfigureAwait(false);
                     if (orphaned is not null)
                     {
                         known.Add(orphaned.LibraryItemId, orphaned);
-                        knownByContent.Add(orphaned.ContentId, orphaned);
+                        AddImportedContentCandidate(knownByImportedContent, orphaned);
                         recoveredItems.Add(orphaned);
                         reused.Add(orphaned);
                         resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = orphaned });
@@ -411,7 +430,7 @@ public sealed partial class ModLibraryRepository
                     Directory.Move(prepared.Directory, destination);
                     movedDirectories.Add(destination);
                     known.Add(prepared.Item.LibraryItemId, prepared.Item);
-                    knownByContent.Add(prepared.Item.ContentId, prepared.Item);
+                    AddImportedContentCandidate(knownByImportedContent, prepared.Item);
                     added.Add(prepared.Item);
                     resolvedPreparedByRoot.Add(prepared.RootPath, prepared);
                     resolvedItemsByPreparedId.Add(prepared.Item.LibraryItemId, prepared.Item);
@@ -549,7 +568,7 @@ public sealed partial class ModLibraryRepository
             var second = right[index];
             if (first.Schema != second.Schema ||
                 first.LibraryItemId != second.LibraryItemId ||
-                first.ContentId != second.ContentId ||
+                first.ImportedContentId != second.ImportedContentId ||
                 first.RelativeStoragePath != second.RelativeStoragePath ||
                 first.ImportedAtUtc != second.ImportedAtUtc ||
                 first.SourceArchiveName != second.SourceArchiveName ||
@@ -733,8 +752,8 @@ public sealed partial class ModLibraryRepository
         stream.Flush(flushToDisk: true);
     }
 
-    private async ValueTask<ModLibraryItem?> FindOrphanByContentAsync(
-        string contentId,
+    private async ValueTask<ModLibraryItem?> FindOrphanByImportedContentAsync(
+        string importedContentId,
         IEnumerable<string> indexedItemIds,
         CancellationToken cancellationToken)
     {
@@ -762,15 +781,34 @@ public sealed partial class ModLibraryRepository
             {
                 continue;
             }
-            if (candidate.LibraryItemId != info.Name || candidate.ContentId != contentId)
+            if (candidate.LibraryItemId != info.Name || candidate.ImportedContentId != importedContentId)
                 continue;
-            if (!Directory.Exists(Path.Combine(directory, "files")))
+            var filesDirectory = Path.Combine(directory, "files");
+            if (!Directory.Exists(filesDirectory))
                 throw new InvalidDataException("An orphaned Mod library directory is incomplete.");
+            var currentDigest = await ModImportUtilities.ComputeDirectoryContentDigestAsync(
+                    filesDirectory,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (currentDigest != importedContentId)
+                continue;
             if (match is not null)
                 throw new InvalidDataException("Multiple orphaned Mod library items have the same imported content identity.");
             match = candidate;
         }
         return match;
+    }
+
+    private static void AddImportedContentCandidate(
+        IDictionary<string, List<ModLibraryItem>> candidates,
+        ModLibraryItem item)
+    {
+        if (!candidates.TryGetValue(item.ImportedContentId, out var matches))
+        {
+            matches = new List<ModLibraryItem>();
+            candidates.Add(item.ImportedContentId, matches);
+        }
+        matches.Add(item);
     }
 
     private static IReadOnlyList<ModBundleDefinition> CreateImportedBundles(

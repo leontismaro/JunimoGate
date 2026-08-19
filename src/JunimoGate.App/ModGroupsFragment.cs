@@ -388,6 +388,23 @@ public sealed class ModGroupsFragment : Fragment
                 ?? throw new InvalidDataException("The shared group import result is missing.");
             Interlocked.CompareExchange(ref pendingPackageImport, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
+            if (library is not null && profiles is not null)
+            {
+                try
+                {
+                    var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    _ = await ModProfileMissingMemberReconnector.ReconnectAsync(
+                            profiles,
+                            index.Items,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  UnauthorizedAccessException or InvalidOperationException)
+                {
+                    Log.Error("JunimoGate.Mods", "profile-import-reconnection-failed", exception);
+                }
+            }
             modManagement?.NotifyLibraryChanged();
             modManagement?.NotifyProfilesChanged();
             await RefreshAsync(cancellationToken).ConfigureAwait(false);

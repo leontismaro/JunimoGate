@@ -236,12 +236,15 @@ internal static class ModLibraryTests
         TestHarness.Equal(1, first.AddedItems.Count);
         TestHarness.Equal(0, first.ReusedItems.Count);
         var item = first.AddedItems[0];
-        TestHarness.False(item.LibraryItemId == item.ContentId);
+        TestHarness.False(item.LibraryItemId == item.ImportedContentId);
         TestHarness.True(File.Exists(Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "Mod.dll")));
         TestHarness.True(File.Exists(fixture.Repository.Layout.GetItemMetadataPath(item.LibraryItemId)));
-
-        var generated = Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "config.toml");
-        File.WriteAllText(generated, "speed = 2");
+        var serializedMetadata = File.ReadAllText(fixture.Repository.Layout.GetItemMetadataPath(item.LibraryItemId));
+        TestHarness.True(serializedMetadata.Contains("\"contentId\"", StringComparison.Ordinal));
+        TestHarness.False(serializedMetadata.Contains("\"importedContentId\"", StringComparison.Ordinal));
+        var reopened = new ModLibraryRepository(fixture.Repository.Layout.Root)
+            .ReadAsync().AsTask().GetAwaiter().GetResult().Items.Single();
+        TestHarness.Equal(item.ImportedContentId, reopened.ImportedContentId);
 
         var afterFirst = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(2L, afterFirst.Revision);
@@ -252,17 +255,34 @@ internal static class ModLibraryTests
         TestHarness.Equal(0, second.AddedItems.Count);
         TestHarness.Equal(1, second.ReusedItems.Count);
         TestHarness.Equal(item.LibraryItemId, second.ReusedItems[0].LibraryItemId);
-        TestHarness.Equal("speed = 2", File.ReadAllText(generated));
         var afterSecond = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(afterFirst.Revision, afterSecond.Revision);
         TestHarness.Equal(1, afterSecond.Items.Count);
 
-        Directory.Delete(fixture.Repository.Layout.GetItemDirectory(item.LibraryItemId), recursive: true);
+        var generated = Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "config.toml");
+        File.WriteAllText(generated, "speed = 2");
+        using var modifiedRetryArchive = SingleModArchive("Example.Import", "1.2.3", "first-content");
+        var modifiedRetry = Import(fixture.Repository, modifiedRetryArchive, "original-again.zip");
+        TestHarness.Equal(1, modifiedRetry.AddedItems.Count);
+        TestHarness.Equal(0, modifiedRetry.ReusedItems.Count);
+        var freshItem = modifiedRetry.AddedItems.Single();
+        TestHarness.False(item.LibraryItemId == freshItem.LibraryItemId);
+        TestHarness.Equal(item.ImportedContentId, freshItem.ImportedContentId);
+        TestHarness.Equal("speed = 2", File.ReadAllText(generated));
+        TestHarness.False(File.Exists(Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(freshItem.LibraryItemId),
+            "config.toml")));
+        var afterModifiedRetry = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(checked(afterSecond.Revision + 1), afterModifiedRetry.Revision);
+        TestHarness.Equal(2, afterModifiedRetry.Items.Count);
+
+        Directory.Delete(fixture.Repository.Layout.GetItemDirectory(freshItem.LibraryItemId), recursive: true);
         using var repairArchive = SingleModArchive("Example.Import", "1.2.3", "first-content");
         var repaired = Import(fixture.Repository, repairArchive, "repair.zip");
         TestHarness.Equal(1, repaired.ReusedItems.Count);
-        TestHarness.True(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(item.LibraryItemId)));
-        TestHarness.Equal(afterSecond.Revision, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Revision);
+        TestHarness.Equal(freshItem.LibraryItemId, repaired.ReusedItems.Single().LibraryItemId);
+        TestHarness.True(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(freshItem.LibraryItemId)));
+        TestHarness.Equal(afterModifiedRetry.Revision, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Revision);
     }
 
     public static void KeepsDistinctContentCandidates()
@@ -465,6 +485,32 @@ internal static class ModLibraryTests
         var index = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, index.Items.Count);
         TestHarness.Equal(item.LibraryItemId, index.Items[0].LibraryItemId);
+    }
+
+    public static void DoesNotRecoverAnEditedOrphanAsTheOriginalImport()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = SingleModArchive("Example.EditedOrphan", "1.0.0", "original");
+        var item = Import(fixture.Repository, archive, "original.zip").AddedItems.Single();
+        var source = fixture.Repository.Layout.GetItemDirectory(item.LibraryItemId);
+        var backup = Path.Combine(fixture.Root, "edited-orphan-backup");
+        CopyDirectory(source, backup);
+        TestHarness.True(fixture.Repository.DeleteAsync(item.LibraryItemId).AsTask().GetAwaiter().GetResult());
+        Directory.Move(backup, source);
+        File.WriteAllText(Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId),
+            "config.toml"), "edited = true");
+
+        using var retry = SingleModArchive("Example.EditedOrphan", "1.0.0", "original");
+        var imported = Import(fixture.Repository, retry, "retry.zip");
+
+        TestHarness.Equal(1, imported.AddedItems.Count);
+        TestHarness.Equal(0, imported.ReusedItems.Count);
+        TestHarness.False(item.LibraryItemId == imported.AddedItems.Single().LibraryItemId);
+        TestHarness.True(File.Exists(Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId),
+            "config.toml")));
+        TestHarness.Equal(1, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
     }
 
     private static ModArchiveImportResult Import(

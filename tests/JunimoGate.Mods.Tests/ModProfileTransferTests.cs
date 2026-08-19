@@ -51,6 +51,121 @@ internal static class ModProfileTransferTests
         TestHarness.Equal(1, imported.MissingMembers);
     }
 
+    public static void ManifestBindsInstalledModsAcrossDevices()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.Portable", includeConfig: false);
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Portable group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: true)])
+            .AsTask().GetAwaiter().GetResult();
+        using var manifest = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportManifestAsync(ProfileId.Parse(sourceProfile.Id), manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        using var destinationFixture = new TransferFixture();
+        var destinationItem = destinationFixture.ImportMod("Example.Portable", includeConfig: false);
+        TestHarness.False(sourceItem.LibraryItemId == destinationItem.LibraryItemId);
+        manifest.Position = 0;
+        var imported = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles)
+            .ImportManifestAsync(manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal(destinationItem.LibraryItemId, imported.Profile.Members.Single().LibraryItemId);
+        TestHarness.Equal(0, imported.MissingMembers);
+    }
+
+    public static void ManifestPreservesMissingMetadataOnAnEmptyDevice()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.Uninstalled", includeConfig: false, version: "2.3.4");
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Missing group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: false)])
+            .AsTask().GetAwaiter().GetResult();
+        using var manifest = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportManifestAsync(ProfileId.Parse(sourceProfile.Id), manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        using var destinationFixture = new TransferFixture();
+        manifest.Position = 0;
+        var imported = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles)
+            .ImportManifestAsync(manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        var member = imported.Profile.Members.Single();
+        TestHarness.Equal<string?>(null, member.LibraryItemId);
+        TestHarness.Equal("Example.Uninstalled", member.ExpectedName);
+        TestHarness.Equal("2.3.4", member.ExpectedVersion);
+        TestHarness.Equal("Test", member.ExpectedAuthor);
+        TestHarness.False(member.Enabled);
+        TestHarness.Equal(1, imported.MissingMembers);
+    }
+
+    public static void ManifestUsesExpectedVersionToResolveMultipleInstalledVersions()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.Versioned", includeConfig: false, version: "2.0.0");
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Versioned group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: true)])
+            .AsTask().GetAwaiter().GetResult();
+        using var manifest = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportManifestAsync(ProfileId.Parse(sourceProfile.Id), manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        using var destinationFixture = new TransferFixture();
+        _ = destinationFixture.ImportMod("Example.Versioned", includeConfig: false, version: "1.0.0");
+        var expected = destinationFixture.ImportMod("Example.Versioned", includeConfig: false, version: "2.0.0");
+        manifest.Position = 0;
+        var imported = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles)
+            .ImportManifestAsync(manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal(expected.LibraryItemId, imported.Profile.Members.Single().LibraryItemId);
+        TestHarness.Equal(0, imported.MissingMembers);
+    }
+
+    public static void ManifestKeepsAmbiguousInstalledModsMissing()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.Ambiguous", includeConfig: false);
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Ambiguous group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: true)])
+            .AsTask().GetAwaiter().GetResult();
+        using var manifest = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportManifestAsync(ProfileId.Parse(sourceProfile.Id), manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        using var destinationFixture = new TransferFixture();
+        _ = destinationFixture.ImportMod("Example.Ambiguous", includeConfig: false, dllContent: "first");
+        _ = destinationFixture.ImportMod("Example.Ambiguous", includeConfig: false, dllContent: "second");
+        manifest.Position = 0;
+        var imported = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles)
+            .ImportManifestAsync(manifest)
+            .AsTask().GetAwaiter().GetResult();
+
+        var member = imported.Profile.Members.Single();
+        TestHarness.Equal<string?>(null, member.LibraryItemId);
+        TestHarness.Equal("Example.Ambiguous", member.ExpectedName);
+        TestHarness.Equal("1.0.0", member.ExpectedVersion);
+        TestHarness.Equal("Test", member.ExpectedAuthor);
+        TestHarness.Equal(1, imported.MissingMembers);
+    }
+
     public static void ImportsLegacyV1ManifestWithoutBundles()
     {
         using var fixture = new TransferFixture();
@@ -108,7 +223,7 @@ internal static class ModProfileTransferTests
             ?? throw new InvalidOperationException("The complete group import result is missing.");
 
         TestHarness.Equal(1, imported.AddedItems.Count);
-        TestHarness.Equal(packagedId, imported.AddedItems[0].ContentId);
+        TestHarness.Equal(packagedId, imported.AddedItems[0].ImportedContentId);
         TestHarness.False(packagedId == imported.AddedItems[0].LibraryItemId);
         TestHarness.Equal(imported.AddedItems[0].LibraryItemId, imported.Profile.Members.Single().LibraryItemId);
         TestHarness.Equal("Complete group", imported.Profile.DisplayName);
@@ -156,7 +271,7 @@ internal static class ModProfileTransferTests
         var imported = transaction.Value.ImportResult
             ?? throw new InvalidOperationException("The configured group import result is missing.");
 
-        TestHarness.Equal(packagedId, imported.AddedItems.Single().ContentId);
+        TestHarness.Equal(packagedId, imported.AddedItems.Single().ImportedContentId);
         var importedRoot = destinationFixture.Library.Layout.GetItemFilesDirectory(imported.AddedItems.Single().LibraryItemId);
         TestHarness.True(File.Exists(Path.Combine(importedRoot, "config.json")));
         TestHarness.Equal("{\"private\":true}", File.ReadAllText(Path.Combine(importedRoot, "config.json")));
@@ -300,15 +415,19 @@ internal static class ModProfileTransferTests
         public ModLibraryRepository Library { get; }
         public ModProfileV2Repository Profiles { get; }
 
-        public ModLibraryItem ImportMod(string uniqueId, bool includeConfig)
+        public ModLibraryItem ImportMod(
+            string uniqueId,
+            bool includeConfig,
+            string version = "1.0.0",
+            string dllContent = "managed-placeholder")
         {
             using var archive = new MemoryStream();
             using (var zip = new ZipArchive(archive, ZipArchiveMode.Create, leaveOpen: true))
             {
                 WriteEntry(zip, "Mod/manifest.json", $$"""
-                    {"Name":"{{uniqueId}}","Author":"Test","Version":"1.0.0","UniqueID":"{{uniqueId}}","EntryDll":"Mod.dll"}
+                    {"Name":"{{uniqueId}}","Author":"Test","Version":"{{version}}","UniqueID":"{{uniqueId}}","EntryDll":"Mod.dll"}
                     """);
-                WriteEntry(zip, "Mod/Mod.dll", "managed-placeholder");
+                WriteEntry(zip, "Mod/Mod.dll", dllContent);
                 if (includeConfig)
                     WriteEntry(zip, "Mod/config.json", "{\"private\":true}");
             }

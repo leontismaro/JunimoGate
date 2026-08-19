@@ -124,6 +124,12 @@ return TestHarness.Run(
         ModProfileAutoAssignmentTests.ReconnectsAnExactMissingVersion()),
     ("Imported Mods cannot modify the no-Mods group", () =>
         ModProfileAutoAssignmentTests.DoesNotModifyTheNoModsProfile()),
+    ("Imported Mods reconnect dangling group members without replacing valid bindings", () =>
+        ModProfileAutoAssignmentTests.ReconnectsDanglingMembersWithoutReplacingValidBindings()),
+    ("Ambiguous imports leave dangling group members missing", () =>
+        ModProfileAutoAssignmentTests.LeavesAmbiguousDanglingMembersMissing()),
+    ("Active group assignment respects ambiguity in the full library", () =>
+        ModProfileAutoAssignmentTests.DoesNotReconnectAgainstOnlyTheNewImportWhenTheLibraryIsAmbiguous()),
     ("Mod launch selection freezes enabled library items", () =>
         ModLaunchSelectionTests.FreezesOnlyEnabledLibraryItems()),
     ("Mod launch selection rejects missing enabled members", () =>
@@ -134,6 +140,14 @@ return TestHarness.Run(
         ModLaunchSelectionTests.ResolvesOnlyContainedExistingRoots()),
     ("Mod Profile manifest roundtrip preserves placeholders", () =>
         ModProfileTransferTests.ManifestRoundtripPreservesPlaceholders()),
+    ("Mod Profile manifest binds installed Mods across devices", () =>
+        ModProfileTransferTests.ManifestBindsInstalledModsAcrossDevices()),
+    ("Mod Profile manifest preserves missing metadata on an empty device", () =>
+        ModProfileTransferTests.ManifestPreservesMissingMetadataOnAnEmptyDevice()),
+    ("Mod Profile manifest resolves multiple installed versions by expected version", () =>
+        ModProfileTransferTests.ManifestUsesExpectedVersionToResolveMultipleInstalledVersions()),
+    ("Mod Profile manifest leaves ambiguous installed Mods missing", () =>
+        ModProfileTransferTests.ManifestKeepsAmbiguousInstalledModsMissing()),
     ("Mod Profile v1 manifest without bundles remains importable", () =>
         ModProfileTransferTests.ImportsLegacyV1ManifestWithoutBundles()),
     ("Complete Mod Profile package excludes config and binds content", () =>
@@ -220,6 +234,8 @@ return TestHarness.Run(
         ModManagementProjectionTests.DiagnosesDependenciesWithoutBlocking()),
     ("Mod library repairs missing and orphaned item directories", () =>
         ModLibraryTests.RepairsRecoverableLibraryState()),
+    ("Mod library does not recover an edited orphan as the original import", () =>
+        ModLibraryTests.DoesNotRecoverAnEditedOrphanAsTheOriginalImport()),
     ("Mod library deletes one exact item", () =>
         ModLibraryTests.DeletesExactItem()),
     ("Mod library deletes many in one revision", () =>
