@@ -149,6 +149,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
 
     public ModLibraryLayout Layout { get; }
     public event Action? Changed;
+    public event Action? BundleChanged;
 
     public IModArchiveInstallTransaction CreateInstallTransaction(
         string? sourceArchiveName = null,
@@ -884,12 +885,10 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
             };
             var updated = current with
             {
-                Revision = checked(current.Revision + 1),
-                UpdatedAtUtc = now,
                 BundleCatalog = catalog,
             };
             await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
+            BundleChanged?.Invoke();
             return new ModBundleMutationResult(
                 updated,
                 Changed: true,

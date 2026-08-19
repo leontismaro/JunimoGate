@@ -356,6 +356,8 @@ internal static class ModLibraryTests
         TestHarness.True(unlocked.Changed);
         TestHarness.False(unlocked.BundleRemainsVisible);
         TestHarness.Equal(1, unlocked.Library.BundleCatalog.UnlockOverrides.Count);
+        TestHarness.Equal(afterImport.Revision, unlocked.Library.Revision);
+        TestHarness.True(unlocked.Library.BundleCatalog.Revision > afterImport.BundleCatalog.Revision);
 
         var unchanged = fixture.Repository.SetBundleMemberUnlockedAsync(
                 bundle.BundleId,

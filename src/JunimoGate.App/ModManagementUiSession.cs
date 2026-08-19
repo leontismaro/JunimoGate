@@ -8,6 +8,7 @@ internal enum ModManagementChangeKind
     Library,
     Profiles,
     ActiveProfile,
+    Bundle,
 }
 
 internal sealed class ModManagementChangedEventArgs(
@@ -51,6 +52,7 @@ internal class ModManagementStore : IDisposable
             ActiveProfile,
             new AndroidModContentMutationGate(context));
         Library.Changed += OnLibraryChanged;
+        Library.BundleChanged += OnBundleChanged;
         Profiles.Changed += OnProfilesChanged;
         ActiveProfile.Changed += OnActiveProfileChanged;
     }
@@ -199,6 +201,7 @@ internal class ModManagementStore : IDisposable
     }
 
     private void OnLibraryChanged() => InvalidateLibrary(null);
+    private void OnBundleChanged() => InvalidateBundle(null);
     private void OnProfilesChanged() => InvalidateProfiles(null);
     private void OnActiveProfileChanged() => InvalidateActiveProfile(null);
 
@@ -213,6 +216,15 @@ internal class ModManagementStore : IDisposable
             generation = ++libraryGeneration;
         }
         Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Library, generation, origin));
+    }
+
+    private void InvalidateBundle(object? origin)
+    {
+        if (disposed)
+            return;
+        lock (cacheGate)
+            librarySnapshot = null;
+        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Bundle, LibraryGeneration, origin));
     }
 
     private void InvalidateProfiles(object? origin)
@@ -250,6 +262,7 @@ internal class ModManagementStore : IDisposable
             return;
         disposed = true;
         Library.Changed -= OnLibraryChanged;
+        Library.BundleChanged -= OnBundleChanged;
         Profiles.Changed -= OnProfilesChanged;
         ActiveProfile.Changed -= OnActiveProfileChanged;
         Changed = null;

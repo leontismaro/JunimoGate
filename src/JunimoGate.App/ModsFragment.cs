@@ -1860,7 +1860,7 @@ public sealed class ModsFragment : Fragment
 
     private void OnModManagementChanged(object? sender, ModManagementChangedEventArgs eventArgs)
     {
-        if (eventArgs.Kind != ModManagementChangeKind.Library)
+        if (eventArgs.Kind is not (ModManagementChangeKind.Library or ModManagementChangeKind.Bundle))
             return;
         Activity?.RunOnUiThread(() =>
         {
