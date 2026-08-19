@@ -893,6 +893,7 @@ public sealed partial class ModLibraryRepository
         {
             await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
             EnsureDirectories();
+            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var installationDirectory = Path.Combine(Layout.TranslationsDirectory, installationId);
             if (!Directory.Exists(installationDirectory))
                 throw new KeyNotFoundException("The translation installation does not exist.");
@@ -972,6 +973,12 @@ public sealed partial class ModLibraryRepository
                 RecoverTranslationTransaction(transactionDirectory);
                 throw;
             }
+            var updated = await UpdateContentStatisticsUnlockedAsync(
+                    current,
+                    affected.ToHashSet(StringComparer.Ordinal),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
             TryDeleteDirectory(transactionDirectory);
             return new ModTranslationRestoreResult(installationId, record.Files.Count, affected);
         }
@@ -1077,6 +1084,12 @@ public sealed partial class ModLibraryRepository
                         cancellationToken)
                     .ConfigureAwait(false);
                 Directory.Move(recordDirectory, Path.Combine(Layout.TranslationsDirectory, transactionId));
+                var updated = await UpdateContentStatisticsUnlockedAsync(
+                        current,
+                        affected.ToHashSet(StringComparer.Ordinal),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
             }
             catch
             {

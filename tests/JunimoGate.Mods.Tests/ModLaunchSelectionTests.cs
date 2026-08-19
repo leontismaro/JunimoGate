@@ -47,7 +47,10 @@ internal static class ModLaunchSelectionTests
         TestHarness.Equal(ModAssemblyBindingPolicy.Strict, selection.AssemblyBindingPolicy);
         TestHarness.True(selection.Matches(profile, library));
         TestHarness.False(selection.Matches(profile with { Revision = 5 }, library));
-        TestHarness.False(selection.Matches(profile, library with { Revision = 8 }));
+        TestHarness.True(selection.Matches(profile, library with { Revision = 8 }));
+        TestHarness.False(selection.Matches(
+            profile,
+            library with { Items = new[] { first with { ContentGeneration = 2 }, second } }));
     }
 
     public static void RejectsMissingEnabledMembers()
@@ -83,6 +86,36 @@ internal static class ModLaunchSelectionTests
             profile,
             library,
             ModAssemblyBindingPolicy.HighestCompatible));
+    }
+
+    public static void RejectsChangedSelectedGeneration()
+    {
+        var item = Item("Example.Generation", 'f');
+        var now = DateTimeOffset.UtcNow;
+        var profile = new ModProfileV2(
+            ModProfileV2.CurrentSchema,
+            "main",
+            "Main",
+            Revision: 1,
+            null,
+            new[] { ModProfileMember.FromLibraryItem(item, enabled: true) },
+            now,
+            now,
+            null);
+        var library = new ModLibraryIndex(
+            ModLibraryIndex.CurrentSchema,
+            Revision: 1,
+            now,
+            new[] { item });
+        var selection = ModLaunchSelectionBuilder.Build(
+            profile,
+            library,
+            ModAssemblyBindingPolicy.HighestCompatible);
+
+        TestHarness.True(selection.Matches(profile, library));
+        TestHarness.False(selection.Matches(
+            profile,
+            library with { Items = new[] { item with { ContentGeneration = 2 } } }));
     }
 
     public static void MatchesTheFrozenGlobalBindingPolicy()

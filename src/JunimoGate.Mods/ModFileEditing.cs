@@ -135,6 +135,8 @@ public sealed class ModFileService(ModLibraryRepository library)
         }
 
         var created = new FileInfo(path);
+        await library.RecordContentMutationAsync(new[] { libraryItemId }, cancellationToken)
+            .ConfigureAwait(false);
         return new ModTextFile(relativePath, string.Empty, created.Length, created.LastWriteTimeUtc);
     }
 
@@ -177,6 +179,8 @@ public sealed class ModFileService(ModLibraryRepository library)
             TryDeleteTemporary(temporary);
         }
         var saved = new FileInfo(path);
+        await library.RecordContentMutationAsync(new[] { libraryItemId }, cancellationToken)
+            .ConfigureAwait(false);
         return new ModTextFile(original.RelativePath, text, saved.Length, saved.LastWriteTimeUtc);
     }
 

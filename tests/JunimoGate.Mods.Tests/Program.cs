@@ -132,6 +132,8 @@ return TestHarness.Run(
         ModProfileAutoAssignmentTests.DoesNotReconnectAgainstOnlyTheNewImportWhenTheLibraryIsAmbiguous()),
     ("Mod launch selection freezes enabled library items", () =>
         ModLaunchSelectionTests.FreezesOnlyEnabledLibraryItems()),
+    ("Mod launch selection rejects a changed selected generation", () =>
+        ModLaunchSelectionTests.RejectsChangedSelectedGeneration()),
     ("Mod launch selection rejects missing enabled members", () =>
         ModLaunchSelectionTests.RejectsMissingEnabledMembers()),
     ("Mod launch selection freezes the global binding policy", () =>

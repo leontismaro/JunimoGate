@@ -3,12 +3,13 @@ namespace JunimoGate.Mods;
 public sealed record ModLaunchSelectionItem(
     string LibraryItemId,
     string UniqueId,
-    string RelativeModRoot)
+    string RelativeModRoot,
+    long ContentGeneration = 1)
 {
     public void Validate()
     {
         if (!ModLibraryItemId.IsValid(LibraryItemId) || string.IsNullOrWhiteSpace(UniqueId) || UniqueId.Length > 256 ||
-            RelativeModRoot != $"library/{LibraryItemId}/files")
+            RelativeModRoot != $"library/{LibraryItemId}/files" || ContentGeneration < 1)
         {
             throw new InvalidDataException("The Mod launch selection item is malformed.");
         }
@@ -25,7 +26,7 @@ public sealed record ModLaunchSelectionSnapshot(
     IReadOnlyList<ModLaunchSelectionItem> Items,
     DateTimeOffset CreatedAtUtc)
 {
-    public const string CurrentSchema = "junimogate-mod-launch-selection/v1";
+    public const string CurrentSchema = "junimogate-mod-launch-selection/v2";
 
     public ProfileId Validate()
     {
@@ -59,7 +60,7 @@ public sealed record ModLaunchSelectionSnapshot(
         _ = profile.Validate();
         library.Validate();
         if (!Enum.IsDefined(defaultBindingPolicy) || profile.Id != ProfileId ||
-            profile.Revision != ProfileRevision || library.Revision != LibraryRevision ||
+            profile.Revision != ProfileRevision ||
             AssemblyBindingPolicy != (profile.AssemblyBindingPolicyOverride ?? defaultBindingPolicy))
             return false;
 
@@ -73,6 +74,7 @@ public sealed record ModLaunchSelectionSnapshot(
         {
             if (!selected.TryGetValue(item.UniqueId, out var member) || member.LibraryItemId != item.LibraryItemId ||
                 !indexed.TryGetValue(item.LibraryItemId, out var libraryItem) ||
+                libraryItem.ContentGeneration != item.ContentGeneration ||
                 !libraryItem.Manifest.UniqueId.Equals(item.UniqueId, StringComparison.OrdinalIgnoreCase) ||
                 libraryItem.RelativeStoragePath != item.RelativeModRoot)
             {
@@ -112,7 +114,8 @@ public static class ModLaunchSelectionBuilder
             items.Add(new ModLaunchSelectionItem(
                 libraryItem.LibraryItemId,
                 libraryItem.Manifest.UniqueId,
-                libraryItem.RelativeStoragePath));
+                libraryItem.RelativeStoragePath,
+                libraryItem.ContentGeneration));
         }
 
         var snapshot = new ModLaunchSelectionSnapshot(

@@ -36,13 +36,17 @@ public sealed record ModLibraryItem(
 {
     public const string CurrentSchema = "junimogate-mod-library-item/v1";
     public string? OriginalRootPath { get; init; }
+    public long ContentGeneration { get; init; } = 1;
+    public int CurrentFileCount { get; init; } = FileCount;
+    public long CurrentTotalBytes { get; init; } = TotalBytes;
 
     public void Validate()
     {
         if (Schema != CurrentSchema || !ModLibraryItemId.IsValid(LibraryItemId) || !ModContentId.IsValid(ImportedContentId) ||
             Manifest is null || string.IsNullOrWhiteSpace(Manifest.Name) || string.IsNullOrWhiteSpace(Manifest.Author) ||
             string.IsNullOrWhiteSpace(Manifest.Version) || string.IsNullOrWhiteSpace(Manifest.UniqueId) ||
-            ImportedAtUtc == default || FileCount < 1 || TotalBytes < 1 ||
+            ImportedAtUtc == default || FileCount < 1 || TotalBytes < 1 || ContentGeneration < 1 ||
+            CurrentFileCount < 1 || CurrentTotalBytes < 1 ||
             RelativeStoragePath != $"library/{LibraryItemId}/files")
         {
             throw new InvalidDataException("The Mod library item is malformed.");
@@ -177,6 +181,34 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
     {
         var result = await DeleteManyAsync(new[] { libraryItemId }, cancellationToken).ConfigureAwait(false);
         return result.DeletedItems.Count == 1;
+    }
+
+    public async ValueTask<ModLibraryIndex> RecordContentMutationAsync(
+        IReadOnlyCollection<string> libraryItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(libraryItemIds);
+        var requested = libraryItemIds.ToHashSet(StringComparer.Ordinal);
+        if (requested.Any(id => !ModLibraryItemId.IsValid(id)))
+            throw new ArgumentException("A Mod library item ID is invalid.", nameof(libraryItemIds));
+        if (requested.Count == 0)
+            return await ReadAsync(cancellationToken).ConfigureAwait(false);
+
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
+            EnsureDirectories();
+            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var updated = await UpdateContentStatisticsUnlockedAsync(current, requested, cancellationToken)
+                .ConfigureAwait(false);
+            await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+            return updated;
+        }
+        finally
+        {
+            operationLock.Release();
+        }
     }
 
     public async ValueTask<ModLibraryDeleteResult> DeleteManyAsync(
@@ -575,6 +607,9 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                 first.OriginalRootPath != second.OriginalRootPath ||
                 first.FileCount != second.FileCount ||
                 first.TotalBytes != second.TotalBytes ||
+                first.ContentGeneration != second.ContentGeneration ||
+                first.CurrentFileCount != second.CurrentFileCount ||
+                first.CurrentTotalBytes != second.CurrentTotalBytes ||
                 !ManifestsEqual(first.Manifest, second.Manifest))
             {
                 return false;
@@ -597,6 +632,61 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
             pair.First.IsRequired == pair.Second.IsRequired &&
             pair.First.MinimumVersion == pair.Second.MinimumVersion) &&
         left.UpdateKeys.SequenceEqual(right.UpdateKeys, StringComparer.Ordinal);
+
+    private static async ValueTask<(int FileCount, long TotalBytes)> ComputeCurrentStatisticsAsync(
+        string root,
+        CancellationToken cancellationToken)
+    {
+        var fileCount = 0;
+        long totalBytes = 0;
+        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var info = new FileInfo(path);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+                continue;
+            fileCount = checked(fileCount + 1);
+            totalBytes = checked(totalBytes + info.Length);
+        }
+        if (fileCount < 1 || totalBytes < 1)
+            throw new InvalidDataException("A Mod library item has no current content.");
+        await Task.CompletedTask.ConfigureAwait(false);
+        return (fileCount, totalBytes);
+    }
+
+    private async ValueTask<ModLibraryIndex> UpdateContentStatisticsUnlockedAsync(
+        ModLibraryIndex current,
+        IReadOnlySet<string> requested,
+        CancellationToken cancellationToken)
+    {
+        var items = current.Items.ToArray();
+        var changed = false;
+        for (var index = 0; index < items.Length; index++)
+        {
+            if (!requested.Contains(items[index].LibraryItemId))
+                continue;
+            var filesRoot = Layout.GetItemFilesDirectory(items[index].LibraryItemId);
+            if (!Directory.Exists(filesRoot))
+                throw new DirectoryNotFoundException("The Mod library item directory is missing.");
+            var (fileCount, totalBytes) = await ComputeCurrentStatisticsAsync(filesRoot, cancellationToken)
+                .ConfigureAwait(false);
+            items[index] = items[index] with
+            {
+                ContentGeneration = checked(items[index].ContentGeneration + 1),
+                CurrentFileCount = fileCount,
+                CurrentTotalBytes = totalBytes,
+            };
+            changed = true;
+        }
+        if (!changed)
+            throw new KeyNotFoundException("A Mod library item does not exist.");
+        return current with
+        {
+            Revision = checked(current.Revision + 1),
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Items = items,
+        };
+    }
 
     internal static JsonSerializerOptions SerializerOptions => JsonOptions;
 
