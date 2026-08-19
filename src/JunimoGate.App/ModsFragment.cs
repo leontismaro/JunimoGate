@@ -1607,7 +1607,8 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            var result = await repository.SetBundleMemberUnlockedAsync(
+            var bundles = modManagement?.Bundles ?? new ModBundleCatalogRepository(repository);
+            var result = await bundles.SetMemberUnlockedAsync(
                     bundleId,
                     uniqueId,
                     unlocked,

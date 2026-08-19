@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json.Nodes;
 using JunimoGate.Mods;
 using JunimoGate.Tests;
 
@@ -340,6 +341,12 @@ internal static class ModLibraryTests
         var afterImport = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, afterImport.BundleCatalog.Bundles.Count);
         TestHarness.Equal(bundle.BundleId, afterImport.BundleCatalog.Bundles[0].BundleId);
+        TestHarness.True(File.Exists(fixture.Repository.Layout.BundleCatalogPath));
+        TestHarness.False(File.ReadAllText(fixture.Repository.Layout.IndexPath)
+            .Contains("\"bundleCatalog\":", StringComparison.Ordinal));
+        TestHarness.True(File.ReadAllText(fixture.Repository.Layout.IndexPath)
+            .Contains("bundleCatalogFile", StringComparison.Ordinal));
+        var libraryIndexBytes = File.ReadAllBytes(fixture.Repository.Layout.IndexPath);
 
         using var repeatedArchive = BundledArchive();
         var repeated = Import(fixture.Repository, repeatedArchive, "renamed-bundle.zip");
@@ -348,7 +355,8 @@ internal static class ModLibraryTests
         TestHarness.Equal(afterImport.Revision, afterRepeat.Revision);
 
         var firstMember = bundle.Members[0];
-        var unlocked = fixture.Repository.SetBundleMemberUnlockedAsync(
+        var bundles = new ModBundleCatalogRepository(fixture.Repository);
+        var unlocked = bundles.SetMemberUnlockedAsync(
                 bundle.BundleId,
                 firstMember.UniqueId,
                 unlocked: true)
@@ -358,8 +366,9 @@ internal static class ModLibraryTests
         TestHarness.Equal(1, unlocked.Library.BundleCatalog.UnlockOverrides.Count);
         TestHarness.Equal(afterImport.Revision, unlocked.Library.Revision);
         TestHarness.True(unlocked.Library.BundleCatalog.Revision > afterImport.BundleCatalog.Revision);
+        TestHarness.True(libraryIndexBytes.SequenceEqual(File.ReadAllBytes(fixture.Repository.Layout.IndexPath)));
 
-        var unchanged = fixture.Repository.SetBundleMemberUnlockedAsync(
+        var unchanged = bundles.SetMemberUnlockedAsync(
                 bundle.BundleId,
                 firstMember.UniqueId,
                 unlocked: true)
@@ -367,7 +376,7 @@ internal static class ModLibraryTests
         TestHarness.False(unchanged.Changed);
         TestHarness.Equal(unlocked.Library.Revision, unchanged.Library.Revision);
 
-        var restored = fixture.Repository.SetBundleMemberUnlockedAsync(
+        var restored = bundles.SetMemberUnlockedAsync(
                 bundle.BundleId,
                 firstMember.UniqueId,
                 unlocked: false)
@@ -381,6 +390,64 @@ internal static class ModLibraryTests
         var afterDelete = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, afterDelete.Items.Count);
         TestHarness.Equal(0, afterDelete.BundleCatalog.Bundles.Count);
+    }
+
+    public static void MigratesEmbeddedBundleCatalog()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = BundledArchive();
+        var imported = Import(fixture.Repository, archive, "legacy-bundle.zip");
+        var catalog = JsonNode.Parse(File.ReadAllText(fixture.Repository.Layout.BundleCatalogPath));
+        var legacy = JsonNode.Parse(File.ReadAllText(fixture.Repository.Layout.IndexPath))!.AsObject();
+        legacy.Remove("bundleCatalogFile");
+        legacy["bundleCatalog"] = catalog;
+        File.WriteAllText(fixture.Repository.Layout.IndexPath, legacy.ToJsonString());
+        File.Delete(fixture.Repository.Layout.BundleCatalogPath);
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var migrated = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(imported.Bundles.Single().BundleId, migrated.BundleCatalog.Bundles.Single().BundleId);
+        TestHarness.True(File.Exists(reopened.Layout.BundleCatalogPath));
+        TestHarness.False(File.ReadAllText(reopened.Layout.IndexPath)
+            .Contains("\"bundleCatalog\":", StringComparison.Ordinal));
+    }
+
+    public static void RejectsMissingBundleCatalog()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = BundledArchive();
+        _ = Import(fixture.Repository, archive, "missing-bundle-catalog.zip");
+        File.Delete(fixture.Repository.Layout.BundleCatalogPath);
+
+        TestHarness.Throws<InvalidDataException>(() =>
+            new ModLibraryRepository(fixture.Root).ReadAsync().AsTask().GetAwaiter().GetResult());
+    }
+
+    public static void RecoversInterruptedCatalogCommit()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = BundledArchive();
+        var imported = Import(fixture.Repository, archive, "catalog-recovery.zip");
+        var indexBefore = File.ReadAllBytes(fixture.Repository.Layout.IndexPath);
+        var catalogBefore = File.ReadAllBytes(fixture.Repository.Layout.BundleCatalogPath);
+        var transactionDirectory = Path.Combine(
+            fixture.Repository.Layout.StagingDirectory,
+            $"catalog-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(transactionDirectory);
+        File.WriteAllBytes(Path.Combine(transactionDirectory, "library-index.before.json"), indexBefore);
+        File.WriteAllBytes(Path.Combine(transactionDirectory, "bundle-catalog.before.json"), catalogBefore);
+        File.WriteAllText(
+            Path.Combine(transactionDirectory, "transaction.json"),
+            "{\"schema\":\"junimogate-mod-catalog-commit/v1\",\"phase\":\"prepared\",\"hadLibraryIndex\":true,\"hadBundleCatalog\":true}");
+        File.WriteAllText(fixture.Repository.Layout.IndexPath, "{}");
+        File.WriteAllText(fixture.Repository.Layout.BundleCatalogPath, "{}");
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var recovered = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(imported.Bundles.Single().BundleId, recovered.BundleCatalog.Bundles.Single().BundleId);
+        TestHarness.True(indexBefore.SequenceEqual(File.ReadAllBytes(reopened.Layout.IndexPath)));
+        TestHarness.True(catalogBefore.SequenceEqual(File.ReadAllBytes(reopened.Layout.BundleCatalogPath)));
+        TestHarness.False(Directory.Exists(transactionDirectory));
     }
 
     public static void MutatesBundleProfileMembersAtomically()

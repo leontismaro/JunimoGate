@@ -242,6 +242,12 @@ return TestHarness.Run(
         ModLibraryTests.KeepsDistinctContentCandidates()),
     ("Mod library persists bundles and unlock overrides", () =>
         ModLibraryTests.PersistsBundlesAndUnlocksMembers()),
+    ("Mod library migrates its embedded Bundle catalog", () =>
+        ModLibraryTests.MigratesEmbeddedBundleCatalog()),
+    ("Mod library rejects a missing external Bundle catalog", () =>
+        ModLibraryTests.RejectsMissingBundleCatalog()),
+    ("Mod library recovers an interrupted catalog commit", () =>
+        ModLibraryTests.RecoversInterruptedCatalogCommit()),
     ("Mod bundle Profile operations mutate once without dependencies", () =>
         ModLibraryTests.MutatesBundleProfileMembersAtomically()),
     ("Mod management projects bundles and unlocked members", () =>
