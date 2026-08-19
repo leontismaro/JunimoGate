@@ -315,7 +315,7 @@ public sealed class ModGroupsFragment : Fragment
             if (isManifest)
             {
                 var result = await service.ImportManifestAsync(input, cancellationToken).ConfigureAwait(false);
-                modManagement?.NotifyProfilesChanged();
+                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
                 await RefreshAsync(cancellationToken).ConfigureAwait(false);
                 ShowImportResult(result);
                 return;
@@ -405,8 +405,8 @@ public sealed class ModGroupsFragment : Fragment
                     Log.Error("JunimoGate.Mods", "profile-import-reconnection-failed", exception);
                 }
             }
-            modManagement?.NotifyLibraryChanged();
-            modManagement?.NotifyProfilesChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
+            modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
             ShowImportResult(result);
         }
@@ -494,7 +494,7 @@ public sealed class ModGroupsFragment : Fragment
         {
             var profile = await profiles.CreateAsync(displayName, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.NotifyProfilesChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -544,7 +544,7 @@ public sealed class ModGroupsFragment : Fragment
                 : await modManagement.GetActiveProfileAsync(cancellationToken).ConfigureAwait(false);
             await selection.SetAsync(current.Revision, ProfileId.Parse(profile.Id), cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.NotifyActiveProfileChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.ActiveProfile, this);
             await ((MainActivity)RequireActivity())
                 .RefreshLauncherProfileAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -595,7 +595,7 @@ public sealed class ModGroupsFragment : Fragment
         try
         {
             await profiles.DeleteAsync(ProfileId.Parse(profile.Id), cancellationToken).ConfigureAwait(false);
-            modManagement?.NotifyProfilesChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

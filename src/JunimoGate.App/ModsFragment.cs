@@ -491,7 +491,7 @@ public sealed class ModsFragment : Fragment
                 return;
             }
             var result = await repository.RestoreTranslationAsync(installationId, cancellationToken).ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() => ShowMessage(FormatString(
@@ -707,8 +707,8 @@ public sealed class ModsFragment : Fragment
                     .ConfigureAwait(false);
                 if (!migration.AlreadyMigrated)
                 {
-                    modManagement?.NotifyLibraryChanged();
-                    modManagement?.NotifyProfilesChanged();
+                    modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
+                    modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
                 }
                 Log.Info(
                     "JunimoGate.Mods",
@@ -881,9 +881,9 @@ public sealed class ModsFragment : Fragment
                     }
                 }
             }
-            modManagement?.NotifyLibraryChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             if (assignment?.AddedMembers > 0 || reconnectedMembers > 0)
-                modManagement?.NotifyProfilesChanged();
+                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -1186,7 +1186,7 @@ public sealed class ModsFragment : Fragment
             pendingTranslationTarget = null;
             pendingTranslationTargetItemId = null;
             await transaction.DisposeAsync().ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1485,7 +1485,7 @@ public sealed class ModsFragment : Fragment
             var result = await profileMutations.AddOrReplaceAsync(target, items, enabled: true)
                 .ConfigureAwait(false);
             if (result.ChangedMembers > 0)
-                modManagement?.NotifyProfilesChanged();
+                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1645,7 +1645,7 @@ public sealed class ModsFragment : Fragment
                     lifetime.Token)
                 .ConfigureAwait(false);
             if (result.Changed)
-                modManagement?.NotifyLibraryChanged();
+                modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1723,7 +1723,7 @@ public sealed class ModsFragment : Fragment
                     items.Select(item => item.LibraryItemId).ToArray(),
                     cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
+            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {

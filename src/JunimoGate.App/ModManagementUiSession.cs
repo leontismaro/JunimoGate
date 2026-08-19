@@ -19,7 +19,7 @@ internal sealed class ModManagementChangedEventArgs(
     public object? Origin { get; } = origin;
 }
 
-internal sealed class ModManagementUiSession : IDisposable
+internal class ModManagementStore : IDisposable
 {
     private readonly SemaphoreSlim libraryLock = new(1, 1);
     private readonly SemaphoreSlim profileLock = new(1, 1);
@@ -33,7 +33,7 @@ internal sealed class ModManagementUiSession : IDisposable
     private readonly object cacheGate = new();
     private bool disposed;
 
-    public ModManagementUiSession(string userDataRoot)
+    public ModManagementStore(string userDataRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userDataRoot);
         var profilesRoot = Path.Combine(userDataRoot, "profiles");
@@ -185,7 +185,25 @@ internal sealed class ModManagementUiSession : IDisposable
         }
     }
 
-    public void NotifyLibraryChanged()
+    public void PublishMutation(ModManagementChangeKind kind, object? origin = null)
+    {
+        switch (kind)
+        {
+            case ModManagementChangeKind.Library:
+                InvalidateLibrary(origin);
+                break;
+            case ModManagementChangeKind.Profiles:
+                InvalidateProfiles(origin);
+                break;
+            case ModManagementChangeKind.ActiveProfile:
+                InvalidateActiveProfile(origin);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+    }
+
+    private void InvalidateLibrary(object? origin)
     {
         if (disposed)
             return;
@@ -195,10 +213,10 @@ internal sealed class ModManagementUiSession : IDisposable
             librarySnapshot = null;
             generation = ++libraryGeneration;
         }
-        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Library, generation));
+        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Library, generation, origin));
     }
 
-    public void NotifyProfilesChanged(object? origin = null)
+    private void InvalidateProfiles(object? origin)
     {
         if (disposed)
             return;
@@ -214,7 +232,7 @@ internal sealed class ModManagementUiSession : IDisposable
             origin));
     }
 
-    public void NotifyActiveProfileChanged()
+    private void InvalidateActiveProfile(object? origin)
     {
         if (disposed)
             return;
@@ -224,7 +242,7 @@ internal sealed class ModManagementUiSession : IDisposable
             activeProfileSnapshot = null;
             generation = ++activeProfileGeneration;
         }
-        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.ActiveProfile, generation));
+        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.ActiveProfile, generation, origin));
     }
 
     public void Dispose()
@@ -240,4 +258,8 @@ internal sealed class ModManagementUiSession : IDisposable
             activeProfileSnapshot = null;
         }
     }
+}
+
+internal sealed class ModManagementUiSession(string userDataRoot) : ModManagementStore(userDataRoot)
+{
 }
