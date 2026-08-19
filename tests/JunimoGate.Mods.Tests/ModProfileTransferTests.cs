@@ -277,6 +277,40 @@ internal static class ModProfileTransferTests
         TestHarness.Equal("{\"private\":true}", File.ReadAllText(Path.Combine(importedRoot, "config.json")));
     }
 
+    public static void CompletePackageCommitUsesMutationGate()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.GatedPackage", includeConfig: false);
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Gated group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: true)])
+            .AsTask().GetAwaiter().GetResult();
+        using var package = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportPackageAsync(ProfileId.Parse(sourceProfile.Id), package)
+            .AsTask().GetAwaiter().GetResult();
+
+        using var destinationFixture = new TransferFixture();
+        var existing = destinationFixture.ImportMod("Example.GatedPackage", includeConfig: false);
+        var before = destinationFixture.Library.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var gate = new RejectingMutationGate();
+        var service = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles, gate);
+        package.Position = 0;
+        using var transaction = new AsyncTransactionScope(service.CreatePackageImportTransaction("gated.zip"));
+        transaction.Value.ScanAsync(package).AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Throws<ModContentInUseException>(() =>
+            transaction.Value.CommitAsync().AsTask().GetAwaiter().GetResult());
+
+        TestHarness.Equal(existing.LibraryItemId, gate.AffectedItemIds.Single());
+        var after = destinationFixture.Library.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(before.Revision, after.Revision);
+        TestHarness.Equal(before.Items.Single().LibraryItemId, after.Items.Single().LibraryItemId);
+        TestHarness.Equal(1, destinationFixture.Profiles.ListAsync().AsTask().GetAwaiter().GetResult().Count);
+    }
+
     public static void RejectsForgedPackageIdentityWithoutLibraryChanges()
     {
         using var fixture = new TransferFixture();
@@ -487,6 +521,19 @@ internal static class ModProfileTransferTests
         public ModProfilePackageImportTransaction Value { get; } = value;
 
         public void Dispose() => Value.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    private sealed class RejectingMutationGate : IModContentMutationGate
+    {
+        public IReadOnlyList<string> AffectedItemIds { get; private set; } = Array.Empty<string>();
+
+        public ValueTask<IAsyncDisposable> AcquireAsync(
+            IReadOnlyCollection<string> affectedLibraryItemIds,
+            CancellationToken cancellationToken = default)
+        {
+            AffectedItemIds = affectedLibraryItemIds.ToArray();
+            throw new ModContentInUseException(AffectedItemIds);
+        }
     }
 
     private static void WriteEntry(ZipArchive archive, string path, string content)

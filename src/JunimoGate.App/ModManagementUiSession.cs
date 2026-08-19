@@ -42,7 +42,8 @@ internal class ModManagementStore : IDisposable
         Library = new ModLibraryRepository(Path.Combine(userDataRoot, "mods"));
         Profiles = new ModProfileV2Repository(profilesRoot);
         ActiveProfile = new ActiveModProfileSelectionRepository(profilesRoot);
-        Transfers = new ModProfileTransferService(Library, Profiles);
+        var mutationGate = new AndroidModContentMutationGate(context);
+        Transfers = new ModProfileTransferService(Library, Profiles, mutationGate);
         Installations = Library;
         Bundles = new ModBundleCatalogRepository(Installations);
         Translations = new ModTranslationHistoryRepository(Library);
@@ -50,7 +51,7 @@ internal class ModManagementStore : IDisposable
             Library,
             Profiles,
             ActiveProfile,
-            new AndroidModContentMutationGate(context));
+            mutationGate);
         Library.Changed += OnLibraryChanged;
         Library.BundleChanged += OnBundleChanged;
         Profiles.Changed += OnProfilesChanged;

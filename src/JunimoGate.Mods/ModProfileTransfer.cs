@@ -164,11 +164,16 @@ public sealed class ModProfileTransferService
     };
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
+    private readonly IModContentMutationGate mutationGate;
 
-    public ModProfileTransferService(ModLibraryRepository library, ModProfileV2Repository profiles)
+    public ModProfileTransferService(
+        ModLibraryRepository library,
+        ModProfileV2Repository profiles,
+        IModContentMutationGate? mutationGate = null)
     {
         this.library = library ?? throw new ArgumentNullException(nameof(library));
         this.profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
+        this.mutationGate = mutationGate ?? PassThroughModContentMutationGate.Instance;
     }
 
     public async ValueTask<ModProfileExportResult> ExportManifestAsync(
@@ -360,7 +365,13 @@ public sealed class ModProfileTransferService
     public ModProfilePackageImportTransaction CreatePackageImportTransaction(
         string? sourceArchiveName = null,
         ModArchiveImportLimits? limits = null) =>
-        new(library, profiles, sourceArchiveName, limits ?? ModArchiveImportLimits.Default, JsonOptions);
+        new(
+            library,
+            profiles,
+            mutationGate,
+            sourceArchiveName,
+            limits ?? ModArchiveImportLimits.Default,
+            JsonOptions);
 
     private static ModProfileTransferDocument CreateDocument(
         ModProfileV2 profile,
@@ -529,6 +540,7 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
 {
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
+    private readonly IModContentMutationGate mutationGate;
     private readonly ModArchiveInstallTransaction mods;
     private readonly JsonSerializerOptions jsonOptions;
     private bool hasPackagedMods;
@@ -537,12 +549,14 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
     internal ModProfilePackageImportTransaction(
         ModLibraryRepository library,
         ModProfileV2Repository profiles,
+        IModContentMutationGate mutationGate,
         string? sourceArchiveName,
         ModArchiveImportLimits limits,
         JsonSerializerOptions jsonOptions)
     {
         this.library = library;
         this.profiles = profiles;
+        this.mutationGate = mutationGate;
         this.jsonOptions = jsonOptions;
         mods = new ModArchiveInstallTransaction(library, sourceArchiveName, limits);
     }
@@ -593,6 +607,16 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         if (Document is null || ImportResult is not null)
             throw new InvalidOperationException("The Mod Profile package is not ready to commit.");
 
+        var candidateIds = (mods.ScanResult?.Candidates ?? Array.Empty<ModArchiveCandidate>())
+            .Select(candidate => candidate.Manifest.UniqueId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var beforeLease = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var affectedItemIds = beforeLease.Items
+            .Where(item => candidateIds.Contains(item.Manifest.UniqueId))
+            .Select(item => item.LibraryItemId)
+            .ToArray();
+        await using var lease = await mutationGate.AcquireAsync(affectedItemIds, cancellationToken)
+            .ConfigureAwait(false);
         var previousIndex = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
         if (hasPackagedMods)
             await mods.CommitAsync(
@@ -692,5 +716,24 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
                 ProductDirectory: null,
                 members);
         }).ToArray();
+    }
+}
+
+internal sealed class PassThroughModContentMutationGate : IModContentMutationGate
+{
+    public static PassThroughModContentMutationGate Instance { get; } = new();
+
+    public ValueTask<IAsyncDisposable> AcquireAsync(
+        IReadOnlyCollection<string> affectedLibraryItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<IAsyncDisposable>(PassThroughLease.Instance);
+    }
+
+    private sealed class PassThroughLease : IAsyncDisposable
+    {
+        public static PassThroughLease Instance { get; } = new();
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

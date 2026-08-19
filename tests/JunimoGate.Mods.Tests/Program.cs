@@ -115,6 +115,8 @@ return TestHarness.Run(
         ModProfileTransferTests.CompletePackageExcludesConfigAndBindsExportedContent()),
     ("Complete Mod Profile package includes config when requested", () =>
         ModProfileTransferTests.CompletePackageIncludesConfigWhenRequested()),
+    ("Complete Mod Profile package commit uses the mutation gate", () =>
+        ModProfileTransferTests.CompletePackageCommitUsesMutationGate()),
     ("Complete Mod Profile package rejects forged content identity", () =>
         ModProfileTransferTests.RejectsForgedPackageIdentityWithoutLibraryChanges()),
     ("Complete Mod Profile package supports an empty group", () =>
