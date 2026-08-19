@@ -58,10 +58,12 @@ internal sealed class LauncherCoordinator : IDisposable
     private readonly LauncherSettingsRepository launcherSettings;
     private readonly string profilesRoot;
     private readonly SemaphoreSlim operationLock = new(1, 1);
+    private readonly SemaphoreSlim profileMigrationLock = new(1, 1);
     private ProfileId profileId = ProfileId.Parse("default");
     private PreparedGameHandle? preparedGame;
     private PendingGameLaunchOutcome? pendingRecovery;
     private LauncherSettings? settings;
+    private volatile bool profilesMigrated;
     private bool disposed;
 
     public LauncherCoordinator(Context context)
@@ -91,7 +93,6 @@ internal sealed class LauncherCoordinator : IDisposable
         await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await AndroidPrivateStorage.EnsureMigratedAsync(context, cancellationToken).ConfigureAwait(false);
             await LoadActiveProfileAsync(cancellationToken).ConfigureAwait(false);
             var pending = await GameLaunchRegistry.TryReadPendingOutcomeAsync(context, cancellationToken)
                 .ConfigureAwait(false);
@@ -463,21 +464,40 @@ internal sealed class LauncherCoordinator : IDisposable
 
     private async ValueTask LoadActiveProfileAsync(CancellationToken cancellationToken)
     {
+        await EnsureModProfilesReadyAsync(cancellationToken).ConfigureAwait(false);
         var active = await activeProfiles
             .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
             .ConfigureAwait(false);
         profileId = active.Validate();
-        _ = await new LegacyModProfileMigrator(profilesRoot, library, profilesV2)
-            .MigrateAllAsync(cancellationToken)
-            .ConfigureAwait(false);
-        var currentV2 = await profilesV2.OpenOrCreateDefaultAsync("Default", cancellationToken)
-            .ConfigureAwait(false);
-        settings = await LauncherSettingsMigration.MigrateLegacyDefaultPolicyAsync(
-                launcherSettings,
-                profilesV2,
-                currentV2.AssemblyBindingPolicyOverride ?? ModAssemblyBindingPolicy.HighestCompatible,
-                cancellationToken)
-            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask EnsureModProfilesReadyAsync(CancellationToken cancellationToken)
+    {
+        if (profilesMigrated)
+            return;
+        await profileMigrationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (profilesMigrated)
+                return;
+            await AndroidPrivateStorage.EnsureMigratedAsync(context, cancellationToken).ConfigureAwait(false);
+            _ = await new LegacyModProfileMigrator(profilesRoot, library, profilesV2)
+                .MigrateAllAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var currentV2 = await profilesV2.OpenOrCreateDefaultAsync("Default", cancellationToken)
+                .ConfigureAwait(false);
+            settings = await LauncherSettingsMigration.MigrateLegacyDefaultPolicyAsync(
+                    launcherSettings,
+                    profilesV2,
+                    currentV2.AssemblyBindingPolicyOverride ?? ModAssemblyBindingPolicy.HighestCompatible,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            profilesMigrated = true;
+        }
+        finally
+        {
+            profileMigrationLock.Release();
+        }
     }
 
     private async ValueTask<ModLaunchSelectionSnapshot> BuildCurrentModSelectionAsync(

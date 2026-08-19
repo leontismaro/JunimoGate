@@ -105,10 +105,6 @@ internal sealed class ProductInformationService
         var profilesRoot = Path.Combine(userData, "profiles");
         var libraryRepository = new ModLibraryRepository(Path.Combine(userData, "mods"));
         var profileRepository = new ModProfileV2Repository(profilesRoot);
-        _ = new LegacyModProfileMigrator(profilesRoot, libraryRepository, profileRepository)
-            .MigrateAllAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
-        _ = profileRepository.OpenOrCreateDefaultAsync("Default", cancellationToken)
-            .AsTask().GetAwaiter().GetResult();
         var active = new ActiveModProfileSelectionRepository(profilesRoot)
             .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
             .AsTask().GetAwaiter().GetResult();

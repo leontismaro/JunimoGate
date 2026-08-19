@@ -156,14 +156,13 @@ public sealed class ModsFragment : Fragment
         modManagement = ((MainActivity)RequireActivity()).ModManagement;
         modManagement.Changed += OnModManagementChanged;
         repository = modManagement.Library;
-        var profilesRoot = Path.Combine(AndroidPrivateStorage.GetUserDataRoot(RequireContext()), "profiles");
         profiles = modManagement.Profiles;
         profileMutations = modManagement.Commands.ProfileMembers;
         activeProfile = modManagement.ActiveProfile;
         settingsRepository = new LauncherSettingsRepository(Path.Combine(
             AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
             "settings"));
-        _ = InitializeContentAsync(profilesRoot, cancellation.Token);
+        _ = InitializeContentAsync(cancellation.Token);
     }
 
     public override void OnStop()
@@ -682,24 +681,13 @@ public sealed class ModsFragment : Fragment
             batchDoneButton.Enabled = !busy;
     }
 
-    private async Task InitializeContentAsync(string profilesRoot, CancellationToken cancellationToken)
+    private async Task InitializeContentAsync(CancellationToken cancellationToken)
     {
         SetBusy(true);
         try
         {
-            await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
-            if (repository is not null && profiles is not null)
-            {
-                var migrator = new LegacyModProfileMigrator(profilesRoot, repository, profiles);
-                var migrations = await migrator.MigrateAllAsync(cancellationToken).ConfigureAwait(false);
-                _ = await profiles.OpenOrCreateDefaultAsync("Default", cancellationToken).ConfigureAwait(false);
-                if (migrations.Any(migration => !migration.AlreadyMigrated))
-                {
-                }
-                Log.Info(
-                    "JunimoGate.Mods",
-                    $"profile-migration count={migrations.Count} imported={migrations.Sum(value => value.ImportedItems)} reused={migrations.Sum(value => value.ReusedItems)}");
-            }
+            await ((MainActivity)RequireActivity()).EnsureModProfilesReadyAsync(cancellationToken)
+                .ConfigureAwait(false);
             if (settingsRepository is not null)
                 launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);

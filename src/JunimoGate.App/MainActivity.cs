@@ -237,6 +237,9 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
     internal ValueTask RefreshLauncherProfileAsync(CancellationToken cancellationToken) =>
         coordinator?.RefreshProfileAsync(cancellationToken) ?? ValueTask.CompletedTask;
 
+    internal ValueTask EnsureModProfilesReadyAsync(CancellationToken cancellationToken) =>
+        coordinator?.EnsureModProfilesReadyAsync(cancellationToken) ?? ValueTask.CompletedTask;
+
     private async Task RepairGameEnvironmentAsync()
     {
         if (destroyed || coordinator is null || lifetimeCancellation is not { IsCancellationRequested: false } cancellation)
