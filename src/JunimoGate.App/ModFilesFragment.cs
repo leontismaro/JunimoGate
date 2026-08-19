@@ -11,7 +11,6 @@ using Google.Android.Material.Button;
 using Google.Android.Material.Dialog;
 using Google.Android.Material.ProgressIndicator;
 using Google.Android.Material.TextField;
-using JunimoGate.GameHost;
 using JunimoGate.Mods;
 using Fragment = AndroidX.Fragment.App.Fragment;
 using Log = JunimoGate.Android.JunimoGateLog;
@@ -31,6 +30,7 @@ public sealed class ModFilesFragment : Fragment, IModFileBackHandler
 {
     private CancellationTokenSource? cancellation;
     private ModFileService? files;
+    private ModManagementCommandService? commands;
     private ModFileAdapter? adapter;
     private RecyclerView? list;
     private TextView? pathLabel;
@@ -78,7 +78,9 @@ public sealed class ModFilesFragment : Fragment, IModFileBackHandler
         libraryItemId = Arguments?.GetString("libraryItemId") ?? string.Empty;
         modName = Arguments?.GetString("modName") ?? GetString(Resource.String.mod_files_title);
         cancellation = new CancellationTokenSource();
-        files = new ModFileService(((MainActivity)RequireActivity()).ModManagement.Library);
+        var management = ((MainActivity)RequireActivity()).ModManagement;
+        files = new ModFileService(management.Library);
+        commands = management.Commands;
         mainShell = FindMainShell() ?? throw new InvalidOperationException("The Mod files shell is unavailable.");
         mainShell.SetEditorToolbar(modName, OnNavigateUp);
         _ = LoadAsync(cancellation.Token);
@@ -90,6 +92,7 @@ public sealed class ModFilesFragment : Fragment, IModFileBackHandler
         cancellation?.Dispose();
         cancellation = null;
         files = null;
+        commands = null;
         if (mainShell is not null)
             mainShell.ClearEditorToolbar(OnNavigateUp);
         mainShell = null;
@@ -180,12 +183,6 @@ public sealed class ModFilesFragment : Fragment, IModFileBackHandler
 
     private void OnCreateClicked(object? sender, EventArgs eventArgs)
     {
-        if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
-        {
-            Toast.MakeText(RequireContext(), Resource.String.mod_file_game_running, ToastLength.Long)?.Show();
-            return;
-        }
-
         var content = LayoutInflater.From(RequireContext())?.Inflate(
             Resource.Layout.dialog_mod_file_name,
             null,
@@ -215,17 +212,12 @@ public sealed class ModFilesFragment : Fragment, IModFileBackHandler
 
     private async Task CreateAsync(string fileName, CancellationToken cancellationToken)
     {
-        if (files is null)
+        if (commands is null)
             return;
-        if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
-        {
-            Toast.MakeText(RequireContext(), Resource.String.mod_file_game_running, ToastLength.Long)?.Show();
-            return;
-        }
         SetBusy(true);
         try
         {
-            var created = await files.CreateTextAsync(
+            var created = await commands.CreateModFileAsync(
                     libraryItemId,
                     relativeDirectory,
                     fileName,
@@ -237,6 +229,11 @@ public sealed class ModFilesFragment : Fragment, IModFileBackHandler
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (ModContentInUseException)
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => Toast.MakeText(RequireContext(), Resource.String.mod_file_game_running, ToastLength.Long)?.Show());
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or ArgumentException or KeyNotFoundException)
@@ -314,6 +311,7 @@ public sealed class ModTextEditorFragment : Fragment, IModFileBackHandler
 
     private CancellationTokenSource? cancellation;
     private ModFileService? files;
+    private ModManagementCommandService? commands;
     private ModTextFile? opened;
     private TextInputEditText? editor;
     private MaterialButton? saveButton;
@@ -376,7 +374,9 @@ public sealed class ModTextEditorFragment : Fragment, IModFileBackHandler
         relativePath = Arguments?.GetString("relativePath") ?? string.Empty;
         modName = Arguments?.GetString("modName") ?? GetString(Resource.String.mod_files_title);
         cancellation = new CancellationTokenSource();
-        files = new ModFileService(((MainActivity)RequireActivity()).ModManagement.Library);
+        var management = ((MainActivity)RequireActivity()).ModManagement;
+        files = new ModFileService(management.Library);
+        commands = management.Commands;
         mainShell = FindMainShell() ?? throw new InvalidOperationException("The Mod text editor shell is unavailable.");
         mainShell.SetEditorToolbar(Path.GetFileName(relativePath), OnNavigateUp);
         if (opened is null)
@@ -391,6 +391,7 @@ public sealed class ModTextEditorFragment : Fragment, IModFileBackHandler
         cancellation?.Dispose();
         cancellation = null;
         files = null;
+        commands = null;
         if (mainShell is not null)
             mainShell.ClearEditorToolbar(OnNavigateUp);
         mainShell = null;
@@ -481,18 +482,14 @@ public sealed class ModTextEditorFragment : Fragment, IModFileBackHandler
 
     private async Task SaveAsync(CancellationToken cancellationToken, Action? afterSave = null)
     {
-        if (files is null || opened is null || editor is null)
+        if (commands is null || opened is null || editor is null)
             return;
-        if (GameSessionRegistry.IsGameProcessActive(RequireContext()))
-        {
-            Toast.MakeText(RequireContext(), Resource.String.mod_file_game_running, ToastLength.Long)?.Show();
-            return;
-        }
         SetBusy(true);
         try
         {
             var text = editor.Text ?? string.Empty;
-            var saved = await files.SaveTextAsync(libraryItemId, opened, text, cancellationToken).ConfigureAwait(false);
+            var saved = await commands.EditModFileAsync(libraryItemId, opened, text, cancellationToken)
+                .ConfigureAwait(false);
             if (!IsAdded || cancellationToken.IsCancellationRequested)
                 return;
             Activity?.RunOnUiThread(() =>
@@ -507,6 +504,11 @@ public sealed class ModTextEditorFragment : Fragment, IModFileBackHandler
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (ModContentInUseException)
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => Toast.MakeText(RequireContext(), Resource.String.mod_file_game_running, ToastLength.Long)?.Show());
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException or ArgumentException)

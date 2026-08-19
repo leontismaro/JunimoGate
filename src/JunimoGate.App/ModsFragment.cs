@@ -459,7 +459,6 @@ public sealed class ModsFragment : Fragment
             if (cancellation is { IsCancellationRequested: false } lifetime)
                 _ = RestoreTranslationAsync(
                     installation.InstallationId,
-                    installation.AffectedLibraryItemIds,
                     lifetime.Token);
         });
         dialog.Show();
@@ -467,7 +466,6 @@ public sealed class ModsFragment : Fragment
 
     private async Task RestoreTranslationAsync(
         string installationId,
-        IReadOnlyList<string> affectedLibraryItemIds,
         CancellationToken cancellationToken)
     {
         if (repository is null)
@@ -475,21 +473,6 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
-                    RequireContext(),
-                    cancellationToken)
-                .ConfigureAwait(false);
-            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
-                    RequireContext(),
-                    affectedLibraryItemIds,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            if (inUse.Count != 0)
-            {
-                if (IsAdded)
-                    Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
-                return;
-            }
             var result = await modManagement!.Commands.RestoreTranslationAsync(installationId, cancellationToken)
                 .ConfigureAwait(false);
             if (IsAdded)
@@ -501,6 +484,11 @@ public sealed class ModsFragment : Fragment
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (ModContentInUseException)
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
@@ -829,7 +817,7 @@ public sealed class ModsFragment : Fragment
     {
         try
         {
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await modManagement!.Commands.CommitImportAsync(transaction, cancellationToken).ConfigureAwait(false);
             var result = transaction.ImportResult
                 ?? throw new InvalidDataException("The Mod import result is missing.");
             Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
@@ -1148,33 +1136,8 @@ public sealed class ModsFragment : Fragment
     {
         try
         {
-            var affectedLibraryItemIds = transaction.ScanResult?.Files
-                .Select(file => file.LibraryItemId)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray() ?? Array.Empty<string>();
-            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
-                    RequireContext(),
-                    cancellationToken)
+            await modManagement!.Commands.CommitTranslationAsync(transaction, cancellationToken)
                 .ConfigureAwait(false);
-            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
-                    RequireContext(),
-                    affectedLibraryItemIds,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            if (inUse.Count != 0)
-            {
-                await DisposePendingTranslationAsync().ConfigureAwait(false);
-                if (IsAdded)
-                {
-                    Activity?.RunOnUiThread(() =>
-                    {
-                        ShowMessage(Resource.String.mod_translation_game_running);
-                        SetBusy(false);
-                    });
-                }
-                return;
-            }
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             var result = transaction.InstallResult
                 ?? throw new InvalidDataException("The translation installation result is missing.");
             Interlocked.CompareExchange(ref pendingTranslationTransaction, null, transaction);
@@ -1196,6 +1159,18 @@ public sealed class ModsFragment : Fragment
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await DisposePendingTranslationAsync().ConfigureAwait(false);
+        }
+        catch (ModContentInUseException)
+        {
+            await DisposePendingTranslationAsync().ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(Resource.String.mod_translation_game_running);
+                    SetBusy(false);
+                });
+            }
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
@@ -1695,20 +1670,6 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
-                    RequireContext(),
-                    cancellationToken)
-                .ConfigureAwait(false);
-            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
-                    RequireContext(),
-                    items.Select(item => item.LibraryItemId).ToArray(),
-                    cancellationToken).ConfigureAwait(false);
-            if (inUse.Count != 0)
-            {
-                if (IsAdded)
-                    Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_in_use));
-                return;
-            }
             var result = await modManagement!.Commands.DeleteInstalledModsAsync(
                     items.Select(item => item.LibraryItemId).ToArray(),
                     cancellationToken)
@@ -1728,6 +1689,11 @@ public sealed class ModsFragment : Fragment
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Leaving the screen cancels deletion before its next transaction boundary.
+        }
+        catch (ModContentInUseException)
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_in_use));
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException)

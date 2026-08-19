@@ -148,10 +148,52 @@ internal static class ModFileServiceTests
         TestHarness.False(Directory.Exists(staging));
     }
 
+    public static void CommandGateBlocksContentMutations()
+    {
+        using var fixture = new Fixture();
+        var item = fixture.Import();
+        var root = fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId);
+        var path = Path.Combine(root, "config.json");
+        File.WriteAllText(path, "original");
+        var opened = fixture.Files.ReadTextAsync(item.LibraryItemId, "config.json")
+            .AsTask().GetAwaiter().GetResult();
+        var profilesRoot = Path.Combine(fixture.Root, "profiles");
+        var commands = new ModManagementCommandService(
+            fixture.Repository,
+            new ModProfileV2Repository(profilesRoot),
+            new ActiveModProfileSelectionRepository(profilesRoot),
+            new RejectingMutationGate(item.LibraryItemId));
+
+        TestHarness.Throws<ModContentInUseException>(() => commands.EditModFileAsync(
+                item.LibraryItemId,
+                opened,
+                "changed")
+            .AsTask().GetAwaiter().GetResult());
+
+        TestHarness.Equal("original", File.ReadAllText(path));
+        TestHarness.Equal(
+            item.ContentGeneration,
+            fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Single().ContentGeneration);
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+
+    private sealed class RejectingMutationGate(string expectedLibraryItemId) : IModContentMutationGate
+    {
+        public ValueTask<IAsyncDisposable> AcquireAsync(
+            IReadOnlyCollection<string> affectedLibraryItemIds,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestHarness.Equal(1, affectedLibraryItemIds.Count);
+            TestHarness.Equal(expectedLibraryItemId, affectedLibraryItemIds.Single());
+            return ValueTask.FromException<IAsyncDisposable>(
+                new ModContentInUseException(affectedLibraryItemIds));
+        }
+    }
 
     private sealed class Fixture : IDisposable
     {

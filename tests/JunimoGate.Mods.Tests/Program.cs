@@ -210,6 +210,8 @@ return TestHarness.Run(
         ModFileServiceTests.AcceptsUtf8SplitAtTheProbeBoundary()),
     ("Interrupted Mod file edits recover files and generations", () =>
         ModFileServiceTests.RecoversInterruptedFileAndGenerationMutation()),
+    ("Mod management commands enforce the content mutation gate", () =>
+        ModFileServiceTests.CommandGateBlocksContentMutations()),
     ("Mod translations map member roots without archive-name guesses", () =>
         ModTranslationInstallTests.MapsMemberRootsWithoutUsingArchiveNames()),
     ("Mod translations map multiple bundle members atomically", () =>

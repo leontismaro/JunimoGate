@@ -1,3 +1,4 @@
+using Android.Content;
 using JunimoGate.Mods;
 
 namespace JunimoGate.App;
@@ -33,7 +34,7 @@ internal class ModManagementStore : IDisposable
     private readonly object cacheGate = new();
     private bool disposed;
 
-    public ModManagementStore(string userDataRoot)
+    public ModManagementStore(Context context, string userDataRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userDataRoot);
         var profilesRoot = Path.Combine(userDataRoot, "profiles");
@@ -44,7 +45,11 @@ internal class ModManagementStore : IDisposable
         Installations = Library;
         Bundles = new ModBundleCatalogRepository(Installations);
         Translations = new ModTranslationHistoryRepository(Library);
-        Commands = new ModManagementCommandService(Library, Profiles, ActiveProfile);
+        Commands = new ModManagementCommandService(
+            Library,
+            Profiles,
+            ActiveProfile,
+            new AndroidModContentMutationGate(context));
         Library.Changed += OnLibraryChanged;
         Profiles.Changed += OnProfilesChanged;
         ActiveProfile.Changed += OnActiveProfileChanged;
@@ -257,6 +262,7 @@ internal class ModManagementStore : IDisposable
     }
 }
 
-internal sealed class ModManagementUiSession(string userDataRoot) : ModManagementStore(userDataRoot)
+internal sealed class ModManagementUiSession(Context context, string userDataRoot)
+    : ModManagementStore(context, userDataRoot)
 {
 }

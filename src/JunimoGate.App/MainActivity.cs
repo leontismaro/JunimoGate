@@ -99,7 +99,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         ShowOpenSourceNoticeIfNeeded();
 
         lifetimeCancellation = new CancellationTokenSource();
-        modManagement = new ModManagementUiSession(AndroidPrivateStorage.GetUserDataRoot(this));
+        modManagement = new ModManagementUiSession(this, AndroidPrivateStorage.GetUserDataRoot(this));
         coordinator = new LauncherCoordinator(ApplicationContext ?? this);
         coordinator.StateChanged += OnLauncherStateChanged;
         OnLauncherStateChanged(coordinator.CurrentState);
