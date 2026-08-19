@@ -112,6 +112,8 @@ return TestHarness.Run(
         ModProfileV2Tests.MigratesLegacyDirectoriesAndRemovesFallback()),
     ("Profile v2 default is created without legacy directories", () =>
         ModProfileV2Tests.CreatesDefaultV2WithoutLegacyDirectories()),
+    ("Concurrent Profile migration runs once", () =>
+        ModProfileV2Tests.SerializesConcurrentLegacyMigration()),
     ("Profile v2 migration reuses resolved library identities", () =>
         ModProfileV2Tests.ReusesResolvedLibraryIdentityAcrossLegacyProfiles()),
     ("Profile v2 migration rejects ambiguous enabled Mods", () =>

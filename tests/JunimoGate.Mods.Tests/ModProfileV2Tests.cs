@@ -205,6 +205,36 @@ internal static class ModProfileV2Tests
         TestHarness.False(Directory.Exists(layout.StagingDirectory));
     }
 
+    public static void SerializesConcurrentLegacyMigration()
+    {
+        using var fixture = new Fixture();
+        var profileId = ProfileId.Parse("default");
+        _ = new ModProfileRepository(fixture.Root).OpenOrCreateAsync(profileId)
+            .AsTask().GetAwaiter().GetResult();
+        var layout = new ProfileLayout(fixture.Root, profileId);
+        WriteMod(layout.EnabledDirectory, "Selected", "Example.Concurrent", "1.0.0", "selected");
+        var library = new ModLibraryRepository(fixture.LibraryRoot);
+        var first = new LegacyModProfileMigrator(
+            fixture.Root,
+            library,
+            new ModProfileV2Repository(fixture.Root));
+        var second = new LegacyModProfileMigrator(
+            fixture.Root,
+            new ModLibraryRepository(fixture.LibraryRoot),
+            new ModProfileV2Repository(fixture.Root));
+
+        var results = Task.WhenAll(
+                first.MigrateAllAsync().AsTask(),
+                second.MigrateAllAsync().AsTask())
+            .GetAwaiter().GetResult();
+
+        TestHarness.Equal(2, results.Length);
+        TestHarness.Equal(1, results.Count(batch => batch.Single().AlreadyMigrated));
+        TestHarness.Equal(1, results.Count(batch => !batch.Single().AlreadyMigrated));
+        TestHarness.Equal(1, library.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
+        TestHarness.False(Directory.Exists(layout.ModsDirectory));
+    }
+
     public static void RejectsAmbiguousLegacyEnabledMods()
     {
         using var fixture = new Fixture();

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -13,6 +14,8 @@ public sealed record LegacyModProfileMigrationResult(
 
 public sealed class LegacyModProfileMigrator
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MigrationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string profilesRoot;
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
@@ -37,6 +40,23 @@ public sealed class LegacyModProfileMigrator
         ProfileId profileId,
         string displayName,
         CancellationToken cancellationToken = default)
+    {
+        var migrationLock = MigrationLocks.GetOrAdd(profilesRoot, static _ => new SemaphoreSlim(1, 1));
+        await migrationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await MigrateUnlockedAsync(profileId, displayName, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            migrationLock.Release();
+        }
+    }
+
+    private async ValueTask<LegacyModProfileMigrationResult> MigrateUnlockedAsync(
+        ProfileId profileId,
+        string displayName,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -139,24 +159,35 @@ public sealed class LegacyModProfileMigrator
     public async ValueTask<IReadOnlyList<LegacyModProfileMigrationResult>> MigrateAllAsync(
         CancellationToken cancellationToken = default)
     {
-        if (!Directory.Exists(profilesRoot))
-            return Array.Empty<LegacyModProfileMigrationResult>();
-        var results = new List<LegacyModProfileMigrationResult>();
-        foreach (var directory in Directory.EnumerateDirectories(profilesRoot)
-                     .OrderBy(Path.GetFileName, StringComparer.Ordinal))
+        var migrationLock = MigrationLocks.GetOrAdd(profilesRoot, static _ => new SemaphoreSlim(1, 1));
+        await migrationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var name = Path.GetFileName(directory);
-            if (!ProfileId.TryParse(name, out var profileId) || profileId.Value == ModProfileV2.NoModsId ||
-                !File.Exists(Path.Combine(directory, "profile.json")))
+            if (!Directory.Exists(profilesRoot))
+                return Array.Empty<LegacyModProfileMigrationResult>();
+            var results = new List<LegacyModProfileMigrationResult>();
+            foreach (var directory in Directory.EnumerateDirectories(profilesRoot)
+                         .OrderBy(Path.GetFileName, StringComparer.Ordinal))
             {
-                continue;
+                cancellationToken.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(directory);
+                if (!ProfileId.TryParse(name, out var profileId) || profileId.Value == ModProfileV2.NoModsId ||
+                    !File.Exists(Path.Combine(directory, "profile.json")))
+                {
+                    continue;
+                }
+                results.Add(await MigrateUnlockedAsync(
+                        profileId,
+                        profileId.Value == "default" ? "Default" : profileId.Value,
+                        cancellationToken)
+                    .ConfigureAwait(false));
             }
-            results.Add(await MigrateAsync(profileId, profileId.Value == "default" ? "Default" : profileId.Value,
-                    cancellationToken)
-                .ConfigureAwait(false));
+            return results;
         }
-        return results;
+        finally
+        {
+            migrationLock.Release();
+        }
     }
 
     private static ValueTask DeleteLegacyDirectoriesAsync(ProfileLayout layout, CancellationToken cancellationToken)

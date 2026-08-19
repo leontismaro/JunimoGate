@@ -99,18 +99,23 @@ internal sealed class ProductInformationService
         }
     }
 
-    public HomeSummary ReadHomeSummary()
+    public HomeSummary ReadHomeSummary(CancellationToken cancellationToken = default)
     {
         var userData = AndroidPrivateStorage.GetUserDataRoot(context);
         var profilesRoot = Path.Combine(userData, "profiles");
+        var libraryRepository = new ModLibraryRepository(Path.Combine(userData, "mods"));
+        var profileRepository = new ModProfileV2Repository(profilesRoot);
+        _ = new LegacyModProfileMigrator(profilesRoot, libraryRepository, profileRepository)
+            .MigrateAllAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
+        _ = profileRepository.OpenOrCreateDefaultAsync("Default", cancellationToken)
+            .AsTask().GetAwaiter().GetResult();
         var active = new ActiveModProfileSelectionRepository(profilesRoot)
-            .OpenOrCreateAsync(ProfileId.Parse("default"))
+            .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
             .AsTask().GetAwaiter().GetResult();
         var activeId = active.Validate();
-        var selected = new ModProfileV2Repository(profilesRoot)
-            .ReadAsync(activeId).AsTask().GetAwaiter().GetResult();
-        var library = new ModLibraryRepository(Path.Combine(userData, "mods"))
-            .ReadAsync().AsTask().GetAwaiter().GetResult();
+        var selected = profileRepository.ReadAsync(activeId, cancellationToken)
+            .AsTask().GetAwaiter().GetResult();
+        var library = libraryRepository.ReadAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
         var available = library.Items.Select(static item => item.LibraryItemId).ToHashSet(StringComparer.Ordinal);
         var enabledMods = selected.Members.Count(member =>
             member.Enabled && member.LibraryItemId is not null && available.Contains(member.LibraryItemId));
@@ -118,7 +123,7 @@ internal sealed class ProductInformationService
         var savesRoot = AndroidPrivateStorage.GetGameSaveRoot(context);
         var latest = FindLatestSave(savesRoot);
         var playSummary = new GamePlaySessionRepository(Path.Combine(userData, "sessions"))
-            .ReadSummaryAsync(GameSessionRegistry.IsGameProcessActive(context))
+            .ReadSummaryAsync(GameSessionRegistry.IsGameProcessActive(context), cancellationToken)
             .AsTask().GetAwaiter().GetResult();
         return new HomeSummary(
             enabledMods,
