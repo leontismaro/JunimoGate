@@ -98,6 +98,8 @@ public sealed class ModProfileV2Repository
         this.profilesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot));
     }
 
+    internal string ProfilesRoot => profilesRoot;
+
     public async ValueTask<IReadOnlyList<ModProfileV2>> ListAsync(
         CancellationToken cancellationToken = default)
     {
@@ -336,7 +338,7 @@ public sealed class ModProfileV2Repository
         }
     }
 
-    public async ValueTask<bool> DeleteAsync(
+    internal async ValueTask<bool> DeleteAsync(
         ProfileId profileId,
         CancellationToken cancellationToken = default)
     {

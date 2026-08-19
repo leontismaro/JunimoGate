@@ -68,9 +68,8 @@ internal static class ModProfileAutoAssignmentTests
     {
         using var fixture = new Fixture();
         fixture.WriteDefault([]);
-        var active = fixture.Active.OpenOrCreateAsync(ProfileId.Parse("default")).AsTask().GetAwaiter().GetResult();
         _ = fixture.Profiles.ListAsync().AsTask().GetAwaiter().GetResult();
-        _ = fixture.Active.SetAsync(active.Revision, ProfileId.Parse(ModProfileV2.NoModsId)).AsTask().GetAwaiter().GetResult();
+        _ = fixture.SelectProfile(ProfileId.Parse(ModProfileV2.NoModsId));
         var result = ModProfileAutoAssignment.AddImportedToActiveProfileAsync(
                 fixture.Active,
                 fixture.Profiles,
@@ -173,6 +172,14 @@ internal static class ModProfileAutoAssignmentTests
         public ModProfileV2Repository Profiles { get; }
         public ActiveModProfileSelectionRepository Active { get; }
 
+        public ActiveModProfileSelection SelectProfile(ProfileId profileId) =>
+            new ModManagementCommandService(
+                    new ModLibraryRepository(Path.Combine(root, "mods")),
+                    Profiles,
+                    Active,
+                    new PassThroughMutationGate())
+                .SelectProfileAsync(profileId).AsTask().GetAwaiter().GetResult();
+
         public ModLibraryItem Item(string uniqueId, string version, char content)
         {
             var id = new string(content, 64);
@@ -223,6 +230,14 @@ internal static class ModProfileAutoAssignmentTests
         {
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
+        }
+
+        private sealed class PassThroughMutationGate : IModContentMutationGate
+        {
+            public ValueTask<IAsyncDisposable> AcquireAsync(
+                IReadOnlyCollection<string> affectedLibraryItemIds,
+                CancellationToken cancellationToken = default) =>
+                throw new InvalidOperationException("This test does not mutate Mod content.");
         }
     }
 }

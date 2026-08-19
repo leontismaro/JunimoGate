@@ -122,8 +122,8 @@ return TestHarness.Run(
         ModProfileV2Tests.ReusesResolvedLibraryIdentityAcrossLegacyProfiles()),
     ("Profile v2 migration rejects ambiguous enabled Mods", () =>
         ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
-    ("Active Profile selection uses revision-checked updates", () =>
-        ModProfileV2Tests.PersistsActiveProfileWithRevisionChecks()),
+    ("Profile commands protect active and built-in Profiles", () =>
+        ModProfileV2Tests.ProtectsActiveAndBuiltInProfiles()),
     ("Imported Mods join the active group without replacing versions", () =>
         ModProfileAutoAssignmentTests.AddsUniqueImportsWithoutReplacingExistingVersions()),
     ("Ambiguous imported versions remain library-only", () =>

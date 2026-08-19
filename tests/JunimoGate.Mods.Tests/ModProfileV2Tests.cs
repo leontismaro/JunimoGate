@@ -24,7 +24,7 @@ internal static class ModProfileV2Tests
         var listed = fixture.Repository.ListAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(3, listed.Count);
         TestHarness.Equal(ModProfileV2.NoModsId, listed[0].Id);
-        TestHarness.Throws<InvalidOperationException>(() => fixture.Repository.DeleteAsync(
+        TestHarness.Throws<InvalidOperationException>(() => fixture.CreateCommands().DeleteProfileAsync(
             ProfileId.Parse(ModProfileV2.NoModsId)).AsTask().GetAwaiter().GetResult());
     }
 
@@ -78,9 +78,10 @@ internal static class ModProfileV2Tests
                 new[] { member, member with { UniqueId = member.UniqueId.ToUpperInvariant() } })
             .AsTask().GetAwaiter().GetResult());
 
-        TestHarness.True(fixture.Repository.DeleteAsync(ProfileId.Parse(profile.Id))
+        var commands = fixture.CreateCommands();
+        TestHarness.True(commands.DeleteProfileAsync(ProfileId.Parse(profile.Id))
             .AsTask().GetAwaiter().GetResult());
-        TestHarness.False(fixture.Repository.DeleteAsync(ProfileId.Parse(profile.Id))
+        TestHarness.False(commands.DeleteProfileAsync(ProfileId.Parse(profile.Id))
             .AsTask().GetAwaiter().GetResult());
     }
 
@@ -346,20 +347,35 @@ internal static class ModProfileV2Tests
             second.Profile.Members.Single().LibraryItemId);
     }
 
-    public static void PersistsActiveProfileWithRevisionChecks()
+    public static void ProtectsActiveAndBuiltInProfiles()
     {
         using var fixture = new Fixture();
+        _ = fixture.Repository.OpenOrCreateDefaultAsync().AsTask().GetAwaiter().GetResult();
         var repository = new ActiveModProfileSelectionRepository(fixture.Root);
         var created = repository.OpenOrCreateAsync(ProfileId.Parse("default"))
             .AsTask().GetAwaiter().GetResult();
         TestHarness.Equal("default", created.ActiveProfileId);
-        var updated = repository.SetAsync(created.Revision, ProfileId.Parse(ModProfileV2.NoModsId))
+        var commands = new ModManagementCommandService(
+            new ModLibraryRepository(fixture.LibraryRoot),
+            fixture.Repository,
+            repository,
+            new PassThroughMutationGate());
+        TestHarness.Throws<InvalidOperationException>(() => commands.DeleteProfileAsync(ProfileId.Parse("default"))
+            .AsTask().GetAwaiter().GetResult());
+        TestHarness.Throws<InvalidOperationException>(() => commands.DeleteProfileAsync(ProfileId.Parse(ModProfileV2.NoModsId))
+            .AsTask().GetAwaiter().GetResult());
+        var temporary = fixture.Repository.CreateAsync("Temporary").AsTask().GetAwaiter().GetResult();
+        var updated = commands.SelectProfileAsync(ProfileId.Parse(temporary.Id))
             .AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(2L, updated.Revision);
-        TestHarness.Equal(ModProfileV2.NoModsId, updated.ActiveProfileId);
-        TestHarness.Throws<InvalidOperationException>(() => repository.SetAsync(
-                created.Revision,
-                ProfileId.Parse("default"))
+        TestHarness.Equal(temporary.Id, updated.ActiveProfileId);
+        TestHarness.Throws<InvalidOperationException>(() => commands.DeleteProfileAsync(ProfileId.Parse(temporary.Id))
+            .AsTask().GetAwaiter().GetResult());
+        _ = commands.SelectProfileAsync(ProfileId.Parse(ModProfileV2.NoModsId))
+            .AsTask().GetAwaiter().GetResult();
+        TestHarness.True(commands.DeleteProfileAsync(ProfileId.Parse(temporary.Id))
+            .AsTask().GetAwaiter().GetResult());
+        TestHarness.Throws<FileNotFoundException>(() => commands.SelectProfileAsync(ProfileId.Parse("missing"))
             .AsTask().GetAwaiter().GetResult());
     }
 
@@ -433,10 +449,35 @@ internal static class ModProfileV2Tests
         public string LibraryRoot { get; }
         public ModProfileV2Repository Repository { get; }
 
+        public ModManagementCommandService CreateCommands()
+        {
+            return new ModManagementCommandService(
+                new ModLibraryRepository(LibraryRoot),
+                Repository,
+                new ActiveModProfileSelectionRepository(Root),
+                new PassThroughMutationGate());
+        }
+
         public void Dispose()
         {
             Directory.Delete(Root, recursive: true);
             Directory.Delete(LibraryRoot, recursive: true);
+        }
+    }
+
+    private sealed class PassThroughMutationGate : IModContentMutationGate
+    {
+        public ValueTask<IAsyncDisposable> AcquireAsync(
+            IReadOnlyCollection<string> affectedLibraryItemIds,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<IAsyncDisposable>(new EmptyLease());
+        }
+
+        private sealed class EmptyLease : IAsyncDisposable
+        {
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 }

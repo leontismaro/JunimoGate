@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace JunimoGate.Mods;
 
 public interface IModContentMutationGate
@@ -20,6 +22,8 @@ public sealed class ModContentInUseException(IReadOnlyCollection<string> library
 /// </summary>
 public sealed class ModManagementCommandService
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> ProfileCatalogLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly ModLibraryRepository library;
     private readonly ModTranslationHistoryRepository translations;
     private readonly ModProfileV2Repository profiles;
@@ -162,21 +166,47 @@ public sealed class ModManagementCommandService
         CancellationToken cancellationToken = default) =>
         profiles.CreateAsync(displayName, description, bindingPolicyOverride, cancellationToken);
 
-    public ValueTask<bool> DeleteProfileAsync(
+    public async ValueTask<bool> DeleteProfileAsync(
         ProfileId profileId,
-        CancellationToken cancellationToken = default) =>
-        profiles.DeleteAsync(profileId, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        if (profileId.Value is "default" or ModProfileV2.NoModsId)
+            throw new InvalidOperationException("The built-in Mod Profile cannot be deleted.");
+        var catalogLock = GetProfileCatalogLock();
+        await catalogLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var active = await activeProfiles.OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
+            if (active.ActiveProfileId == profileId.Value)
+                throw new InvalidOperationException("The active Mod Profile cannot be deleted.");
+            return await profiles.DeleteAsync(profileId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            catalogLock.Release();
+        }
+    }
 
     public async ValueTask<ActiveModProfileSelection> SelectProfileAsync(
         ProfileId profileId,
         CancellationToken cancellationToken = default)
     {
-        _ = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
-        var current = await activeProfiles
-            .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
-            .ConfigureAwait(false);
-        return await activeProfiles.SetAsync(current.Revision, profileId, cancellationToken)
-            .ConfigureAwait(false);
+        var catalogLock = GetProfileCatalogLock();
+        await catalogLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _ = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
+            var current = await activeProfiles
+                .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
+            return await activeProfiles.SetAsync(current.Revision, profileId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            catalogLock.Release();
+        }
     }
 
     public async ValueTask<ModLaunchSelectionSnapshot> BuildLaunchSelectionAsync(
@@ -187,5 +217,12 @@ public sealed class ModManagementCommandService
         var profile = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
         var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
         return ModLaunchSelectionBuilder.Build(profile, index, defaultBindingPolicy);
+    }
+
+    private SemaphoreSlim GetProfileCatalogLock()
+    {
+        if (!profiles.ProfilesRoot.Equals(activeProfiles.ProfilesRoot, StringComparison.Ordinal))
+            throw new InvalidOperationException("The Profile repositories do not share one root.");
+        return ProfileCatalogLocks.GetOrAdd(profiles.ProfilesRoot, static _ => new SemaphoreSlim(1, 1));
     }
 }

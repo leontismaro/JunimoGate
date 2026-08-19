@@ -36,8 +36,11 @@ public sealed class ActiveModProfileSelectionRepository
     {
         if (string.IsNullOrWhiteSpace(profilesRoot) || !Path.IsPathFullyQualified(profilesRoot))
             throw new ArgumentException("The profiles root must be absolute.", nameof(profilesRoot));
-        path = Path.Combine(Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot)), "active-profile.json");
+        ProfilesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot));
+        path = Path.Combine(ProfilesRoot, "active-profile.json");
     }
+
+    internal string ProfilesRoot { get; }
 
     public async ValueTask<ActiveModProfileSelection> OpenOrCreateAsync(
         ProfileId fallbackProfileId,
@@ -84,7 +87,7 @@ public sealed class ActiveModProfileSelectionRepository
         }
     }
 
-    public async ValueTask<ActiveModProfileSelection> SetAsync(
+    internal async ValueTask<ActiveModProfileSelection> SetAsync(
         long expectedRevision,
         ProfileId profileId,
         CancellationToken cancellationToken = default)
