@@ -125,7 +125,7 @@ public sealed class ModLibraryLayout
     public string GetItemMetadataPath(string libraryItemId) => Path.Combine(GetItemDirectory(libraryItemId), "library-item.json");
 }
 
-public sealed partial class ModLibraryRepository
+public sealed partial class ModLibraryRepository : IModInstallRepository
 {
     private const int MaximumIndexBytes = 8 * 1024 * 1024;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(

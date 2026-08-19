@@ -42,9 +42,15 @@ internal sealed class ModManagementUiSession : IDisposable
         ActiveProfile = new ActiveModProfileSelectionRepository(profilesRoot);
         MemberMutations = new ModProfileMemberMutationService(Profiles);
         Transfers = new ModProfileTransferService(Library, Profiles);
+        Installations = Library;
+        Bundles = new ModBundleCatalogRepository(Installations);
+        Translations = new ModTranslationHistoryRepository(Library);
     }
 
     public ModLibraryRepository Library { get; }
+    public IModInstallRepository Installations { get; }
+    public IModBundleCatalogRepository Bundles { get; }
+    public IModTranslationHistoryRepository Translations { get; }
     public ModProfileV2Repository Profiles { get; }
     public ActiveModProfileSelectionRepository ActiveProfile { get; }
     public ModProfileMemberMutationService MemberMutations { get; }
