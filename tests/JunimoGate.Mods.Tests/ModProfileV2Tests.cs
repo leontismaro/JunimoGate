@@ -205,6 +205,72 @@ internal static class ModProfileV2Tests
         TestHarness.False(Directory.Exists(layout.StagingDirectory));
     }
 
+    public static void CleansLegacyDirectoriesForAlreadyMigratedProfiles()
+    {
+        using var fixture = new Fixture();
+        var profileId = ProfileId.Parse("default");
+        var profile = fixture.Repository.OpenOrCreateDefaultAsync().AsTask().GetAwaiter().GetResult();
+        var missing = ModProfileMember.FromLibraryItem(
+            LibraryItem("Example.Missing", "1.0.0", 'f'),
+            enabled: true) with { LibraryItemId = null };
+        _ = fixture.Repository.UpdateAsync(
+                profileId,
+                profile.Revision,
+                profile.DisplayName,
+                profile.Description,
+                profile.AssemblyBindingPolicyOverride,
+                new[] { missing })
+            .AsTask().GetAwaiter().GetResult();
+        var layout = new ProfileLayout(fixture.Root, profileId);
+        Directory.CreateDirectory(layout.EnabledDirectory);
+        Directory.CreateDirectory(layout.DownloadsDirectory);
+        Directory.CreateDirectory(layout.StagingDirectory);
+
+        var result = new LegacyModProfileMigrator(
+                fixture.Root,
+                new ModLibraryRepository(fixture.LibraryRoot),
+                fixture.Repository)
+            .MigrateAsync(profileId, "Ignored").AsTask().GetAwaiter().GetResult();
+
+        TestHarness.True(result.AlreadyMigrated);
+        TestHarness.Equal<string?>(null, result.Profile.Members.Single().LibraryItemId);
+        TestHarness.False(Directory.Exists(layout.ModsDirectory));
+        TestHarness.False(Directory.Exists(layout.DownloadsDirectory));
+        TestHarness.False(Directory.Exists(layout.StagingDirectory));
+    }
+
+    public static void PreservesLegacyDirectoriesForInvalidMigratedBindings()
+    {
+        using var fixture = new Fixture();
+        var profileId = ProfileId.Parse("default");
+        var profile = fixture.Repository.OpenOrCreateDefaultAsync().AsTask().GetAwaiter().GetResult();
+        var unavailable = ModProfileMember.FromLibraryItem(
+            LibraryItem("Example.Unavailable", "1.0.0", 'a'),
+            enabled: true);
+        _ = fixture.Repository.UpdateAsync(
+                profileId,
+                profile.Revision,
+                profile.DisplayName,
+                profile.Description,
+                profile.AssemblyBindingPolicyOverride,
+                new[] { unavailable })
+            .AsTask().GetAwaiter().GetResult();
+        var layout = new ProfileLayout(fixture.Root, profileId);
+        Directory.CreateDirectory(layout.EnabledDirectory);
+        Directory.CreateDirectory(layout.DownloadsDirectory);
+        Directory.CreateDirectory(layout.StagingDirectory);
+        var migrator = new LegacyModProfileMigrator(
+            fixture.Root,
+            new ModLibraryRepository(fixture.LibraryRoot),
+            fixture.Repository);
+
+        TestHarness.Throws<InvalidDataException>(() => migrator.MigrateAsync(profileId, "Ignored")
+            .AsTask().GetAwaiter().GetResult());
+        TestHarness.True(Directory.Exists(layout.ModsDirectory));
+        TestHarness.True(Directory.Exists(layout.DownloadsDirectory));
+        TestHarness.True(Directory.Exists(layout.StagingDirectory));
+    }
+
     public static void SerializesConcurrentLegacyMigration()
     {
         using var fixture = new Fixture();

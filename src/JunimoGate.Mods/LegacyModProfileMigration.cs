@@ -61,6 +61,9 @@ public sealed class LegacyModProfileMigrator
         try
         {
             var migrated = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
+            var migratedLayout = new ProfileLayout(profilesRoot, profileId);
+            await ValidateMigratedProfileAsync(migrated, cancellationToken).ConfigureAwait(false);
+            await DeleteLegacyDirectoriesAsync(migratedLayout, cancellationToken).ConfigureAwait(false);
             return new LegacyModProfileMigrationResult(
                 migrated,
                 ImportedItems: 0,
@@ -148,8 +151,9 @@ public sealed class LegacyModProfileMigrator
         var known = index.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
         foreach (var member in verified.Members)
         {
-            if (member.LibraryItemId is not { } itemId || !known.ContainsKey(itemId) ||
-                !Directory.Exists(library.Layout.GetItemFilesDirectory(itemId)))
+            if (member.LibraryItemId is not { } itemId)
+                continue;
+            if (!known.ContainsKey(itemId) || !Directory.Exists(library.Layout.GetItemFilesDirectory(itemId)))
             {
                 throw new InvalidDataException("The migrated Profile references missing Mod content.");
             }
