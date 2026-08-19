@@ -45,12 +45,14 @@ internal sealed class ModManagementUiSession : IDisposable
         Installations = Library;
         Bundles = new ModBundleCatalogRepository(Installations);
         Translations = new ModTranslationHistoryRepository(Library);
+        Commands = new ModManagementCommandService(Library, Profiles, ActiveProfile);
     }
 
     public ModLibraryRepository Library { get; }
     public IModInstallRepository Installations { get; }
     public IModBundleCatalogRepository Bundles { get; }
     public IModTranslationHistoryRepository Translations { get; }
+    public ModManagementCommandService Commands { get; }
     public ModProfileV2Repository Profiles { get; }
     public ActiveModProfileSelectionRepository ActiveProfile { get; }
     public ModProfileMemberMutationService MemberMutations { get; }

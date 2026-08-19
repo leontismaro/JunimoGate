@@ -107,7 +107,7 @@ public sealed class ModGroupEditorFragment : Fragment
         modManagement.Changed += OnModManagementChanged;
         profiles = modManagement.Profiles;
         library = modManagement.Library;
-        mutations = modManagement.MemberMutations;
+        mutations = modManagement.Commands.ProfileMembers;
         AttachToolbar();
         _ = RefreshAsync(cancellation.Token);
     }
