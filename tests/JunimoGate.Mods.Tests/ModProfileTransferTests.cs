@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using JunimoGate.Mods;
 using JunimoGate.Tests;
@@ -277,6 +278,92 @@ internal static class ModProfileTransferTests
         TestHarness.Equal("{\"private\":true}", File.ReadAllText(Path.Combine(importedRoot, "config.json")));
     }
 
+    public static void PromotesScannedCompletePackagesAndLeavesModArchivesUnchanged()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.RoutedPackage", includeConfig: false);
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Routed group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: true)])
+            .AsTask().GetAwaiter().GetResult();
+        using var package = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportPackageAsync(ProfileId.Parse(sourceProfile.Id), package)
+            .AsTask().GetAwaiter().GetResult();
+
+        using var destinationFixture = new TransferFixture();
+        var destination = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles);
+        package.Position = 0;
+        var scannedPackage = destinationFixture.Library.CreateInstallTransaction("group.zip");
+        scannedPackage.ScanAsync(package).AsTask().GetAwaiter().GetResult();
+        var promoted = destination.TryPromotePackageImportTransactionAsync(scannedPackage)
+            .AsTask().GetAwaiter().GetResult()
+            ?? throw new InvalidOperationException("The complete package was not detected.");
+        using (var transaction = new AsyncTransactionScope(promoted))
+            transaction.Value.CommitAsync().AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal("Routed group", promoted.ImportResult?.Profile.DisplayName);
+        TestHarness.Equal(1, promoted.ImportResult?.Profile.Members.Count ?? 0);
+        TestHarness.Equal(2, destinationFixture.Profiles.ListAsync().AsTask().GetAwaiter().GetResult().Count);
+
+        using var ordinaryArchive = new MemoryStream();
+        using (var zip = new ZipArchive(ordinaryArchive, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            WriteEntry(zip, "Mod/manifest.json", """
+                {"Name":"Ordinary","Author":"Test","Version":"1.0.0","UniqueID":"Example.Ordinary","EntryDll":"Mod.dll"}
+                """);
+            WriteEntry(zip, "Mod/Mod.dll", "managed-placeholder");
+        }
+        ordinaryArchive.Position = 0;
+        var ordinary = destinationFixture.Library.CreateInstallTransaction("ordinary.zip");
+        try
+        {
+            ordinary.ScanAsync(ordinaryArchive).AsTask().GetAwaiter().GetResult();
+            TestHarness.Equal<ModProfilePackageImportTransaction?>(
+                null,
+                destination.TryPromotePackageImportTransactionAsync(ordinary).AsTask().GetAwaiter().GetResult());
+            ordinary.CommitAsync().AsTask().GetAwaiter().GetResult();
+        }
+        finally
+        {
+            ordinary.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        TestHarness.Equal(2, destinationFixture.Library.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
+        TestHarness.Equal(2, destinationFixture.Profiles.ListAsync().AsTask().GetAwaiter().GetResult().Count);
+    }
+
+    public static void PromotesLegacyCompletePackagesWithoutBundles()
+    {
+        using var sourceFixture = new TransferFixture();
+        var sourceItem = sourceFixture.ImportMod("Example.LegacyPackage", includeConfig: false);
+        var sourceProfile = sourceFixture.Profiles.CreateImportedAsync(
+                "Legacy package group",
+                null,
+                null,
+                [ModProfileMember.FromLibraryItem(sourceItem, enabled: true)])
+            .AsTask().GetAwaiter().GetResult();
+        using var package = new MemoryStream();
+        new ModProfileTransferService(sourceFixture.Library, sourceFixture.Profiles)
+            .ExportPackageAsync(ProfileId.Parse(sourceProfile.Id), package)
+            .AsTask().GetAwaiter().GetResult();
+        RemovePackageBundles(package);
+
+        using var destinationFixture = new TransferFixture();
+        var destination = new ModProfileTransferService(destinationFixture.Library, destinationFixture.Profiles);
+        var scanned = destinationFixture.Library.CreateInstallTransaction("legacy-group.zip");
+        scanned.ScanAsync(package).AsTask().GetAwaiter().GetResult();
+        var promoted = destination.TryPromotePackageImportTransactionAsync(scanned)
+            .AsTask().GetAwaiter().GetResult()
+            ?? throw new InvalidOperationException("The legacy complete package was not detected.");
+        using (var transaction = new AsyncTransactionScope(promoted))
+            transaction.Value.CommitAsync().AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal("Legacy package group", promoted.ImportResult?.Profile.DisplayName);
+        TestHarness.Equal(1, promoted.ImportResult?.Profile.Members.Count ?? 0);
+    }
+
     public static void CompletePackageCommitUsesMutationGate()
     {
         using var sourceFixture = new TransferFixture();
@@ -433,6 +520,26 @@ internal static class ModProfileTransferTests
         }
         stream.Position = 0;
         return stream;
+    }
+
+    private static void RemovePackageBundles(MemoryStream package)
+    {
+        package.Position = 0;
+        using (var archive = new ZipArchive(package, ZipArchiveMode.Update, leaveOpen: true))
+        {
+            var entry = archive.GetEntry(ModProfileTransferDocument.PackageEntryName)
+                ?? throw new InvalidOperationException("The exported package metadata is missing.");
+            JsonObject metadata;
+            using (var input = entry.Open())
+                metadata = JsonNode.Parse(input)?.AsObject()
+                    ?? throw new InvalidOperationException("The exported package metadata is empty.");
+            entry.Delete();
+            TestHarness.True(metadata.Remove("bundles"));
+            var replacement = archive.CreateEntry(ModProfileTransferDocument.PackageEntryName);
+            using var output = replacement.Open();
+            JsonSerializer.Serialize(output, metadata, JsonOptions);
+        }
+        package.Position = 0;
     }
 
     private sealed class TransferFixture : IDisposable

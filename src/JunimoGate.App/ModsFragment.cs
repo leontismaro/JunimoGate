@@ -728,6 +728,21 @@ public sealed class ModsFragment : Fragment
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected Mod archive could not be opened.");
             await transaction.ScanAsync(stream, cancellationToken).ConfigureAwait(false);
+            var package = await modManagement.Transfers
+                .TryPromotePackageImportTransactionAsync(transaction, cancellationToken)
+                .ConfigureAwait(false);
+            if (package is not null)
+            {
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref pendingTransaction, package, transaction), transaction))
+                {
+                    await package.DisposeAsync().ConfigureAwait(false);
+                    return;
+                }
+                if (!IsAdded || cancellationToken.IsCancellationRequested)
+                    return;
+                Activity?.RunOnUiThread(() => ShowPackageScanResult(package));
+                return;
+            }
             if (!IsAdded || cancellationToken.IsCancellationRequested)
                 return;
             Activity?.RunOnUiThread(() => ShowScanResult(transaction));
@@ -798,6 +813,94 @@ public sealed class ModsFragment : Fragment
             _ = EndImportBatchAsync();
         }));
         confirmDialog.Show();
+    }
+
+    private void ShowPackageScanResult(ModProfilePackageImportTransaction transaction)
+    {
+        if (!ReferenceEquals(transaction, pendingTransaction) || transaction.Document is not { } document)
+            return;
+        var packaged = document.Members.Count(member => member.PackagedContentId is not null);
+        var confirmDialog = new MaterialAlertDialogBuilder(RequireContext());
+        confirmDialog.SetTitle(FormatImportDialogTitle(Resource.String.mod_groups_package_confirm_title));
+        confirmDialog.SetMessage(FormatString(
+            Resource.String.mod_groups_package_confirm_message,
+            new JString(document.DisplayName),
+            Java.Lang.Integer.ValueOf(document.Members.Count),
+            Java.Lang.Integer.ValueOf(packaged)));
+        confirmDialog.SetNegativeButton(
+            pendingImportDocuments.Count > 1 ? Resource.String.mods_import_skip : global::Android.Resource.String.Cancel,
+            (_, _) => _ = SkipCurrentImportAsync());
+        confirmDialog.SetPositiveButton(Resource.String.mod_groups_import_action, (_, _) =>
+        {
+            if (cancellation is { IsCancellationRequested: false } lifetime)
+                _ = CommitPackageArchiveAsync(transaction, lifetime.Token);
+        });
+        confirmDialog.SetOnCancelListener(new DialogCancelListener(() => _ = EndImportBatchAsync()));
+        confirmDialog.Show();
+    }
+
+    private async Task CommitPackageArchiveAsync(
+        ModProfilePackageImportTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            var result = transaction.ImportResult
+                ?? throw new InvalidDataException("The shared group import result is missing.");
+            Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
+            await transaction.DisposeAsync().ConfigureAwait(false);
+            if (repository is not null && profiles is not null)
+            {
+                try
+                {
+                    var index = await repository.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    _ = await ModProfileMissingMemberReconnector.ReconnectAsync(
+                            profiles,
+                            index.Items,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  UnauthorizedAccessException or InvalidOperationException)
+                {
+                    Log.Error("JunimoGate.Mods", "profile-package-reconnection-failed", exception);
+                }
+            }
+            await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(FormatString(
+                        Resource.String.mod_groups_import_result,
+                        new JString(result.Profile.DisplayName),
+                        Java.Lang.Integer.ValueOf(result.AddedItems.Count),
+                        Java.Lang.Integer.ValueOf(result.ReusedItems.Count),
+                        Java.Lang.Integer.ValueOf(result.MissingMembers),
+                        Java.Lang.Integer.ValueOf(result.DistinctContentCandidates)));
+                    ContinueImportBatch();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await DisposePendingAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "profile-package-import-failed", exception);
+            await DisposePendingAsync().ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(Resource.String.mod_groups_import_failed);
+                    ContinueImportBatch();
+                });
+            }
+        }
     }
 
     private async Task CommitArchiveAsync(

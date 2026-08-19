@@ -373,6 +373,22 @@ public sealed class ModProfileTransferService
             limits ?? ModArchiveImportLimits.Default,
             JsonOptions);
 
+    public ValueTask<ModProfilePackageImportTransaction?> TryPromotePackageImportTransactionAsync(
+        IModArchiveInstallTransaction transaction,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (transaction is not ModArchiveInstallTransaction scanned)
+            throw new ArgumentException("The Mod archive transaction cannot be promoted.", nameof(transaction));
+        return ModProfilePackageImportTransaction.TryCreateAsync(
+            library,
+            profiles,
+            mutationGate,
+            scanned,
+            JsonOptions,
+            cancellationToken);
+    }
+
     private static ModProfileTransferDocument CreateDocument(
         ModProfileV2 profile,
         ModProfileTransferKind kind,
@@ -536,7 +552,7 @@ public sealed class ModProfileTransferService
     }
 }
 
-public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
+public sealed class ModProfilePackageImportTransaction : IModArchiveInstallTransaction
 {
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
@@ -561,9 +577,47 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         mods = new ModArchiveInstallTransaction(library, sourceArchiveName, limits);
     }
 
+    private ModProfilePackageImportTransaction(
+        ModLibraryRepository library,
+        ModProfileV2Repository profiles,
+        IModContentMutationGate mutationGate,
+        ModArchiveInstallTransaction mods,
+        JsonSerializerOptions jsonOptions)
+    {
+        this.library = library;
+        this.profiles = profiles;
+        this.mutationGate = mutationGate;
+        this.mods = mods;
+        this.jsonOptions = jsonOptions;
+    }
+
     public ModProfileTransferDocument? Document { get; private set; }
-    public ModArchiveScanResult? ModScanResult => mods.ScanResult;
+    public ModInstallTransactionState State => mods.State;
+    public ModArchiveScanResult? ScanResult => mods.ScanResult;
+    public ModArchiveScanResult? ModScanResult => ScanResult;
     public ModProfileImportResult? ImportResult { get; private set; }
+    ModArchiveImportResult? IModArchiveInstallTransaction.ImportResult => mods.ImportResult;
+
+    internal static async ValueTask<ModProfilePackageImportTransaction?> TryCreateAsync(
+        ModLibraryRepository library,
+        ModProfileV2Repository profiles,
+        IModContentMutationGate mutationGate,
+        ModArchiveInstallTransaction mods,
+        JsonSerializerOptions jsonOptions,
+        CancellationToken cancellationToken)
+    {
+        if (mods.State != ModInstallTransactionState.AwaitingConfirmation || mods.ScanResult is null)
+            throw new InvalidOperationException("The Mod archive must be scanned before package detection.");
+        var transaction = new ModProfilePackageImportTransaction(
+            library,
+            profiles,
+            mutationGate,
+            mods,
+            jsonOptions);
+        return await transaction.TryLoadPackageAsync(cancellationToken).ConfigureAwait(false)
+            ? transaction
+            : null;
+    }
 
     public async ValueTask ScanAsync(Stream source, CancellationToken cancellationToken = default)
     {
@@ -571,10 +625,18 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         if (Document is not null)
             throw new InvalidOperationException("The Mod Profile package was already scanned.");
         await mods.ScanAsync(source, cancellationToken).ConfigureAwait(false);
+        if (!await TryLoadPackageAsync(cancellationToken).ConfigureAwait(false))
+            throw new InvalidDataException("The Mod Profile package metadata is missing.");
+    }
+
+    private async ValueTask<bool> TryLoadPackageAsync(CancellationToken cancellationToken)
+    {
         using var archive = ZipFile.OpenRead(mods.StoredArchivePath);
         var metadataEntries = archive.Entries
             .Where(entry => entry.FullName.Equals(ModProfileTransferDocument.PackageEntryName, StringComparison.Ordinal))
             .ToArray();
+        if (metadataEntries.Length == 0)
+            return false;
         if (metadataEntries.Length != 1 || metadataEntries[0].Length is < 2 or > ModProfileTransferDocument.MaximumDocumentBytes)
             throw new InvalidDataException("The Mod Profile package metadata is missing or duplicated.");
         await using (var metadata = metadataEntries[0].Open())
@@ -599,6 +661,7 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
             .ToArray();
         if (!expected.SequenceEqual(actual, StringComparer.OrdinalIgnoreCase))
             throw new InvalidDataException("The Mod Profile package files do not match its member list.");
+        return true;
     }
 
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
@@ -673,6 +736,9 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
             await mods.DisposeAsync().ConfigureAwait(false);
         }
     }
+
+    public ValueTask RollbackAsync(CancellationToken cancellationToken = default) =>
+        mods.RollbackAsync(cancellationToken);
 
     private async ValueTask<ModProfileTransferDocument> ReadPackageDocumentAsync(
         Stream stream,
