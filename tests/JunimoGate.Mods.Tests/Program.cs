@@ -202,6 +202,8 @@ return TestHarness.Run(
         ModFileServiceTests.CreatesTextFilesInTheCurrentDirectory()),
     ("Mod files accept UTF-8 split at the text probe boundary", () =>
         ModFileServiceTests.AcceptsUtf8SplitAtTheProbeBoundary()),
+    ("Interrupted Mod file edits recover files and generations", () =>
+        ModFileServiceTests.RecoversInterruptedFileAndGenerationMutation()),
     ("Mod translations map member roots without archive-name guesses", () =>
         ModTranslationInstallTests.MapsMemberRootsWithoutUsingArchiveNames()),
     ("Mod translations map multiple bundle members atomically", () =>
@@ -220,6 +222,8 @@ return TestHarness.Run(
         ModTranslationInstallTests.DeletingOneTranslatedBundleMemberPreservesTheOther()),
     ("Interrupted translation restore recovers files and its record", () =>
         ModTranslationInstallTests.RecoversInterruptedRestoreWithItsInstallationRecord()),
+    ("Interrupted translation install recovers files and generations", () =>
+        ModTranslationInstallTests.RecoversInterruptedInstallWithItsGeneration()),
     ("Mod library instances serialize translation recovery for one root", () =>
         ModTranslationInstallTests.SerializesRepositoriesForTheSameRoot()),
     ("Mod translations accept Unix mode-only ZIP directories", () =>

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using JunimoGate.Mods;
 using JunimoGate.Tests;
 
@@ -98,6 +99,59 @@ internal static class ModFileServiceTests
             .AsTask().GetAwaiter().GetResult();
         TestHarness.True(opened.Text.EndsWith("\u00e9tail", StringComparison.Ordinal));
     }
+
+    public static void RecoversInterruptedFileAndGenerationMutation()
+    {
+        using var fixture = new Fixture();
+        var item = fixture.Import();
+        var live = Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId),
+            "config.json");
+        File.WriteAllText(live, "original");
+
+        var transactionId = Guid.NewGuid().ToString("N");
+        var staging = Path.Combine(fixture.Repository.Layout.StagingDirectory, $"edit-{transactionId}");
+        Directory.CreateDirectory(staging);
+        File.Copy(
+            fixture.Repository.Layout.IndexPath,
+            Path.Combine(staging, "library-index.before.json"));
+        File.Move(live, Path.Combine(staging, "old"));
+        File.WriteAllText(live, "changed");
+        var changedIndex = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        changedIndex = changedIndex with
+        {
+            Revision = changedIndex.Revision + 1,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Items = changedIndex.Items.Select(candidate => candidate.LibraryItemId == item.LibraryItemId
+                ? candidate with { ContentGeneration = candidate.ContentGeneration + 1 }
+                : candidate).ToArray(),
+        };
+        File.WriteAllText(
+            fixture.Repository.Layout.IndexPath,
+            JsonSerializer.Serialize(changedIndex, JsonOptions));
+        File.WriteAllText(
+            Path.Combine(staging, "transaction.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema = "junimogate-mod-file-mutation/v1",
+                transactionId,
+                phase = "prepared",
+                libraryItemId = item.LibraryItemId,
+                relativePath = "config.json",
+                hadOriginal = true,
+            }, JsonOptions));
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var recovered = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal("original", File.ReadAllText(live));
+        TestHarness.Equal(item.ContentGeneration, recovered.Items.Single().ContentGeneration);
+        TestHarness.False(Directory.Exists(staging));
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
 
     private sealed class Fixture : IDisposable
     {

@@ -352,6 +352,58 @@ internal static class ModTranslationInstallTests
         TestHarness.Equal("original", File.ReadAllText(Path.Combine(live, "i18n", "zh.json")));
     }
 
+    public static void RecoversInterruptedInstallWithItsGeneration()
+    {
+        using var fixture = new Fixture();
+        var target = fixture.ImportSingle(
+            "Example.InstallRecovery",
+            "InstallRecovery",
+            ("i18n/default.json", "{\"Key\":\"Default\"}"),
+            ("i18n/zh.json", "original"));
+        var before = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var transactionId = Guid.NewGuid().ToString("N");
+        var staging = Path.Combine(fixture.Repository.Layout.StagingDirectory, $"translation-{transactionId}");
+        var live = fixture.Repository.Layout.GetItemFilesDirectory(target.LibraryItemId);
+        var old = Path.Combine(staging, $"{target.LibraryItemId}-old");
+        Directory.CreateDirectory(staging);
+        File.Copy(
+            fixture.Repository.Layout.IndexPath,
+            Path.Combine(staging, "library-index.before.json"));
+        Directory.Move(live, old);
+        CopyDirectory(old, live);
+        File.WriteAllText(Path.Combine(live, "i18n", "zh.json"), "translated");
+        Directory.CreateDirectory(Path.Combine(fixture.Repository.Layout.TranslationsDirectory, transactionId));
+        var changed = before with
+        {
+            Revision = before.Revision + 1,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Items = before.Items.Select(item => item.LibraryItemId == target.LibraryItemId
+                ? item with { ContentGeneration = item.ContentGeneration + 1 }
+                : item).ToArray(),
+        };
+        File.WriteAllText(
+            fixture.Repository.Layout.IndexPath,
+            JsonSerializer.Serialize(changed, JsonOptions));
+        File.WriteAllText(
+            Path.Combine(staging, "transaction.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema = "junimogate-mod-translation-transaction/v1",
+                transactionId,
+                phase = "prepared",
+                libraryItemIds = new[] { target.LibraryItemId },
+            }, JsonOptions));
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var recovered = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal("original", File.ReadAllText(Path.Combine(live, "i18n", "zh.json")));
+        TestHarness.Equal(target.ContentGeneration, recovered.Items.Single().ContentGeneration);
+        TestHarness.False(Directory.Exists(Path.Combine(
+            fixture.Repository.Layout.TranslationsDirectory,
+            transactionId)));
+        TestHarness.False(Directory.Exists(staging));
+    }
+
     public static void RejectsTargetsChangedAfterPreview()
     {
         using var fixture = new Fixture();
@@ -459,6 +511,11 @@ internal static class ModTranslationInstallTests
             File.Copy(file, target);
         }
     }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
 
     private sealed class Fixture : IDisposable
     {

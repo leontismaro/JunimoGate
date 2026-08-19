@@ -938,6 +938,7 @@ public sealed partial class ModLibraryRepository
             }
 
             var journalPath = Path.Combine(transactionDirectory, "transaction.json");
+            CopyIndexForRollback(transactionDirectory);
             await WriteJsonDurableAsync(
                     journalPath,
                     new ModTranslationTransactionJournal(
@@ -957,6 +958,12 @@ public sealed partial class ModLibraryRepository
                     Directory.Move(Path.Combine(transactionDirectory, $"{itemId}-new"), live);
                 }
                 Directory.Move(installationDirectory, Path.Combine(transactionDirectory, "removed-record"));
+                var updated = await UpdateContentStatisticsUnlockedAsync(
+                        current,
+                        affected.ToHashSet(StringComparer.Ordinal),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
                 await WriteJsonDurableAsync(
                         journalPath,
                         new ModTranslationTransactionJournal(
@@ -965,21 +972,15 @@ public sealed partial class ModLibraryRepository
                             "committed",
                             affected,
                             installationId),
-                        cancellationToken)
+                        CancellationToken.None)
                     .ConfigureAwait(false);
+                Changed?.Invoke();
             }
             catch
             {
                 RecoverTranslationTransaction(transactionDirectory);
                 throw;
             }
-            var updated = await UpdateContentStatisticsUnlockedAsync(
-                    current,
-                    affected.ToHashSet(StringComparer.Ordinal),
-                    cancellationToken)
-                .ConfigureAwait(false);
-            await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
             TryDeleteDirectory(transactionDirectory);
             return new ModTranslationRestoreResult(installationId, record.Files.Count, affected);
         }
@@ -1061,6 +1062,7 @@ public sealed partial class ModLibraryRepository
             await WriteJsonDurableAsync(Path.Combine(recordDirectory, "installation.json"), record, cancellationToken)
                 .ConfigureAwait(false);
             var journalPath = Path.Combine(transactionDirectory, "transaction.json");
+            CopyIndexForRollback(transactionDirectory);
             await WriteJsonDurableAsync(
                     journalPath,
                     new ModTranslationTransactionJournal(
@@ -1078,12 +1080,6 @@ public sealed partial class ModLibraryRepository
                     Directory.Move(live, old);
                     Directory.Move(staged, live);
                 }
-                await WriteJsonDurableAsync(
-                        journalPath,
-                        new ModTranslationTransactionJournal(
-                            ModTranslationTransactionJournal.CurrentSchema, transactionId, "committed", affected),
-                        cancellationToken)
-                    .ConfigureAwait(false);
                 Directory.Move(recordDirectory, Path.Combine(Layout.TranslationsDirectory, transactionId));
                 var updated = await UpdateContentStatisticsUnlockedAsync(
                         current,
@@ -1091,6 +1087,12 @@ public sealed partial class ModLibraryRepository
                         cancellationToken)
                     .ConfigureAwait(false);
                 await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                await WriteJsonDurableAsync(
+                        journalPath,
+                        new ModTranslationTransactionJournal(
+                            ModTranslationTransactionJournal.CurrentSchema, transactionId, "committed", affected),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
                 Changed?.Invoke();
             }
             catch
@@ -1163,9 +1165,9 @@ public sealed partial class ModLibraryRepository
                 continue;
             if (Directory.Exists(live))
                 TryDeleteDirectory(live);
-            if (!Directory.Exists(live))
-                Directory.Move(old, live);
+            CopyDirectory(old, live, CancellationToken.None);
         }
+        RestoreIndexRollbackCopy(transactionDirectory);
         if (journal.RemovedInstallationId is { } removedInstallationId)
         {
             var removedRecord = Path.Combine(transactionDirectory, "removed-record");
@@ -1173,7 +1175,35 @@ public sealed partial class ModLibraryRepository
             if (Directory.Exists(removedRecord) && !Directory.Exists(installation))
                 Directory.Move(removedRecord, installation);
         }
+        else
+        {
+            TryDeleteDirectory(Path.Combine(Layout.TranslationsDirectory, journal.TransactionId));
+        }
         TryDeleteDirectory(transactionDirectory);
+    }
+
+    private void CopyIndexForRollback(string transactionDirectory)
+    {
+        if (!File.Exists(Layout.IndexPath))
+            throw new InvalidDataException("The Mod library index is missing before a content mutation.");
+        File.Copy(Layout.IndexPath, Path.Combine(transactionDirectory, "library-index.before.json"), overwrite: false);
+    }
+
+    private void RestoreIndexRollbackCopy(string transactionDirectory)
+    {
+        var backup = Path.Combine(transactionDirectory, "library-index.before.json");
+        if (!File.Exists(backup))
+            return;
+        var temporary = Layout.IndexPath + $".{Guid.NewGuid():N}.rollback";
+        try
+        {
+            File.Copy(backup, temporary, overwrite: false);
+            File.Move(temporary, Layout.IndexPath, overwrite: true);
+        }
+        finally
+        {
+            TryDeleteFile(temporary);
+        }
     }
 
     private static async ValueTask ExtractEntryAsync(
