@@ -154,20 +154,33 @@ public sealed class ModLibraryRepository : IModInstallRepository
         Converters = { new JsonStringEnumConverter() },
     };
     private readonly SemaphoreSlim operationLock;
+    private readonly RepositoryChangeSignal changeSignal;
+    private readonly RepositoryChangeSignal bundleChangeSignal;
 
     public ModLibraryRepository(string root)
     {
         Layout = new ModLibraryLayout(root);
         operationLock = OperationLocks.GetOrAdd(Layout.Root, static _ => new SemaphoreSlim(1, 1));
+        changeSignal = ModRepositoryChangeSignals.Libraries.GetOrAdd(Layout.Root, static _ => new RepositoryChangeSignal());
+        bundleChangeSignal = ModRepositoryChangeSignals.LibraryBundles.GetOrAdd(Layout.Root, static _ => new RepositoryChangeSignal());
     }
 
     public ModLibraryLayout Layout { get; }
-    public event Action? Changed;
-    public event Action? BundleChanged;
+    public event Action? Changed
+    {
+        add => changeSignal.Changed += value;
+        remove => changeSignal.Changed -= value;
+    }
+
+    public event Action? BundleChanged
+    {
+        add => bundleChangeSignal.Changed += value;
+        remove => bundleChangeSignal.Changed -= value;
+    }
 
     internal SemaphoreSlim OperationLock => operationLock;
-    internal void NotifyChanged() => Changed?.Invoke();
-    internal void NotifyBundleChanged() => BundleChanged?.Invoke();
+    internal void NotifyChanged() => changeSignal.Publish();
+    internal void NotifyBundleChanged() => bundleChangeSignal.Publish();
 
     public IModArchiveInstallTransaction CreateInstallTransaction(
         string? sourceArchiveName = null,
@@ -223,7 +236,7 @@ public sealed class ModLibraryRepository : IModInstallRepository
             var updated = await UpdateContentStatisticsUnlockedAsync(current, requested, cancellationToken)
                 .ConfigureAwait(false);
             await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
+            NotifyChanged();
             return updated;
         }
         finally
@@ -309,7 +322,7 @@ public sealed class ModLibraryRepository : IModInstallRepository
                             requireExisting),
                         CancellationToken.None)
                     .ConfigureAwait(false);
-                Changed?.Invoke();
+                NotifyChanged();
             }
             catch
             {
@@ -431,7 +444,7 @@ public sealed class ModLibraryRepository : IModInstallRepository
                     BundleCatalog = updatedCatalog,
                 };
                 await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-                Changed?.Invoke();
+                NotifyChanged();
             }
             catch
             {
@@ -653,7 +666,7 @@ public sealed class ModLibraryRepository : IModInstallRepository
                         BundleCatalog = catalog,
                     };
                     await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-                    Changed?.Invoke();
+                    NotifyChanged();
                 }
 
                 var result = new ModArchiveImportResult(added, reused)
@@ -731,7 +744,7 @@ public sealed class ModLibraryRepository : IModInstallRepository
                 }
 
                 await WriteIndexAtomicAsync(previousIndex, cancellationToken).ConfigureAwait(false);
-                Changed?.Invoke();
+                NotifyChanged();
             }
             catch
             {

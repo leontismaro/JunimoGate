@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace JunimoGate.Mods;
@@ -28,9 +29,16 @@ public sealed class ActiveModProfileSelectionRepository
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string path;
-    private readonly SemaphoreSlim operationLock = new(1, 1);
-    public event Action? Changed;
+    private readonly SemaphoreSlim operationLock;
+    private readonly RepositoryChangeSignal changeSignal;
+    public event Action? Changed
+    {
+        add => changeSignal.Changed += value;
+        remove => changeSignal.Changed -= value;
+    }
 
     public ActiveModProfileSelectionRepository(string profilesRoot)
     {
@@ -38,6 +46,8 @@ public sealed class ActiveModProfileSelectionRepository
             throw new ArgumentException("The profiles root must be absolute.", nameof(profilesRoot));
         ProfilesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot));
         path = Path.Combine(ProfilesRoot, "active-profile.json");
+        operationLock = OperationLocks.GetOrAdd(ProfilesRoot, static _ => new SemaphoreSlim(1, 1));
+        changeSignal = ModRepositoryChangeSignals.ActiveProfiles.GetOrAdd(ProfilesRoot, static _ => new RepositoryChangeSignal());
     }
 
     internal string ProfilesRoot { get; }
@@ -107,7 +117,7 @@ public sealed class ActiveModProfileSelectionRepository
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             await WriteAtomicAsync(updated, overwrite: true, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
+            changeSignal.Publish();
             return updated;
         }
         finally

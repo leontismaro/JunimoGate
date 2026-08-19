@@ -365,6 +365,30 @@ internal static class ModProfileV2Tests
             .AsTask().GetAwaiter().GetResult());
     }
 
+    public static void RepositoryInstancesShareChangeSignals()
+    {
+        using var fixture = new Fixture();
+        var profiles = new ModProfileV2Repository(fixture.Root);
+        _ = fixture.Repository.ListAsync().AsTask().GetAwaiter().GetResult();
+        var profileChanges = 0;
+        profiles.Changed += () => profileChanges++;
+        var created = fixture.Repository.CreateAsync("Shared signal").AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(1, profileChanges);
+
+        var firstSelection = new ActiveModProfileSelectionRepository(fixture.Root);
+        var secondSelection = new ActiveModProfileSelectionRepository(fixture.Root);
+        var selectionChanges = 0;
+        secondSelection.Changed += () => selectionChanges++;
+        _ = firstSelection.OpenOrCreateAsync(ProfileId.Parse("default")).AsTask().GetAwaiter().GetResult();
+        var commands = new ModManagementCommandService(
+            new ModLibraryRepository(fixture.LibraryRoot),
+            fixture.Repository,
+            firstSelection,
+            new PassThroughMutationGate());
+        _ = commands.SelectProfileAsync(ProfileId.Parse(created.Id)).AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(1, selectionChanges);
+    }
+
     private static ModLibraryItem LibraryItem(string uniqueId, string version, char digestCharacter)
     {
         var id = new string(digestCharacter, 64);

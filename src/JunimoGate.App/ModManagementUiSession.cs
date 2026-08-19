@@ -75,35 +75,21 @@ internal class ModManagementStore : IDisposable
     public async ValueTask<ModLibraryIndex> GetLibraryAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        lock (cacheGate)
-        {
-            if (librarySnapshot is { } cached)
-                return cached;
-        }
-
         await libraryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
+            var loaded = await Library.ReadAsync(cancellationToken).ConfigureAwait(false);
             lock (cacheGate)
             {
-                if (librarySnapshot is { } cached)
+                if (librarySnapshot is { } cached &&
+                    cached.Revision == loaded.Revision &&
+                    cached.BundleCatalog.Revision == loaded.BundleCatalog.Revision)
                     return cached;
-            }
-
-            while (true)
-            {
-                long generation;
-                lock (cacheGate)
-                    generation = libraryGeneration;
-                var loaded = await Library.ReadAsync(cancellationToken).ConfigureAwait(false);
-                lock (cacheGate)
-                {
-                    if (generation != libraryGeneration)
-                        continue;
-                    librarySnapshot ??= loaded;
-                    return librarySnapshot;
-                }
+                librarySnapshot = loaded;
+                if (librarySnapshot is not null && loaded.Revision > 0)
+                    libraryGeneration++;
+                return loaded;
             }
         }
         finally
@@ -116,34 +102,18 @@ internal class ModManagementStore : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        lock (cacheGate)
-        {
-            if (profileSnapshot is { } cached)
-                return cached;
-        }
         await profileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
+            var loaded = await Profiles.ListAsync(cancellationToken).ConfigureAwait(false);
             lock (cacheGate)
             {
-                if (profileSnapshot is { } cached)
+                if (profileSnapshot is { } cached && ProfilesEquivalent(cached, loaded))
                     return cached;
-            }
-
-            while (true)
-            {
-                long generation;
-                lock (cacheGate)
-                    generation = profileGeneration;
-                var loaded = await Profiles.ListAsync(cancellationToken).ConfigureAwait(false);
-                lock (cacheGate)
-                {
-                    if (generation != profileGeneration)
-                        continue;
-                    profileSnapshot ??= loaded;
-                    return profileSnapshot;
-                }
+                profileSnapshot = loaded;
+                profileGeneration++;
+                return loaded;
             }
         }
         finally
@@ -156,36 +126,22 @@ internal class ModManagementStore : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        lock (cacheGate)
-        {
-            if (activeProfileSnapshot is { } cached)
-                return cached;
-        }
         await activeProfileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
+            var loaded = await ActiveProfile
+                .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
             lock (cacheGate)
             {
-                if (activeProfileSnapshot is { } cached)
+                if (activeProfileSnapshot is { } cached &&
+                    cached.Revision == loaded.Revision &&
+                    cached.ActiveProfileId == loaded.ActiveProfileId)
                     return cached;
-            }
-
-            while (true)
-            {
-                long generation;
-                lock (cacheGate)
-                    generation = activeProfileGeneration;
-                var loaded = await ActiveProfile
-                    .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
-                    .ConfigureAwait(false);
-                lock (cacheGate)
-                {
-                    if (generation != activeProfileGeneration)
-                        continue;
-                    activeProfileSnapshot ??= loaded;
-                    return activeProfileSnapshot;
-                }
+                activeProfileSnapshot = loaded;
+                activeProfileGeneration++;
+                return loaded;
             }
         }
         finally
@@ -205,6 +161,23 @@ internal class ModManagementStore : IDisposable
     private void OnBundleChanged() => InvalidateBundle(null);
     private void OnProfilesChanged() => InvalidateProfiles(null);
     private void OnActiveProfileChanged() => InvalidateActiveProfile(null);
+
+    private static bool ProfilesEquivalent(
+        IReadOnlyList<ModProfileV2> first,
+        IReadOnlyList<ModProfileV2> second)
+    {
+        if (first.Count != second.Count)
+            return false;
+        var indexed = first.ToDictionary(profile => profile.Id, StringComparer.Ordinal);
+        foreach (var profile in second)
+        {
+            if (!indexed.TryGetValue(profile.Id, out var existing) ||
+                existing.Revision != profile.Revision ||
+                existing.UpdatedAtUtc != profile.UpdatedAtUtc)
+                return false;
+        }
+        return true;
+    }
 
     private void InvalidateLibrary(object? origin)
     {

@@ -290,6 +290,30 @@ internal static class ModLibraryTests
             afterRepair.Items.Single(candidate => candidate.LibraryItemId == freshItem.LibraryItemId).ContentGeneration);
     }
 
+    public static void RepositoryInstancesShareChangeSignals()
+    {
+        using var fixture = new ModLibraryFixture();
+        var second = new ModLibraryRepository(fixture.Root);
+        var changed = 0;
+        second.Changed += () => changed++;
+
+        using var archive = CreateArchive(
+            ("Mod/manifest.json", Manifest("Example.Signal", "1.0.0", entryDll: "Mod.dll")),
+            ("Mod/Mod.dll", "signal"));
+        var transaction = fixture.Repository.CreateInstallTransaction("signal.zip");
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        TestHarness.Equal(1, changed);
+    }
+
     public static void RepairsIndexedItemsWithMissingFilesDirectory()
     {
         using var fixture = new ModLibraryFixture();

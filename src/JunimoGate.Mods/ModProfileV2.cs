@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -87,15 +88,24 @@ public sealed class ModProfileV2Repository
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
     };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string profilesRoot;
-    private readonly SemaphoreSlim operationLock = new(1, 1);
-    public event Action? Changed;
+    private readonly SemaphoreSlim operationLock;
+    private readonly RepositoryChangeSignal changeSignal;
+    public event Action? Changed
+    {
+        add => changeSignal.Changed += value;
+        remove => changeSignal.Changed -= value;
+    }
 
     public ModProfileV2Repository(string profilesRoot)
     {
         if (string.IsNullOrWhiteSpace(profilesRoot) || !Path.IsPathFullyQualified(profilesRoot))
             throw new ArgumentException("The profiles root must be absolute.", nameof(profilesRoot));
         this.profilesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot));
+        operationLock = OperationLocks.GetOrAdd(this.profilesRoot, static _ => new SemaphoreSlim(1, 1));
+        changeSignal = ModRepositoryChangeSignals.Profiles.GetOrAdd(this.profilesRoot, static _ => new RepositoryChangeSignal());
     }
 
     internal string ProfilesRoot => profilesRoot;
@@ -185,7 +195,7 @@ public sealed class ModProfileV2Repository
                 {
                     await WriteAtomicAsync(GetProfilePath(profileId), profile, overwrite: false, cancellationToken)
                         .ConfigureAwait(false);
-                    Changed?.Invoke();
+                    changeSignal.Publish();
                     return profile;
                 }
                 catch
@@ -228,7 +238,7 @@ public sealed class ModProfileV2Repository
                 now,
                 null);
             await WriteAtomicAsync(path, profile, overwrite: false, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
+            changeSignal.Publish();
             return profile;
         }
         finally
@@ -278,7 +288,7 @@ public sealed class ModProfileV2Repository
                     profile.Validate();
                     await WriteAtomicAsync(GetProfilePath(profileId), profile, overwrite: false, cancellationToken)
                         .ConfigureAwait(false);
-                    Changed?.Invoke();
+                    changeSignal.Publish();
                     return profile;
                 }
                 catch
@@ -329,7 +339,7 @@ public sealed class ModProfileV2Repository
             updated.Validate();
             await WriteAtomicAsync(GetProfilePath(profileId), updated, overwrite: true, cancellationToken)
                 .ConfigureAwait(false);
-            Changed?.Invoke();
+            changeSignal.Publish();
             return updated;
         }
         finally
@@ -357,7 +367,7 @@ public sealed class ModProfileV2Repository
             var removed = Path.Combine(stagingRoot, $"delete-{Guid.NewGuid():N}");
             Directory.Move(source, removed);
             TryDeleteDirectory(removed);
-            Changed?.Invoke();
+            changeSignal.Publish();
             return true;
         }
         finally
@@ -386,7 +396,7 @@ public sealed class ModProfileV2Repository
             if (existing is not null)
                 return existing;
             await WriteAtomicAsync(path, profile, overwrite: true, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
+            changeSignal.Publish();
             return profile;
         }
         finally
@@ -422,7 +432,7 @@ public sealed class ModProfileV2Repository
         try
         {
             await WriteAtomicAsync(path, profile, overwrite: false, cancellationToken).ConfigureAwait(false);
-            Changed?.Invoke();
+            changeSignal.Publish();
             return profile;
         }
         catch (IOException) when (File.Exists(path))

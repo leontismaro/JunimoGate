@@ -75,6 +75,8 @@ return TestHarness.Run(
         ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
     ("Profile commands protect active and built-in Profiles", () =>
         ModProfileV2Tests.ProtectsActiveAndBuiltInProfiles()),
+    ("Profile Repository instances share change signals", () =>
+        ModProfileV2Tests.RepositoryInstancesShareChangeSignals()),
     ("Imported Mods join the active group without replacing versions", () =>
         ModProfileAutoAssignmentTests.AddsUniqueImportsWithoutReplacingExistingVersions()),
     ("Ambiguous imported versions remain library-only", () =>
@@ -153,6 +155,8 @@ return TestHarness.Run(
         ModLibraryTests.RejectsMalformedUpdateKeys()),
     ("Mod library imports atomically and reuses identical content", () =>
         ModLibraryTests.ImportsAndReusesContent()),
+    ("Mod library Repository instances share change signals", () =>
+        ModLibraryTests.RepositoryInstancesShareChangeSignals()),
     ("Mod files list and edit the actual private directory", () =>
         ModFileServiceTests.ListsAndEditsActualPrivateFiles()),
     ("Mod files reject unsafe protected and concurrent writes", () =>
