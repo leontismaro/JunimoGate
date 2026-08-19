@@ -1,15 +1,15 @@
 using JunimoGate.Mods;
 using JunimoGate.Tests;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 internal static class ModProfileV2Tests
 {
     public static void CreatesSystemAndUserProfiles()
     {
         using var fixture = new Fixture();
-        _ = new ModProfileRepository(fixture.Root)
-            .OpenOrCreateAsync(ProfileId.Parse("default"))
-            .AsTask().GetAwaiter().GetResult();
+        WriteLegacyProfile(fixture.Root, ProfileId.Parse("default"));
 
         var initial = fixture.Repository.ListAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, initial.Count);
@@ -147,9 +147,8 @@ internal static class ModProfileV2Tests
     {
         using var fixture = new Fixture();
         var profileId = ProfileId.Parse("default");
-        var legacyRepository = new ModProfileRepository(fixture.Root);
-        var legacy = legacyRepository.OpenOrCreateAsync(profileId).AsTask().GetAwaiter().GetResult();
-        var layout = new ProfileLayout(fixture.Root, profileId);
+        WriteLegacyProfile(fixture.Root, profileId);
+        var layout = LegacyLayout(fixture.Root, profileId);
         WriteMod(layout.EnabledDirectory, "Selected", "Example.Shared", "2.0.0", "selected");
         CopyDirectory(
             Path.Combine(layout.EnabledDirectory, "Selected"),
@@ -175,18 +174,8 @@ internal static class ModProfileV2Tests
         TestHarness.False(Directory.Exists(layout.StagingDirectory));
         TestHarness.Equal(3, library.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
 
-        var compatible = legacyRepository.ReadAsync(profileId).AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(legacy.Revision, compatible.Revision);
-        TestHarness.Equal(legacy.AssemblyBindingPolicy, compatible.AssemblyBindingPolicy);
-        var updated = legacyRepository.UpdateBindingPolicyAsync(
-                profileId,
-                compatible.Revision,
-                ModAssemblyBindingPolicy.Strict)
-            .AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(ModAssemblyBindingPolicy.Strict, updated.AssemblyBindingPolicy);
-        TestHarness.Equal(2L, updated.Revision);
         TestHarness.Equal(
-            ModAssemblyBindingPolicy.Strict,
+            ModAssemblyBindingPolicy.HighestCompatible,
             fixture.Repository.ReadAsync(profileId).AsTask().GetAwaiter().GetResult().AssemblyBindingPolicyOverride);
 
         var repeated = migrator.MigrateAsync(profileId, "Ignored").AsTask().GetAwaiter().GetResult();
@@ -198,7 +187,7 @@ internal static class ModProfileV2Tests
     {
         using var fixture = new Fixture();
         var profile = fixture.Repository.OpenOrCreateDefaultAsync().AsTask().GetAwaiter().GetResult();
-        var layout = new ProfileLayout(fixture.Root, ProfileId.Parse("default"));
+        var layout = LegacyLayout(fixture.Root, ProfileId.Parse("default"));
 
         TestHarness.Equal(ModProfileV2.CurrentSchema, profile.Schema);
         TestHarness.False(Directory.Exists(layout.ModsDirectory));
@@ -222,7 +211,7 @@ internal static class ModProfileV2Tests
                 profile.AssemblyBindingPolicyOverride,
                 new[] { missing })
             .AsTask().GetAwaiter().GetResult();
-        var layout = new ProfileLayout(fixture.Root, profileId);
+        var layout = LegacyLayout(fixture.Root, profileId);
         Directory.CreateDirectory(layout.EnabledDirectory);
         Directory.CreateDirectory(layout.DownloadsDirectory);
         Directory.CreateDirectory(layout.StagingDirectory);
@@ -256,7 +245,7 @@ internal static class ModProfileV2Tests
                 profile.AssemblyBindingPolicyOverride,
                 new[] { unavailable })
             .AsTask().GetAwaiter().GetResult();
-        var layout = new ProfileLayout(fixture.Root, profileId);
+        var layout = LegacyLayout(fixture.Root, profileId);
         Directory.CreateDirectory(layout.EnabledDirectory);
         Directory.CreateDirectory(layout.DownloadsDirectory);
         Directory.CreateDirectory(layout.StagingDirectory);
@@ -276,9 +265,8 @@ internal static class ModProfileV2Tests
     {
         using var fixture = new Fixture();
         var profileId = ProfileId.Parse("default");
-        _ = new ModProfileRepository(fixture.Root).OpenOrCreateAsync(profileId)
-            .AsTask().GetAwaiter().GetResult();
-        var layout = new ProfileLayout(fixture.Root, profileId);
+        WriteLegacyProfile(fixture.Root, profileId);
+        var layout = LegacyLayout(fixture.Root, profileId);
         WriteMod(layout.EnabledDirectory, "Selected", "Example.Concurrent", "1.0.0", "selected");
         var library = new ModLibraryRepository(fixture.LibraryRoot);
         var first = new LegacyModProfileMigrator(
@@ -306,9 +294,8 @@ internal static class ModProfileV2Tests
     {
         using var fixture = new Fixture();
         var profileId = ProfileId.Parse("default");
-        _ = new ModProfileRepository(fixture.Root).OpenOrCreateAsync(profileId)
-            .AsTask().GetAwaiter().GetResult();
-        var layout = new ProfileLayout(fixture.Root, profileId);
+        WriteLegacyProfile(fixture.Root, profileId);
+        var layout = LegacyLayout(fixture.Root, profileId);
         WriteMod(layout.EnabledDirectory, "First", "Example.Duplicate", "1.0.0", "first");
         WriteMod(layout.EnabledDirectory, "Second", "Example.Duplicate", "2.0.0", "second");
         var library = new ModLibraryRepository(fixture.LibraryRoot);
@@ -324,19 +311,18 @@ internal static class ModProfileV2Tests
     public static void ReusesResolvedLibraryIdentityAcrossLegacyProfiles()
     {
         using var fixture = new Fixture();
-        var legacyRepository = new ModProfileRepository(fixture.Root);
         var library = new ModLibraryRepository(fixture.LibraryRoot);
         var migrator = new LegacyModProfileMigrator(fixture.Root, library, fixture.Repository);
         var firstId = ProfileId.Parse("default");
         var secondId = ProfileId.Parse("secondary");
 
-        _ = legacyRepository.OpenOrCreateAsync(firstId).AsTask().GetAwaiter().GetResult();
-        WriteMod(new ProfileLayout(fixture.Root, firstId).EnabledDirectory,
+        WriteLegacyProfile(fixture.Root, firstId);
+        WriteMod(LegacyLayout(fixture.Root, firstId).EnabledDirectory,
             "Shared", "Example.Shared", "1.0.0", "same-content");
         var first = migrator.MigrateAsync(firstId, "First").AsTask().GetAwaiter().GetResult();
 
-        _ = legacyRepository.OpenOrCreateAsync(secondId).AsTask().GetAwaiter().GetResult();
-        WriteMod(new ProfileLayout(fixture.Root, secondId).EnabledDirectory,
+        WriteLegacyProfile(fixture.Root, secondId);
+        WriteMod(LegacyLayout(fixture.Root, secondId).EnabledDirectory,
             "Shared", "Example.Shared", "1.0.0", "same-content");
         var second = migrator.MigrateAsync(secondId, "Second").AsTask().GetAwaiter().GetResult();
 
@@ -402,6 +388,48 @@ internal static class ModProfileV2Tests
             1);
     }
 
+    private static LegacyLayoutPaths LegacyLayout(string profilesRoot, ProfileId profileId)
+    {
+        var profileDirectory = Path.Combine(profilesRoot, profileId.Value);
+        var modsDirectory = Path.Combine(profileDirectory, "Mods");
+        return new LegacyLayoutPaths(
+            Path.Combine(profileDirectory, "profile.json"),
+            modsDirectory,
+            Path.Combine(modsDirectory, "enabled"),
+            Path.Combine(modsDirectory, "disabled"),
+            Path.Combine(profileDirectory, "downloads"),
+            Path.Combine(profileDirectory, "staging"));
+    }
+
+    private static void WriteLegacyProfile(
+        string profilesRoot,
+        ProfileId profileId,
+        long revision = 1,
+        ModAssemblyBindingPolicy policy = ModAssemblyBindingPolicy.HighestCompatible)
+    {
+        var layout = LegacyLayout(profilesRoot, profileId);
+        Directory.CreateDirectory(layout.ProfileDirectory);
+        Directory.CreateDirectory(layout.EnabledDirectory);
+        Directory.CreateDirectory(layout.DisabledDirectory);
+        Directory.CreateDirectory(layout.DownloadsDirectory);
+        Directory.CreateDirectory(layout.StagingDirectory);
+        var profile = new
+        {
+            Schema = "junimogate-mod-profile/v1",
+            Id = profileId.Value,
+            Revision = revision,
+            AssemblyBindingPolicy = policy,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        };
+        File.WriteAllText(
+            layout.ProfileJsonPath,
+            JsonSerializer.Serialize(profile, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                Converters = { new JsonStringEnumConverter() },
+            }));
+    }
+
     private static void WriteMod(
         string parent,
         string directoryName,
@@ -432,6 +460,17 @@ internal static class ModProfileV2Tests
         Directory.CreateDirectory(destination);
         foreach (var file in Directory.EnumerateFiles(source))
             File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+    }
+
+    private sealed record LegacyLayoutPaths(
+        string ProfileJsonPath,
+        string ModsDirectory,
+        string EnabledDirectory,
+        string DisabledDirectory,
+        string DownloadsDirectory,
+        string StagingDirectory)
+    {
+        public string ProfileDirectory => Path.GetDirectoryName(ProfileJsonPath)!;
     }
 
     private sealed class Fixture : IDisposable

@@ -147,13 +147,6 @@ public sealed record ProfileLaunchSelection(
         return id;
     }
 
-    public static ProfileLaunchSelection From(ModProfile profile)
-    {
-        ArgumentNullException.ThrowIfNull(profile);
-        _ = profile.Validate();
-        return new ProfileLaunchSelection(profile.Id, profile.Revision, profile.AssemblyBindingPolicy);
-    }
-
     public static ProfileLaunchSelection From(ModLaunchSelectionSnapshot selection)
     {
         ArgumentNullException.ThrowIfNull(selection);

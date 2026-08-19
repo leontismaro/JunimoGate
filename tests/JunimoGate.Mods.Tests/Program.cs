@@ -41,55 +41,6 @@ return TestHarness.Run(
             TestHarness.False(ProfileId.TryParse(candidate, out _), candidate);
         }
     }),
-    ("ProfileLayout produces absolute per-profile paths", () =>
-    {
-        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "junimogate-profiles"));
-        var layout = new ProfileLayout(root, ProfileId.Parse("main"));
-        var profile = Path.Combine(root, "main");
-        TestHarness.Equal(Path.Combine(profile, "profile.json"), layout.ProfileJsonPath);
-        TestHarness.Equal(Path.Combine(profile, "Mods"), layout.ModsDirectory);
-        TestHarness.Equal(Path.Combine(profile, "Mods", "enabled"), layout.EnabledDirectory);
-        TestHarness.Equal(Path.Combine(profile, "Mods", "disabled"), layout.DisabledDirectory);
-        TestHarness.Equal(Path.Combine(profile, "downloads"), layout.DownloadsDirectory);
-        TestHarness.Equal(Path.Combine(profile, "staging"), layout.StagingDirectory);
-        TestHarness.True(Path.IsPathFullyQualified(layout.StagingDirectory));
-        TestHarness.Throws<ArgumentException>(() => new ProfileLayout("relative/profiles", ProfileId.Parse("main")));
-    }),
-    ("Profile repository creates and updates a versioned default", () =>
-    {
-        using var fixture = new ProfileRepositoryFixture();
-        var id = ProfileId.Parse("default");
-        var created = fixture.Repository.OpenOrCreateAsync(id).AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(ModProfile.CurrentSchema, created.Schema);
-        TestHarness.Equal(1L, created.Revision);
-        TestHarness.Equal(ModAssemblyBindingPolicy.HighestCompatible, created.AssemblyBindingPolicy);
-
-        var updated = fixture.Repository.UpdateBindingPolicyAsync(
-            id,
-            created.Revision,
-            ModAssemblyBindingPolicy.Strict).AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(2L, updated.Revision);
-        TestHarness.Equal(ModAssemblyBindingPolicy.Strict, updated.AssemblyBindingPolicy);
-        TestHarness.Equal(updated, fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
-        var layout = new ProfileLayout(fixture.Root, id);
-        Directory.Delete(layout.EnabledDirectory);
-        _ = fixture.Repository.OpenOrCreateAsync(id).AsTask().GetAwaiter().GetResult();
-        TestHarness.True(Directory.Exists(layout.EnabledDirectory));
-        TestHarness.Throws<InvalidOperationException>(() => fixture.Repository.UpdateBindingPolicyAsync(
-            id,
-            created.Revision,
-            ModAssemblyBindingPolicy.FirstLoaded).AsTask().GetAwaiter().GetResult());
-    }),
-    ("Profile repository rejects a malformed document", () =>
-    {
-        using var fixture = new ProfileRepositoryFixture();
-        var id = ProfileId.Parse("broken");
-        var layout = new ProfileLayout(fixture.Root, id);
-        Directory.CreateDirectory(layout.ProfileDirectory);
-        File.WriteAllText(layout.ProfileJsonPath, "{\"schema\":\"wrong\",\"id\":\"broken\"}");
-        TestHarness.Throws<InvalidDataException>(() =>
-            fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
-    }),
     ("Launcher settings create versioned defaults and update atomically", () =>
         LauncherSettingsTests.CreatesDefaultsAndUpdatesAtomically()),
     ("Launcher settings persist the manual update-check time", () =>
@@ -352,18 +303,3 @@ return TestHarness.Run(
         GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()),
     ("GameHost uses only the current descriptor schema", () =>
         GameLaunchSchemaTests.UsesOnlyTheCurrentDescriptorSchema()));
-
-internal sealed class ProfileRepositoryFixture : IDisposable
-{
-    public ProfileRepositoryFixture()
-    {
-        Root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"junimogate-profiles-{Guid.NewGuid():N}"));
-        Directory.CreateDirectory(Root);
-        Repository = new ModProfileRepository(Root);
-    }
-
-    public string Root { get; }
-    public ModProfileRepository Repository { get; }
-
-    public void Dispose() => Directory.Delete(Root, recursive: true);
-}
