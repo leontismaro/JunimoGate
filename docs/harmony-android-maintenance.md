@@ -20,8 +20,8 @@ build/build-cacheflush.sh
 生成物位于 ignored 目录：
 
 ```text
-artifacts/nuget/Lib.Harmony.2.4.2-junimogate.63.nupkg
-artifacts/nuget/Lib.Harmony.2.4.2-junimogate.63.provenance.json
+artifacts/nuget/Lib.Harmony.2.4.2-junimogate.64.nupkg
+artifacts/nuget/Lib.Harmony.2.4.2-junimogate.64.provenance.json
 .toolchains/source-cache/harmony-android/
 .toolchains/source-build/harmony-android/
 ```
@@ -302,7 +302,7 @@ build/harmony-android-versions.sh
 新版本首先作为候选：
 
 ```text
-known-good: 2.4.2-junimogate.63
+known-good: 2.4.2-junimogate.64
 candidate:  新Harmony/MonoMod + candidate patch
 ```
 
@@ -589,7 +589,7 @@ M2通过只允许进入后续阶段。正式升级还应经过：
 当前 known-good：
 
 ```text
-Lib.Harmony 2.4.2-junimogate.63
+Lib.Harmony 2.4.2-junimogate.64
 patch SHA-256: 5554b9c9f20ad555987167f3364c5d35d26efb568ee94b872c7270a645b005f9
 ```
 

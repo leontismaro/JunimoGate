@@ -39,6 +39,8 @@ for project in "${projects[@]}"; do
   "$DOTNET_ROOT/dotnet" build "$project" \
     --configuration "$configuration" \
     --maxcpucount:1 \
+    --property:ContinuousIntegrationBuild=true \
+    --property:PathMap="$root=/_/junimogate" \
     --property:AndroidSdkDirectory="$ANDROID_SDK_ROOT" \
     --property:JavaSdkDirectory="$JAVA_HOME"
 done

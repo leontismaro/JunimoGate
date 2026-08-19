@@ -52,7 +52,7 @@ This means:
 
 - start from the .NET for Android `libmonosgen-2.0.so` in the local runtime pack;
 - apply the versioned application-local Mono recipes documented in [`../../docs/mono-android-runtime-maintenance.md`](../../docs/mono-android-runtime-maintenance.md);
-- use generated `Lib.Harmony 2.4.2-junimogate.63`;
+- use generated `Lib.Harmony 2.4.2-junimogate.64`;
 - package `libjunimogate-cacheflush.so` for ARM64;
 - do not modify or redistribute the complete SDK/runtime pack.
 

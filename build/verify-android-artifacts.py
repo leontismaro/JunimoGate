@@ -315,6 +315,25 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
 
     with zipfile.ZipFile(path) as archive:
         archive_names = archive.namelist()
+        local_build_paths = {
+            str(root.resolve()),
+            str(pathlib.Path.home().resolve()),
+        }
+        local_build_path_markers = {
+            variant.encode("utf-8")
+            for path_value in local_build_paths
+            for variant in {path_value, path_value.replace("\\", "/")}
+        }
+        encoded_local_build_path_markers = local_build_path_markers | {
+            marker.decode("utf-8").encode("utf-16le") for marker in local_build_path_markers
+        }
+        local_build_path_entries = []
+        for entry in archive.infolist():
+            if entry.is_dir():
+                continue
+            payload = archive.read(entry)
+            if any(marker in payload for marker in encoded_local_build_path_markers):
+                local_build_path_entries.append(entry.filename)
         smapi_bundle = verify_smapi_bundle_manifest(archive) if expected.require_smapi_host else None
         native_entries = [
             entry
@@ -480,6 +499,7 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
         "noQueryAllPackages": "android.permission.QUERY_ALL_PACKAGES" not in declared_permissions,
         "noBroadStoragePermissions": not broad_storage_permissions,
         "noUnneededPrivacySensitivePermissions": not privacy_sensitive_permissions,
+        "noLocalBuildPaths": not local_build_path_entries,
         "noCommercialGamePayload": not prohibited_game_payload_markers,
         "noGameAotPayload": not game_aot_markers,
         "publicMonoGameProvider": mono_game_provider_valid,
@@ -553,6 +573,7 @@ def verify_artifact(root: pathlib.Path, aapt: pathlib.Path, apksigner: pathlib.P
             "broadStoragePermissions": broad_storage_permissions,
             "privacySensitivePermissions": privacy_sensitive_permissions,
         },
+        "localBuildPathEntries": local_build_path_entries,
         "signature": {
             "v2": v2,
             "v3": v3,
