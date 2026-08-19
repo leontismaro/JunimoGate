@@ -166,9 +166,8 @@ public sealed class ModLibraryPickerBottomSheet : BottomSheetDialogFragment
         SetBusy(true);
         try
         {
-            await session.MemberMutations.AddOrReplaceAsync(profileId, selected, enabled: true, lifetime.Token)
+            await session.Commands.ProfileMembers.AddOrReplaceAsync(profileId, selected, enabled: true, lifetime.Token)
                 .ConfigureAwait(false);
-            session.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
                 Activity?.RunOnUiThread(DismissAllowingStateLoss);
         }

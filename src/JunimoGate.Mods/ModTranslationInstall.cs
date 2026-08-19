@@ -979,6 +979,7 @@ public sealed partial class ModLibraryRepository
                     cancellationToken)
                 .ConfigureAwait(false);
             await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+            Changed?.Invoke();
             TryDeleteDirectory(transactionDirectory);
             return new ModTranslationRestoreResult(installationId, record.Files.Count, affected);
         }
@@ -1090,6 +1091,7 @@ public sealed partial class ModLibraryRepository
                         cancellationToken)
                     .ConfigureAwait(false);
                 await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                Changed?.Invoke();
             }
             catch
             {

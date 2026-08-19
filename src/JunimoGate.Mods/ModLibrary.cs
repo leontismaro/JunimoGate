@@ -148,6 +148,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
     }
 
     public ModLibraryLayout Layout { get; }
+    public event Action? Changed;
 
     public IModArchiveInstallTransaction CreateInstallTransaction(
         string? sourceArchiveName = null,
@@ -203,6 +204,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
             var updated = await UpdateContentStatisticsUnlockedAsync(current, requested, cancellationToken)
                 .ConfigureAwait(false);
             await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+            Changed?.Invoke();
             return updated;
         }
         finally
@@ -318,6 +320,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                     BundleCatalog = updatedCatalog,
                 };
                 await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                Changed?.Invoke();
             }
             catch
             {
@@ -504,6 +507,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                         BundleCatalog = catalog,
                     };
                     await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                    Changed?.Invoke();
                 }
 
                 return new ModArchiveImportResult(added, reused)
@@ -568,6 +572,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                 }
 
                 await WriteIndexAtomicAsync(previousIndex, cancellationToken).ConfigureAwait(false);
+                Changed?.Invoke();
             }
             catch
             {
@@ -744,6 +749,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                 BundleCatalog = catalog,
             };
             await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+            Changed?.Invoke();
             return new ModBundleMutationResult(
                 updated,
                 Changed: true,

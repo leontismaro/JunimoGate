@@ -30,6 +30,7 @@ public sealed class ActiveModProfileSelectionRepository
     };
     private readonly string path;
     private readonly SemaphoreSlim operationLock = new(1, 1);
+    public event Action? Changed;
 
     public ActiveModProfileSelectionRepository(string profilesRoot)
     {
@@ -103,6 +104,7 @@ public sealed class ActiveModProfileSelectionRepository
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             await WriteAtomicAsync(updated, overwrite: true, cancellationToken).ConfigureAwait(false);
+            Changed?.Invoke();
             return updated;
         }
         finally

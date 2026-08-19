@@ -40,12 +40,14 @@ internal class ModManagementStore : IDisposable
         Library = new ModLibraryRepository(Path.Combine(userDataRoot, "mods"));
         Profiles = new ModProfileV2Repository(profilesRoot);
         ActiveProfile = new ActiveModProfileSelectionRepository(profilesRoot);
-        MemberMutations = new ModProfileMemberMutationService(Profiles);
         Transfers = new ModProfileTransferService(Library, Profiles);
         Installations = Library;
         Bundles = new ModBundleCatalogRepository(Installations);
         Translations = new ModTranslationHistoryRepository(Library);
         Commands = new ModManagementCommandService(Library, Profiles, ActiveProfile);
+        Library.Changed += OnLibraryChanged;
+        Profiles.Changed += OnProfilesChanged;
+        ActiveProfile.Changed += OnActiveProfileChanged;
     }
 
     public ModLibraryRepository Library { get; }
@@ -55,7 +57,6 @@ internal class ModManagementStore : IDisposable
     public ModManagementCommandService Commands { get; }
     public ModProfileV2Repository Profiles { get; }
     public ActiveModProfileSelectionRepository ActiveProfile { get; }
-    public ModProfileMemberMutationService MemberMutations { get; }
     public ModProfileTransferService Transfers { get; }
     public long LibraryGeneration => Interlocked.Read(ref libraryGeneration);
     public long ProfileGeneration => Interlocked.Read(ref profileGeneration);
@@ -185,23 +186,16 @@ internal class ModManagementStore : IDisposable
         }
     }
 
-    public void PublishMutation(ModManagementChangeKind kind, object? origin = null)
+    public void ResetSnapshots()
     {
-        switch (kind)
-        {
-            case ModManagementChangeKind.Library:
-                InvalidateLibrary(origin);
-                break;
-            case ModManagementChangeKind.Profiles:
-                InvalidateProfiles(origin);
-                break;
-            case ModManagementChangeKind.ActiveProfile:
-                InvalidateActiveProfile(origin);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(kind));
-        }
+        InvalidateLibrary(null);
+        InvalidateProfiles(null);
+        InvalidateActiveProfile(null);
     }
+
+    private void OnLibraryChanged() => InvalidateLibrary(null);
+    private void OnProfilesChanged() => InvalidateProfiles(null);
+    private void OnActiveProfileChanged() => InvalidateActiveProfile(null);
 
     private void InvalidateLibrary(object? origin)
     {
@@ -250,6 +244,9 @@ internal class ModManagementStore : IDisposable
         if (disposed)
             return;
         disposed = true;
+        Library.Changed -= OnLibraryChanged;
+        Profiles.Changed -= OnProfilesChanged;
+        ActiveProfile.Changed -= OnActiveProfileChanged;
         Changed = null;
         lock (cacheGate)
         {

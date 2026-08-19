@@ -158,7 +158,7 @@ public sealed class ModsFragment : Fragment
         repository = modManagement.Library;
         var profilesRoot = Path.Combine(AndroidPrivateStorage.GetUserDataRoot(RequireContext()), "profiles");
         profiles = modManagement.Profiles;
-        profileMutations = modManagement.MemberMutations;
+        profileMutations = modManagement.Commands.ProfileMembers;
         activeProfile = modManagement.ActiveProfile;
         settingsRepository = new LauncherSettingsRepository(Path.Combine(
             AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
@@ -490,8 +490,8 @@ public sealed class ModsFragment : Fragment
                     Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
                 return;
             }
-            var result = await repository.RestoreTranslationAsync(installationId, cancellationToken).ConfigureAwait(false);
-            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
+            var result = await modManagement!.Commands.RestoreTranslationAsync(installationId, cancellationToken)
+                .ConfigureAwait(false);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() => ShowMessage(FormatString(
@@ -706,8 +706,6 @@ public sealed class ModsFragment : Fragment
                 _ = await profiles.OpenOrCreateDefaultAsync("Default", cancellationToken).ConfigureAwait(false);
                 if (migrations.Any(migration => !migration.AlreadyMigrated))
                 {
-                    modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
-                    modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
                 }
                 Log.Info(
                     "JunimoGate.Mods",
@@ -747,7 +745,8 @@ public sealed class ModsFragment : Fragment
         try
         {
             await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
-            var transaction = repository.CreateInstallTransaction(CurrentImportDocument?.DisplayName ?? ReadDisplayName(uri));
+            var transaction = modManagement!.Commands.CreateImportTransaction(
+                CurrentImportDocument?.DisplayName ?? ReadDisplayName(uri));
             pendingTransaction = transaction;
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected Mod archive could not be opened.");
@@ -880,9 +879,6 @@ public sealed class ModsFragment : Fragment
                     }
                 }
             }
-            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
-            if (assignment?.AddedMembers > 0 || reconnectedMembers > 0)
-                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -932,7 +928,7 @@ public sealed class ModsFragment : Fragment
             var targets = target.Members.Select(item => ModTranslationTarget.FromLibraryItem(
                 item,
                 originalRoots.TryGetValue(item.LibraryItemId, out var root) ? root : null)).ToArray();
-            var transaction = repository.CreateTranslationTransaction(targets, ReadDisplayName(uri));
+            var transaction = modManagement!.Commands.CreateTranslationTransaction(targets, ReadDisplayName(uri));
             pendingTranslationTransaction = transaction;
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected translation archive could not be opened.");
@@ -1185,7 +1181,6 @@ public sealed class ModsFragment : Fragment
             pendingTranslationTarget = null;
             pendingTranslationTargetItemId = null;
             await transaction.DisposeAsync().ConfigureAwait(false);
-            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1483,8 +1478,6 @@ public sealed class ModsFragment : Fragment
         {
             var result = await profileMutations.AddOrReplaceAsync(target, items, enabled: true)
                 .ConfigureAwait(false);
-            if (result.ChangedMembers > 0)
-                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1643,8 +1636,6 @@ public sealed class ModsFragment : Fragment
                     unlocked,
                     lifetime.Token)
                 .ConfigureAwait(false);
-            if (result.Changed)
-                modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1718,11 +1709,10 @@ public sealed class ModsFragment : Fragment
                     Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_in_use));
                 return;
             }
-            var result = await repository.DeleteManyAsync(
+            var result = await modManagement!.Commands.DeleteInstalledModsAsync(
                     items.Select(item => item.LibraryItemId).ToArray(),
                     cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.PublishMutation(ModManagementChangeKind.Library, this);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {

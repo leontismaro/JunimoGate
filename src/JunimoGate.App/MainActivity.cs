@@ -222,7 +222,6 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         try
         {
             await coordinator.UpdateBindingPolicyAsync(policy, cancellation.Token);
-            modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -309,8 +308,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
             var handle = await coordinator.InitializeAsync(cancellationToken);
             if (modManagement is { } session)
             {
-                session.PublishMutation(ModManagementChangeKind.Library, this);
-                session.PublishMutation(ModManagementChangeKind.Profiles, this);
+                session.ResetSnapshots();
                 _ = PreloadModManagementAsync(session, cancellationToken);
             }
             if (handle is not null && !destroyed)

@@ -375,8 +375,6 @@ public sealed class ModGroupEditorFragment : Fragment
         {
             var token = cancellation?.Token ?? CancellationToken.None;
             var result = await mutations.SetEnabledAsync(profileId, uniqueIds, enabled, token).ConfigureAwait(false);
-            if (result.ChangedMembers > 0)
-                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
                 Activity?.RunOnUiThread(() => RenderProfile(result.Profile));
         }
@@ -410,8 +408,6 @@ public sealed class ModGroupEditorFragment : Fragment
         {
             var token = cancellation?.Token ?? CancellationToken.None;
             var result = await mutations.RemoveAsync(profileId, uniqueIds, token).ConfigureAwait(false);
-            if (result.ChangedMembers > 0)
-                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
                 Activity?.RunOnUiThread(() => RenderProfile(result.Profile));
         }
@@ -442,7 +438,6 @@ public sealed class ModGroupEditorFragment : Fragment
             var token = cancellation?.Token ?? CancellationToken.None;
             var updated = await mutations.UpdateMetadataAsync(profileId, displayName, description, policy, token)
                 .ConfigureAwait(false);
-            modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
                 Activity?.RunOnUiThread(() => RenderProfile(updated));
         }
@@ -730,8 +725,6 @@ public sealed class ModGroupEditorFragment : Fragment
             var token = cancellation?.Token ?? CancellationToken.None;
             var result = await mutations.AddOrReplaceAsync(profileId, [item], enabled: true, token)
                 .ConfigureAwait(false);
-            if (result.ChangedMembers > 0)
-                modManagement?.PublishMutation(ModManagementChangeKind.Profiles, this);
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
