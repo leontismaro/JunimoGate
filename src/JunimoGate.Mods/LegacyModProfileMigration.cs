@@ -70,7 +70,6 @@ public sealed class LegacyModProfileMigrator
         {
             var migrated = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
             var migratedLayout = new LegacyProfileLayout(profilesRoot, profileId);
-            await ValidateMigratedProfileAsync(migrated, cancellationToken).ConfigureAwait(false);
             await DeleteLegacyDirectoriesAsync(migratedLayout, cancellationToken).ConfigureAwait(false);
             return new LegacyModProfileMigrationResult(
                 migrated,

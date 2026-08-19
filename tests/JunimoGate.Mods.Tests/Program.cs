@@ -65,8 +65,8 @@ return TestHarness.Run(
         ModProfileV2Tests.CreatesDefaultV2WithoutLegacyDirectories()),
     ("Already-migrated Profiles clean legacy directories", () =>
         ModProfileV2Tests.CleansLegacyDirectoriesForAlreadyMigratedProfiles()),
-    ("Invalid migrated bindings preserve legacy directories", () =>
-        ModProfileV2Tests.PreservesLegacyDirectoriesForInvalidMigratedBindings()),
+    ("Already-migrated Profiles allow deleted Mod bindings", () =>
+        ModProfileV2Tests.AllowsDeletedBindingsForAlreadyMigratedProfiles()),
     ("Concurrent Profile migration runs once", () =>
         ModProfileV2Tests.SerializesConcurrentLegacyMigration()),
     ("Profile v2 migration reuses resolved library identities", () =>

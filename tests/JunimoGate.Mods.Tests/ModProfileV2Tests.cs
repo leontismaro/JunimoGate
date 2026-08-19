@@ -229,36 +229,34 @@ internal static class ModProfileV2Tests
         TestHarness.False(Directory.Exists(layout.StagingDirectory));
     }
 
-    public static void PreservesLegacyDirectoriesForInvalidMigratedBindings()
+    public static void AllowsDeletedBindingsForAlreadyMigratedProfiles()
     {
         using var fixture = new Fixture();
         var profileId = ProfileId.Parse("default");
-        var profile = fixture.Repository.OpenOrCreateDefaultAsync().AsTask().GetAwaiter().GetResult();
-        var unavailable = ModProfileMember.FromLibraryItem(
-            LibraryItem("Example.Unavailable", "1.0.0", 'a'),
-            enabled: true);
-        _ = fixture.Repository.UpdateAsync(
-                profileId,
-                profile.Revision,
-                profile.DisplayName,
-                profile.Description,
-                profile.AssemblyBindingPolicyOverride,
-                new[] { unavailable })
-            .AsTask().GetAwaiter().GetResult();
+        WriteLegacyProfile(fixture.Root, profileId);
         var layout = LegacyLayout(fixture.Root, profileId);
+        WriteMod(layout.EnabledDirectory, "Deleted", "Example.Deleted", "1.0.0", "deleted");
+        var library = new ModLibraryRepository(fixture.LibraryRoot);
+        var migrator = new LegacyModProfileMigrator(fixture.Root, library, fixture.Repository);
+        var migrated = migrator.MigrateAsync(profileId, "Default").AsTask().GetAwaiter().GetResult();
+        var member = migrated.Profile.Members.Single();
+        library.DeleteManyAsync(new[] { member.LibraryItemId! }).AsTask().GetAwaiter().GetResult();
+
         Directory.CreateDirectory(layout.EnabledDirectory);
         Directory.CreateDirectory(layout.DownloadsDirectory);
         Directory.CreateDirectory(layout.StagingDirectory);
-        var migrator = new LegacyModProfileMigrator(
-            fixture.Root,
-            new ModLibraryRepository(fixture.LibraryRoot),
-            fixture.Repository);
 
-        TestHarness.Throws<InvalidDataException>(() => migrator.MigrateAsync(profileId, "Ignored")
-            .AsTask().GetAwaiter().GetResult());
-        TestHarness.True(Directory.Exists(layout.ModsDirectory));
-        TestHarness.True(Directory.Exists(layout.DownloadsDirectory));
-        TestHarness.True(Directory.Exists(layout.StagingDirectory));
+        var repeated = migrator.MigrateAsync(profileId, "Ignored").AsTask().GetAwaiter().GetResult();
+
+        TestHarness.True(repeated.AlreadyMigrated);
+        var retained = repeated.Profile.Members.Single();
+        TestHarness.Equal(member.LibraryItemId, retained.LibraryItemId);
+        TestHarness.Equal(member.ExpectedName, retained.ExpectedName);
+        TestHarness.Equal(member.ExpectedVersion, retained.ExpectedVersion);
+        TestHarness.True(retained.Enabled);
+        TestHarness.False(Directory.Exists(layout.ModsDirectory));
+        TestHarness.False(Directory.Exists(layout.DownloadsDirectory));
+        TestHarness.False(Directory.Exists(layout.StagingDirectory));
     }
 
     public static void SerializesConcurrentLegacyMigration()
