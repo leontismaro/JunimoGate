@@ -41,55 +41,6 @@ return TestHarness.Run(
             TestHarness.False(ProfileId.TryParse(candidate, out _), candidate);
         }
     }),
-    ("ProfileLayout produces absolute per-profile paths", () =>
-    {
-        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "junimogate-profiles"));
-        var layout = new ProfileLayout(root, ProfileId.Parse("main"));
-        var profile = Path.Combine(root, "main");
-        TestHarness.Equal(Path.Combine(profile, "profile.json"), layout.ProfileJsonPath);
-        TestHarness.Equal(Path.Combine(profile, "Mods"), layout.ModsDirectory);
-        TestHarness.Equal(Path.Combine(profile, "Mods", "enabled"), layout.EnabledDirectory);
-        TestHarness.Equal(Path.Combine(profile, "Mods", "disabled"), layout.DisabledDirectory);
-        TestHarness.Equal(Path.Combine(profile, "downloads"), layout.DownloadsDirectory);
-        TestHarness.Equal(Path.Combine(profile, "staging"), layout.StagingDirectory);
-        TestHarness.True(Path.IsPathFullyQualified(layout.StagingDirectory));
-        TestHarness.Throws<ArgumentException>(() => new ProfileLayout("relative/profiles", ProfileId.Parse("main")));
-    }),
-    ("Profile repository creates and updates a versioned default", () =>
-    {
-        using var fixture = new ProfileRepositoryFixture();
-        var id = ProfileId.Parse("default");
-        var created = fixture.Repository.OpenOrCreateAsync(id).AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(ModProfile.CurrentSchema, created.Schema);
-        TestHarness.Equal(1L, created.Revision);
-        TestHarness.Equal(ModAssemblyBindingPolicy.HighestCompatible, created.AssemblyBindingPolicy);
-
-        var updated = fixture.Repository.UpdateBindingPolicyAsync(
-            id,
-            created.Revision,
-            ModAssemblyBindingPolicy.Strict).AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(2L, updated.Revision);
-        TestHarness.Equal(ModAssemblyBindingPolicy.Strict, updated.AssemblyBindingPolicy);
-        TestHarness.Equal(updated, fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
-        var layout = new ProfileLayout(fixture.Root, id);
-        Directory.Delete(layout.EnabledDirectory);
-        _ = fixture.Repository.OpenOrCreateAsync(id).AsTask().GetAwaiter().GetResult();
-        TestHarness.True(Directory.Exists(layout.EnabledDirectory));
-        TestHarness.Throws<InvalidOperationException>(() => fixture.Repository.UpdateBindingPolicyAsync(
-            id,
-            created.Revision,
-            ModAssemblyBindingPolicy.FirstLoaded).AsTask().GetAwaiter().GetResult());
-    }),
-    ("Profile repository rejects a malformed document", () =>
-    {
-        using var fixture = new ProfileRepositoryFixture();
-        var id = ProfileId.Parse("broken");
-        var layout = new ProfileLayout(fixture.Root, id);
-        Directory.CreateDirectory(layout.ProfileDirectory);
-        File.WriteAllText(layout.ProfileJsonPath, "{\"schema\":\"wrong\",\"id\":\"broken\"}");
-        TestHarness.Throws<InvalidDataException>(() =>
-            fixture.Repository.ReadAsync(id).AsTask().GetAwaiter().GetResult());
-    }),
     ("Launcher settings create versioned defaults and update atomically", () =>
         LauncherSettingsTests.CreatesDefaultsAndUpdatesAtomically()),
     ("Launcher settings persist the manual update-check time", () =>
@@ -108,14 +59,24 @@ return TestHarness.Run(
         ModProfileV2Tests.MutatesProfileMembersAtomically()),
     ("Profile member mutations reject ambiguous versions and no-Mods", () =>
         ModProfileV2Tests.RejectsInvalidMemberMutations()),
-    ("Profile v2 migration preserves the legacy fallback", () =>
-        ModProfileV2Tests.MigratesLegacyDirectoriesWithoutRemovingFallback()),
+    ("Profile v2 migration removes legacy directories after verification", () =>
+        ModProfileV2Tests.MigratesLegacyDirectoriesAndRemovesFallback()),
+    ("Profile v2 default is created without legacy directories", () =>
+        ModProfileV2Tests.CreatesDefaultV2WithoutLegacyDirectories()),
+    ("Already-migrated Profiles clean legacy directories", () =>
+        ModProfileV2Tests.CleansLegacyDirectoriesForAlreadyMigratedProfiles()),
+    ("Already-migrated Profiles allow deleted Mod bindings", () =>
+        ModProfileV2Tests.AllowsDeletedBindingsForAlreadyMigratedProfiles()),
+    ("Concurrent Profile migration runs once", () =>
+        ModProfileV2Tests.SerializesConcurrentLegacyMigration()),
     ("Profile v2 migration reuses resolved library identities", () =>
         ModProfileV2Tests.ReusesResolvedLibraryIdentityAcrossLegacyProfiles()),
     ("Profile v2 migration rejects ambiguous enabled Mods", () =>
         ModProfileV2Tests.RejectsAmbiguousLegacyEnabledMods()),
-    ("Active Profile selection uses revision-checked updates", () =>
-        ModProfileV2Tests.PersistsActiveProfileWithRevisionChecks()),
+    ("Profile commands protect active and built-in Profiles", () =>
+        ModProfileV2Tests.ProtectsActiveAndBuiltInProfiles()),
+    ("Profile Repository instances share change signals", () =>
+        ModProfileV2Tests.RepositoryInstancesShareChangeSignals()),
     ("Imported Mods join the active group without replacing versions", () =>
         ModProfileAutoAssignmentTests.AddsUniqueImportsWithoutReplacingExistingVersions()),
     ("Ambiguous imported versions remain library-only", () =>
@@ -124,8 +85,16 @@ return TestHarness.Run(
         ModProfileAutoAssignmentTests.ReconnectsAnExactMissingVersion()),
     ("Imported Mods cannot modify the no-Mods group", () =>
         ModProfileAutoAssignmentTests.DoesNotModifyTheNoModsProfile()),
+    ("Imported Mods reconnect dangling group members without replacing valid bindings", () =>
+        ModProfileAutoAssignmentTests.ReconnectsDanglingMembersWithoutReplacingValidBindings()),
+    ("Ambiguous imports leave dangling group members missing", () =>
+        ModProfileAutoAssignmentTests.LeavesAmbiguousDanglingMembersMissing()),
+    ("Active group assignment respects ambiguity in the full library", () =>
+        ModProfileAutoAssignmentTests.DoesNotReconnectAgainstOnlyTheNewImportWhenTheLibraryIsAmbiguous()),
     ("Mod launch selection freezes enabled library items", () =>
         ModLaunchSelectionTests.FreezesOnlyEnabledLibraryItems()),
+    ("Mod launch selection rejects a changed selected generation", () =>
+        ModLaunchSelectionTests.RejectsChangedSelectedGeneration()),
     ("Mod launch selection rejects missing enabled members", () =>
         ModLaunchSelectionTests.RejectsMissingEnabledMembers()),
     ("Mod launch selection freezes the global binding policy", () =>
@@ -134,12 +103,26 @@ return TestHarness.Run(
         ModLaunchSelectionTests.ResolvesOnlyContainedExistingRoots()),
     ("Mod Profile manifest roundtrip preserves placeholders", () =>
         ModProfileTransferTests.ManifestRoundtripPreservesPlaceholders()),
+    ("Mod Profile manifest binds installed Mods across devices", () =>
+        ModProfileTransferTests.ManifestBindsInstalledModsAcrossDevices()),
+    ("Mod Profile manifest preserves missing metadata on an empty device", () =>
+        ModProfileTransferTests.ManifestPreservesMissingMetadataOnAnEmptyDevice()),
+    ("Mod Profile manifest resolves multiple installed versions by expected version", () =>
+        ModProfileTransferTests.ManifestUsesExpectedVersionToResolveMultipleInstalledVersions()),
+    ("Mod Profile manifest leaves ambiguous installed Mods missing", () =>
+        ModProfileTransferTests.ManifestKeepsAmbiguousInstalledModsMissing()),
     ("Mod Profile v1 manifest without bundles remains importable", () =>
         ModProfileTransferTests.ImportsLegacyV1ManifestWithoutBundles()),
     ("Complete Mod Profile package excludes config and binds content", () =>
         ModProfileTransferTests.CompletePackageExcludesConfigAndBindsExportedContent()),
     ("Complete Mod Profile package includes config when requested", () =>
         ModProfileTransferTests.CompletePackageIncludesConfigWhenRequested()),
+    ("Global import promotes complete Profile packages only", () =>
+        ModProfileTransferTests.PromotesScannedCompletePackagesAndLeavesModArchivesUnchanged()),
+    ("Global import promotes legacy complete Profile packages", () =>
+        ModProfileTransferTests.PromotesLegacyCompletePackagesWithoutBundles()),
+    ("Complete Mod Profile package commit uses the mutation gate", () =>
+        ModProfileTransferTests.CompletePackageCommitUsesMutationGate()),
     ("Complete Mod Profile package rejects forged content identity", () =>
         ModProfileTransferTests.RejectsForgedPackageIdentityWithoutLibraryChanges()),
     ("Complete Mod Profile package supports an empty group", () =>
@@ -162,10 +145,22 @@ return TestHarness.Run(
         ModBundleDetectorTests.LeavesDuplicateUniqueIdVersionsStandalone()),
     ("Mod archive scanner accepts repeated directory entries", () =>
         ModLibraryTests.AllowsRepeatedDirectoryEntries()),
-    ("Mod archive scanner rejects traversal and overlapping roots", () =>
-        ModLibraryTests.RejectsUnsafeArchiveShapes()),
+    ("Mod archive scanner rejects unsafe paths", () =>
+        ModLibraryTests.RejectsUnsafeArchivePaths()),
+    ("Mod archive scanner gives nested manifests to the outer Mod", () =>
+        ModLibraryTests.UsesOutermostManifestRoot()),
+    ("Mod archive scanner limits collapsed outer Mod roots", () =>
+        ModLibraryTests.RejectsTooManyOutermostManifestRoots()),
+    ("Mod archive scanner rejects an invalid outer manifest", () =>
+        ModLibraryTests.RejectsInvalidOutermostManifest()),
+    ("Mod archive scanner ignores blank update keys", () =>
+        ModLibraryTests.IgnoresBlankUpdateKeys()),
+    ("Mod archive scanner rejects malformed update-key shapes", () =>
+        ModLibraryTests.RejectsMalformedUpdateKeys()),
     ("Mod library imports atomically and reuses identical content", () =>
         ModLibraryTests.ImportsAndReusesContent()),
+    ("Mod library Repository instances share change signals", () =>
+        ModLibraryTests.RepositoryInstancesShareChangeSignals()),
     ("Mod files list and edit the actual private directory", () =>
         ModFileServiceTests.ListsAndEditsActualPrivateFiles()),
     ("Mod files reject unsafe protected and concurrent writes", () =>
@@ -174,6 +169,10 @@ return TestHarness.Run(
         ModFileServiceTests.CreatesTextFilesInTheCurrentDirectory()),
     ("Mod files accept UTF-8 split at the text probe boundary", () =>
         ModFileServiceTests.AcceptsUtf8SplitAtTheProbeBoundary()),
+    ("Interrupted Mod file edits recover files and generations", () =>
+        ModFileServiceTests.RecoversInterruptedFileAndGenerationMutation()),
+    ("Mod management commands enforce the content mutation gate", () =>
+        ModFileServiceTests.CommandGateBlocksContentMutations()),
     ("Mod translations map member roots without archive-name guesses", () =>
         ModTranslationInstallTests.MapsMemberRootsWithoutUsingArchiveNames()),
     ("Mod translations map multiple bundle members atomically", () =>
@@ -192,6 +191,8 @@ return TestHarness.Run(
         ModTranslationInstallTests.DeletingOneTranslatedBundleMemberPreservesTheOther()),
     ("Interrupted translation restore recovers files and its record", () =>
         ModTranslationInstallTests.RecoversInterruptedRestoreWithItsInstallationRecord()),
+    ("Interrupted translation install recovers files and generations", () =>
+        ModTranslationInstallTests.RecoversInterruptedInstallWithItsGeneration()),
     ("Mod library instances serialize translation recovery for one root", () =>
         ModTranslationInstallTests.SerializesRepositoriesForTheSameRoot()),
     ("Mod translations accept Unix mode-only ZIP directories", () =>
@@ -202,6 +203,12 @@ return TestHarness.Run(
         ModLibraryTests.KeepsDistinctContentCandidates()),
     ("Mod library persists bundles and unlock overrides", () =>
         ModLibraryTests.PersistsBundlesAndUnlocksMembers()),
+    ("Mod library migrates its embedded Bundle catalog", () =>
+        ModLibraryTests.MigratesEmbeddedBundleCatalog()),
+    ("Mod library rejects a missing external Bundle catalog", () =>
+        ModLibraryTests.RejectsMissingBundleCatalog()),
+    ("Mod library recovers an interrupted catalog commit", () =>
+        ModLibraryTests.RecoversInterruptedCatalogCommit()),
     ("Mod bundle Profile operations mutate once without dependencies", () =>
         ModLibraryTests.MutatesBundleProfileMembersAtomically()),
     ("Mod management projects bundles and unlocked members", () =>
@@ -210,6 +217,10 @@ return TestHarness.Run(
         ModManagementProjectionTests.DiagnosesDependenciesWithoutBlocking()),
     ("Mod library repairs missing and orphaned item directories", () =>
         ModLibraryTests.RepairsRecoverableLibraryState()),
+    ("Mod library repairs indexed items missing their files directory", () =>
+        ModLibraryTests.RepairsIndexedItemsWithMissingFilesDirectory()),
+    ("Mod library does not recover an edited orphan as the original import", () =>
+        ModLibraryTests.DoesNotRecoverAnEditedOrphanAsTheOriginalImport()),
     ("Mod library deletes one exact item", () =>
         ModLibraryTests.DeletesExactItem()),
     ("Mod library deletes many in one revision", () =>
@@ -330,8 +341,8 @@ return TestHarness.Run(
         GameLaunchSchemaTests.RejectsUnknownSnapshotSchemas()),
     ("GameHost snapshots omit the SMAPI bundle identity", () =>
         GameLaunchSchemaTests.DoesNotPersistSmapiBundleIdentity()),
-    ("GameHost retains pending v4 descriptor compatibility", () =>
-        GameLaunchSchemaTests.RetainsThePreviousDescriptorSchemaForPendingLaunches()),
+    ("GameHost uses only the current descriptor schema", () =>
+        GameLaunchSchemaTests.UsesOnlyTheCurrentDescriptorSchema()),
     ("GameHost SMAPI session state preserves the first startup failure", () =>
         SmapiSessionStateTests.PreservesTheFirstStartupFailure()),
     ("GameHost SMAPI session state accepts one runtime failure", () =>
@@ -340,18 +351,3 @@ return TestHarness.Run(
         SmapiSessionStateTests.RejectsLateTransitionsAfterDisposal()),
     ("GameHost SMAPI session state serializes running and failure races", () =>
         SmapiSessionStateTests.SerializesConcurrentRunningAndFailure()));
-
-internal sealed class ProfileRepositoryFixture : IDisposable
-{
-    public ProfileRepositoryFixture()
-    {
-        Root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"junimogate-profiles-{Guid.NewGuid():N}"));
-        Directory.CreateDirectory(Root);
-        Repository = new ModProfileRepository(Root);
-    }
-
-    public string Root { get; }
-    public ModProfileRepository Repository { get; }
-
-    public void Dispose() => Directory.Delete(Root, recursive: true);
-}

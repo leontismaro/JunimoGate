@@ -193,11 +193,15 @@ pushd "$source_root" >/dev/null
   --no-restore \
   --disable-build-servers \
   --maxcpucount:1 \
+  --property:DebugInfo=false \
+  --property:PathMap="$root=/_/junimogate" \
   --property:ContinuousIntegrationBuild=true
 "$DOTNET_ROOT/dotnet" pack Lib.Harmony/Lib.Harmony.csproj \
   --configuration Release \
   --no-build \
   --output "$feed" \
+  --property:DebugInfo=false \
+  --property:PathMap="$root=/_/junimogate" \
   --property:ContinuousIntegrationBuild=true
 popd >/dev/null
 

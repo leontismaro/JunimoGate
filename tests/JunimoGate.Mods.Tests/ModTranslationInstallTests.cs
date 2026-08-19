@@ -18,7 +18,7 @@ internal static class ModTranslationInstallTests
         using var translation = Archive(
             ("Completely Unrelated Wrapper/UIInfoSuite2Alt/i18n/zh.json", "{\"First\":\"一\",\"Extra\":\"额外\"}"));
 
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(item)],
             "irrelevant-download-name.zip");
         try
@@ -60,7 +60,7 @@ internal static class ModTranslationInstallTests
             ("Example Product/Content/i18n/zh.json", "{\"Content\":\"内容\"}"),
             ("help.txt", "not part of any Mod"));
 
-        var transaction = fixture.Repository.CreateTranslationTransaction(targets, "bundle-language.zip");
+        var transaction = fixture.Translations.CreateInstallTransaction(targets, "bundle-language.zip");
         try
         {
             transaction.ScanAsync(translation).AsTask().GetAwaiter().GetResult();
@@ -99,7 +99,7 @@ internal static class ModTranslationInstallTests
             "GenericModConfigMenuAndroid",
             ("assets/icon.png", "other"));
         using var translation = Archive(("zh.json", "{\"Key\":\"新\"}"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target), ModTranslationTarget.FromLibraryItem(similar)],
             "flat.zip");
         try
@@ -129,7 +129,7 @@ internal static class ModTranslationInstallTests
             ("Target/manifest.json", Manifest("Example.Other", "Other.dll")),
             ("Target/Other.dll", "binary"),
             ("Target/i18n/zh.json", "{\"Key\":\"值\"}"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "wrong.zip");
         try
@@ -156,7 +156,7 @@ internal static class ModTranslationInstallTests
         using var translation = Archive(
             ("Restore/i18n/zh.json", "translated"),
             ("Restore/assets/new.png", "new-media"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "restore.zip");
         string installationId;
@@ -174,15 +174,15 @@ internal static class ModTranslationInstallTests
         var root = fixture.Repository.Layout.GetItemFilesDirectory(target.LibraryItemId);
         TestHarness.Equal("translated", File.ReadAllText(Path.Combine(root, "i18n", "zh.json")));
         TestHarness.True(File.Exists(Path.Combine(root, "assets", "new.png")));
-        var listed = fixture.Repository.ListTranslationInstallationsAsync([target.LibraryItemId])
+        var listed = fixture.Translations.ListAsync([target.LibraryItemId])
             .AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(installationId, listed.Single().InstallationId);
 
         File.WriteAllText(Path.Combine(root, "assets", "new.png"), "changed");
-        TestHarness.Throws<InvalidOperationException>(() => fixture.Repository.RestoreTranslationAsync(installationId)
+        TestHarness.Throws<InvalidOperationException>(() => fixture.Translations.RestoreAsync(installationId)
             .AsTask().GetAwaiter().GetResult());
         File.WriteAllText(Path.Combine(root, "assets", "new.png"), "new-media");
-        var restored = fixture.Repository.RestoreTranslationAsync(installationId)
+        var restored = fixture.Translations.RestoreAsync(installationId)
             .AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(2, restored.RestoredFiles);
         TestHarness.Equal("original", File.ReadAllText(Path.Combine(root, "i18n", "zh.json")));
@@ -197,7 +197,7 @@ internal static class ModTranslationInstallTests
             "Manual",
             ("assets/existing.png", "old"));
         using var translation = Archive(("LanguagePack/new/location.png", "new"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "manual.zip");
         try
@@ -230,7 +230,7 @@ internal static class ModTranslationInstallTests
             "Delete",
             ("i18n/default.json", "{\"Key\":\"Default\"}"));
         using var translation = Archive(("Delete/i18n/zh.json", "{\"Key\":\"Value\"}"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "delete.zip");
         string installationId;
@@ -249,7 +249,7 @@ internal static class ModTranslationInstallTests
         TestHarness.False(Directory.Exists(Path.Combine(
             fixture.Repository.Layout.TranslationsDirectory,
             installationId)));
-        TestHarness.Equal(0, fixture.Repository.ListTranslationInstallationsAsync()
+        TestHarness.Equal(0, fixture.Translations.ListAsync()
             .AsTask().GetAwaiter().GetResult().Count);
     }
 
@@ -267,7 +267,7 @@ internal static class ModTranslationInstallTests
         using var translation = Archive(
             ("Example Product/Code/i18n/zh.json", "{\"Code\":\"代码\"}"),
             ("Example Product/Content/i18n/zh.json", "{\"Content\":\"内容\"}"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(targets, "bundle-delete.zip");
+        var transaction = fixture.Translations.CreateInstallTransaction(targets, "bundle-delete.zip");
         string installationId;
         try
         {
@@ -283,7 +283,7 @@ internal static class ModTranslationInstallTests
         var deleted = members[0];
         var retained = members[1];
         TestHarness.True(fixture.Repository.DeleteAsync(deleted.LibraryItemId).AsTask().GetAwaiter().GetResult());
-        var installation = fixture.Repository.ListTranslationInstallationsAsync()
+        var installation = fixture.Translations.ListAsync()
             .AsTask().GetAwaiter().GetResult().Single();
         TestHarness.Equal(installationId, installation.InstallationId);
         TestHarness.Equal(1, installation.AffectedLibraryItemIds.Count);
@@ -292,8 +292,8 @@ internal static class ModTranslationInstallTests
         TestHarness.False(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(deleted.LibraryItemId)));
         TestHarness.True(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(retained.LibraryItemId)));
 
-        fixture.Repository.RestoreTranslationAsync(installationId).AsTask().GetAwaiter().GetResult();
-        TestHarness.Equal(0, fixture.Repository.ListTranslationInstallationsAsync()
+        fixture.Translations.RestoreAsync(installationId).AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(0, fixture.Translations.ListAsync()
             .AsTask().GetAwaiter().GetResult().Count);
     }
 
@@ -306,7 +306,7 @@ internal static class ModTranslationInstallTests
             ("i18n/default.json", "{\"Key\":\"Default\"}"),
             ("i18n/zh.json", "original"));
         using var translation = Archive(("Recovery/i18n/zh.json", "translated"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "recovery.zip");
         string installationId;
@@ -346,10 +346,63 @@ internal static class ModTranslationInstallTests
         var reopened = new ModLibraryRepository(fixture.Root);
         _ = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal("translated", File.ReadAllText(Path.Combine(live, "i18n", "zh.json")));
-        TestHarness.Equal(installationId, reopened.ListTranslationInstallationsAsync([target.LibraryItemId])
+        var reopenedTranslations = new ModTranslationHistoryRepository(reopened);
+        TestHarness.Equal(installationId, reopenedTranslations.ListAsync([target.LibraryItemId])
             .AsTask().GetAwaiter().GetResult().Single().InstallationId);
-        reopened.RestoreTranslationAsync(installationId).AsTask().GetAwaiter().GetResult();
+        reopenedTranslations.RestoreAsync(installationId).AsTask().GetAwaiter().GetResult();
         TestHarness.Equal("original", File.ReadAllText(Path.Combine(live, "i18n", "zh.json")));
+    }
+
+    public static void RecoversInterruptedInstallWithItsGeneration()
+    {
+        using var fixture = new Fixture();
+        var target = fixture.ImportSingle(
+            "Example.InstallRecovery",
+            "InstallRecovery",
+            ("i18n/default.json", "{\"Key\":\"Default\"}"),
+            ("i18n/zh.json", "original"));
+        var before = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var transactionId = Guid.NewGuid().ToString("N");
+        var staging = Path.Combine(fixture.Repository.Layout.StagingDirectory, $"translation-{transactionId}");
+        var live = fixture.Repository.Layout.GetItemFilesDirectory(target.LibraryItemId);
+        var old = Path.Combine(staging, $"{target.LibraryItemId}-old");
+        Directory.CreateDirectory(staging);
+        File.Copy(
+            fixture.Repository.Layout.IndexPath,
+            Path.Combine(staging, "library-index.before.json"));
+        Directory.Move(live, old);
+        CopyDirectory(old, live);
+        File.WriteAllText(Path.Combine(live, "i18n", "zh.json"), "translated");
+        Directory.CreateDirectory(Path.Combine(fixture.Repository.Layout.TranslationsDirectory, transactionId));
+        var changed = before with
+        {
+            Revision = before.Revision + 1,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Items = before.Items.Select(item => item.LibraryItemId == target.LibraryItemId
+                ? item with { ContentGeneration = item.ContentGeneration + 1 }
+                : item).ToArray(),
+        };
+        File.WriteAllText(
+            fixture.Repository.Layout.IndexPath,
+            JsonSerializer.Serialize(changed, JsonOptions));
+        File.WriteAllText(
+            Path.Combine(staging, "transaction.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema = "junimogate-mod-translation-transaction/v1",
+                transactionId,
+                phase = "prepared",
+                libraryItemIds = new[] { target.LibraryItemId },
+            }, JsonOptions));
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var recovered = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal("original", File.ReadAllText(Path.Combine(live, "i18n", "zh.json")));
+        TestHarness.Equal(target.ContentGeneration, recovered.Items.Single().ContentGeneration);
+        TestHarness.False(Directory.Exists(Path.Combine(
+            fixture.Repository.Layout.TranslationsDirectory,
+            transactionId)));
+        TestHarness.False(Directory.Exists(staging));
     }
 
     public static void RejectsTargetsChangedAfterPreview()
@@ -361,7 +414,7 @@ internal static class ModTranslationInstallTests
             ("i18n/default.json", "{\"Key\":\"Default\"}"),
             ("i18n/zh.json", "original"));
         using var translation = Archive(("Concurrent/i18n/zh.json", "translated"));
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "concurrent.zip");
         try
@@ -426,7 +479,7 @@ internal static class ModTranslationInstallTests
         }
         translation.Position = 0;
 
-        var transaction = fixture.Repository.CreateTranslationTransaction(
+        var transaction = fixture.Translations.CreateInstallTransaction(
             [ModTranslationTarget.FromLibraryItem(target)],
             "unix-directory.zip");
         try
@@ -460,6 +513,11 @@ internal static class ModTranslationInstallTests
         }
     }
 
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
     private sealed class Fixture : IDisposable
     {
         public Fixture()
@@ -467,10 +525,12 @@ internal static class ModTranslationInstallTests
             Root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"junimogate-translation-{Guid.NewGuid():N}"));
             Directory.CreateDirectory(Root);
             Repository = new ModLibraryRepository(Root);
+            Translations = new ModTranslationHistoryRepository(Repository);
         }
 
         public string Root { get; }
         public ModLibraryRepository Repository { get; }
+        public ModTranslationHistoryRepository Translations { get; }
 
         public ModLibraryItem ImportSingle(
             string uniqueId,

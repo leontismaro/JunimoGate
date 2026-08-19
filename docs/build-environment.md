@@ -132,7 +132,7 @@ Extraction tests use synthetic legacy AssemblyStore v1, ELF64-wrapped AssemblySt
 
 ## Patched Harmony and cache helper
 
-RuntimeProbe and GameHost use the generated `Lib.Harmony 2.4.2-junimogate.63` package from the ignored local NuGet feed. The package is rebuilt from pinned Harmony, MonoMod, and iced source archives plus the tracked patch whenever it is absent or stale:
+RuntimeProbe and GameHost use the generated `Lib.Harmony 2.4.2-junimogate.64` package from the ignored local NuGet feed. The package is rebuilt from pinned Harmony, MonoMod, and iced source archives plus the tracked patch whenever it is absent or stale:
 
 ```bash
 ./build/build-harmony-android.sh

@@ -26,7 +26,7 @@ public sealed record ModManifestSummary(
 public sealed record ModLibraryItem(
     string Schema,
     string LibraryItemId,
-    string ContentId,
+    [property: JsonPropertyName("contentId")] string ImportedContentId,
     ModManifestSummary Manifest,
     string RelativeStoragePath,
     DateTimeOffset ImportedAtUtc,
@@ -36,13 +36,17 @@ public sealed record ModLibraryItem(
 {
     public const string CurrentSchema = "junimogate-mod-library-item/v1";
     public string? OriginalRootPath { get; init; }
+    public long ContentGeneration { get; init; } = 1;
+    public int CurrentFileCount { get; init; } = FileCount;
+    public long CurrentTotalBytes { get; init; } = TotalBytes;
 
     public void Validate()
     {
-        if (Schema != CurrentSchema || !ModLibraryItemId.IsValid(LibraryItemId) || !ModContentId.IsValid(ContentId) ||
+        if (Schema != CurrentSchema || !ModLibraryItemId.IsValid(LibraryItemId) || !ModContentId.IsValid(ImportedContentId) ||
             Manifest is null || string.IsNullOrWhiteSpace(Manifest.Name) || string.IsNullOrWhiteSpace(Manifest.Author) ||
             string.IsNullOrWhiteSpace(Manifest.Version) || string.IsNullOrWhiteSpace(Manifest.UniqueId) ||
-            ImportedAtUtc == default || FileCount < 1 || TotalBytes < 1 ||
+            ImportedAtUtc == default || FileCount < 1 || TotalBytes < 1 || ContentGeneration < 1 ||
+            CurrentFileCount < 1 || CurrentTotalBytes < 1 ||
             RelativeStoragePath != $"library/{LibraryItemId}/files")
         {
             throw new InvalidDataException("The Mod library item is malformed.");
@@ -81,15 +85,30 @@ public sealed record ModLibraryIndex(
             throw new InvalidDataException("The Mod library index is malformed.");
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        var contentIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Items)
         {
             item?.Validate();
-            if (item is null || !ids.Add(item.LibraryItemId) || !contentIds.Add(item.ContentId))
+            if (item is null || !ids.Add(item.LibraryItemId))
                 throw new InvalidDataException("The Mod library index contains a duplicate or null item.");
         }
         BundleCatalog.Validate(Items);
     }
+}
+
+internal sealed record ModLibraryIndexDocument(
+    string Schema,
+    long Revision,
+    DateTimeOffset UpdatedAtUtc,
+    IReadOnlyList<ModLibraryItem> Items,
+    string BundleCatalogFile);
+
+internal sealed record ModCatalogCommitJournal(
+    string Schema,
+    string Phase,
+    bool HadLibraryIndex,
+    bool HadBundleCatalog)
+{
+    public const string CurrentSchema = "junimogate-mod-catalog-commit/v1";
 }
 
 public sealed record ModLibraryDeleteResult(
@@ -106,19 +125,17 @@ public sealed class ModLibraryLayout
 
         Root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         IndexPath = Path.Combine(Root, "library-index.json");
+        BundleCatalogPath = Path.Combine(Root, "bundle-catalog.json");
         LibraryDirectory = Path.Combine(Root, "library");
         StagingDirectory = Path.Combine(Root, "staging");
-        QuarantineDirectory = Path.Combine(Root, "quarantine");
-        ExportsDirectory = Path.Combine(Root, "exports");
         TranslationsDirectory = Path.Combine(Root, "translations");
     }
 
     public string Root { get; }
     public string IndexPath { get; }
+    public string BundleCatalogPath { get; }
     public string LibraryDirectory { get; }
     public string StagingDirectory { get; }
-    public string QuarantineDirectory { get; }
-    public string ExportsDirectory { get; }
     public string TranslationsDirectory { get; }
 
     public string GetItemDirectory(string libraryItemId) => Path.Combine(LibraryDirectory, libraryItemId);
@@ -126,7 +143,7 @@ public sealed class ModLibraryLayout
     public string GetItemMetadataPath(string libraryItemId) => Path.Combine(GetItemDirectory(libraryItemId), "library-item.json");
 }
 
-public sealed partial class ModLibraryRepository
+public sealed class ModLibraryRepository : IModInstallRepository
 {
     private const int MaximumIndexBytes = 8 * 1024 * 1024;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(
@@ -137,14 +154,33 @@ public sealed partial class ModLibraryRepository
         Converters = { new JsonStringEnumConverter() },
     };
     private readonly SemaphoreSlim operationLock;
+    private readonly RepositoryChangeSignal changeSignal;
+    private readonly RepositoryChangeSignal bundleChangeSignal;
 
     public ModLibraryRepository(string root)
     {
         Layout = new ModLibraryLayout(root);
         operationLock = OperationLocks.GetOrAdd(Layout.Root, static _ => new SemaphoreSlim(1, 1));
+        changeSignal = ModRepositoryChangeSignals.Libraries.GetOrAdd(Layout.Root, static _ => new RepositoryChangeSignal());
+        bundleChangeSignal = ModRepositoryChangeSignals.LibraryBundles.GetOrAdd(Layout.Root, static _ => new RepositoryChangeSignal());
     }
 
     public ModLibraryLayout Layout { get; }
+    public event Action? Changed
+    {
+        add => changeSignal.Changed += value;
+        remove => changeSignal.Changed -= value;
+    }
+
+    public event Action? BundleChanged
+    {
+        add => bundleChangeSignal.Changed += value;
+        remove => bundleChangeSignal.Changed -= value;
+    }
+
+    internal SemaphoreSlim OperationLock => operationLock;
+    internal void NotifyChanged() => changeSignal.Publish();
+    internal void NotifyBundleChanged() => bundleChangeSignal.Publish();
 
     public IModArchiveInstallTransaction CreateInstallTransaction(
         string? sourceArchiveName = null,
@@ -155,7 +191,7 @@ public sealed partial class ModLibraryRepository
         IReadOnlyList<ModTranslationTarget> targets,
         string? sourceArchiveName = null,
         ModArchiveImportLimits? limits = null) =>
-        new(this, targets, sourceArchiveName, limits ?? ModArchiveImportLimits.Default);
+        new(new ModTranslationHistoryRepository(this), targets, sourceArchiveName, limits ?? ModArchiveImportLimits.Default);
 
     public async ValueTask<ModLibraryIndex> ReadAsync(CancellationToken cancellationToken = default)
     {
@@ -178,6 +214,127 @@ public sealed partial class ModLibraryRepository
     {
         var result = await DeleteManyAsync(new[] { libraryItemId }, cancellationToken).ConfigureAwait(false);
         return result.DeletedItems.Count == 1;
+    }
+
+    public async ValueTask<ModLibraryIndex> RecordContentMutationAsync(
+        IReadOnlyCollection<string> libraryItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(libraryItemIds);
+        var requested = libraryItemIds.ToHashSet(StringComparer.Ordinal);
+        if (requested.Any(id => !ModLibraryItemId.IsValid(id)))
+            throw new ArgumentException("A Mod library item ID is invalid.", nameof(libraryItemIds));
+        if (requested.Count == 0)
+            return await ReadAsync(cancellationToken).ConfigureAwait(false);
+
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
+            EnsureDirectories();
+            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var updated = await UpdateContentStatisticsUnlockedAsync(current, requested, cancellationToken)
+                .ConfigureAwait(false);
+            await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+            NotifyChanged();
+            return updated;
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
+    internal async ValueTask CommitFileMutationAsync(
+        string libraryItemId,
+        string relativePath,
+        string stagedFile,
+        bool requireExisting,
+        long? expectedLength,
+        DateTimeOffset? expectedLastWriteTimeUtc,
+        CancellationToken cancellationToken)
+    {
+        if (!ModLibraryItemId.IsValid(libraryItemId))
+            throw new ArgumentException("The Mod library item ID is invalid.", nameof(libraryItemId));
+        var safePath = SafeArchivePath.Parse(relativePath);
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
+            EnsureDirectories();
+            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            if (current.Items.All(item => item.LibraryItemId != libraryItemId))
+                throw new KeyNotFoundException("The Mod library item does not exist.");
+            var root = Layout.GetItemFilesDirectory(libraryItemId);
+            var destination = ResolveContained(root, safePath.Value);
+            var destinationInfo = new FileInfo(destination);
+            if (requireExisting)
+            {
+                if (!destinationInfo.Exists || expectedLength is null || expectedLastWriteTimeUtc is null ||
+                    destinationInfo.Length != expectedLength.Value ||
+                    destinationInfo.LastWriteTimeUtc != expectedLastWriteTimeUtc.Value.UtcDateTime)
+                {
+                    throw new InvalidOperationException("The Mod file changed after it was opened.");
+                }
+            }
+            else if (destinationInfo.Exists || Directory.Exists(destination))
+            {
+                throw new IOException("A Mod file or directory with that name already exists.");
+            }
+
+            var transactionId = Guid.NewGuid().ToString("N");
+            var transactionDirectory = Path.Combine(Layout.StagingDirectory, $"edit-{transactionId}");
+            Directory.CreateDirectory(transactionDirectory);
+            var newFile = Path.Combine(transactionDirectory, "new");
+            File.Move(stagedFile, newFile);
+            CopyIndexForRollback(transactionDirectory);
+            var journalPath = Path.Combine(transactionDirectory, "transaction.json");
+            await WriteJsonDurableAsync(
+                    journalPath,
+                    new ModFileMutationJournal(
+                        ModFileMutationJournal.CurrentSchema,
+                        transactionId,
+                        "prepared",
+                        libraryItemId,
+                        safePath.Value,
+                        requireExisting),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                if (requireExisting)
+                    File.Move(destination, Path.Combine(transactionDirectory, "old"));
+                File.Move(newFile, destination);
+                var updated = await UpdateContentStatisticsUnlockedAsync(
+                        current,
+                        new HashSet<string>(StringComparer.Ordinal) { libraryItemId },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                await WriteJsonDurableAsync(
+                        journalPath,
+                        new ModFileMutationJournal(
+                            ModFileMutationJournal.CurrentSchema,
+                            transactionId,
+                            "committed",
+                            libraryItemId,
+                            safePath.Value,
+                            requireExisting),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+                NotifyChanged();
+            }
+            catch
+            {
+                RecoverFileMutation(transactionDirectory);
+                throw;
+            }
+            TryDeleteDirectory(transactionDirectory);
+        }
+        finally
+        {
+            operationLock.Release();
+        }
     }
 
     public async ValueTask<ModLibraryDeleteResult> DeleteManyAsync(
@@ -222,7 +379,7 @@ public sealed partial class ModLibraryRepository
                 foreach (var directory in Directory.EnumerateDirectories(Layout.TranslationsDirectory))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var record = await ReadInstallationRecordAsync(directory, cancellationToken).ConfigureAwait(false);
+                    var record = await ModTranslationHistoryRepository.ReadInstallationRecordAsync(directory, cancellationToken).ConfigureAwait(false);
                     var removedFiles = record.Files.Where(file => requestedIds.Contains(file.LibraryItemId)).ToArray();
                     if (removedFiles.Length == 0)
                         continue;
@@ -236,12 +393,12 @@ public sealed partial class ModLibraryRepository
                             directory,
                             Path.Combine(Layout.StagingDirectory, $"delete-translation-old-{Guid.NewGuid():N}"),
                             staged));
-                        CopyDirectory(directory, staged, cancellationToken);
+                        ModTranslationHistoryRepository.CopyDirectory(directory, staged, cancellationToken);
                         foreach (var file in removedFiles.Where(file => file.BackupRelativePath is not null))
                         {
                             var backup = ResolveContained(staged, file.BackupRelativePath!);
                             TryDeleteFile(backup);
-                            RemoveEmptyParents(Path.GetDirectoryName(backup)!, staged);
+                            ModTranslationHistoryRepository.RemoveEmptyParents(Path.GetDirectoryName(backup)!, staged);
                         }
                         await WriteJsonDurableAsync(
                                 Path.Combine(staged, "installation.json"),
@@ -287,6 +444,7 @@ public sealed partial class ModLibraryRepository
                     BundleCatalog = updatedCatalog,
                 };
                 await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                NotifyChanged();
             }
             catch
             {
@@ -341,11 +499,14 @@ public sealed partial class ModLibraryRepository
             EnsureDirectories();
             var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var known = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
-            var knownByContent = current.Items.ToDictionary(item => item.ContentId, StringComparer.Ordinal);
+            var knownByImportedContent = current.Items
+                .GroupBy(item => item.ImportedContentId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
             var added = new List<ModLibraryItem>();
             var reused = new List<ModLibraryItem>();
             var recoveredItems = new List<ModLibraryItem>();
             var movedDirectories = new List<string>();
+            var repairedDirectories = new List<(string Destination, string? Backup)>();
             var resolvedPreparedByRoot = new Dictionary<string, PreparedModLibraryItem>(StringComparer.Ordinal);
             var resolvedItemsByPreparedId = new Dictionary<string, ModLibraryItem>(StringComparer.Ordinal);
             try
@@ -354,18 +515,70 @@ public sealed partial class ModLibraryRepository
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     prepared.Item.Validate();
-                    if (knownByContent.TryGetValue(prepared.Item.ContentId, out var existing))
+                    knownByImportedContent.TryGetValue(prepared.Item.ImportedContentId, out var matchingItems);
+                    ModLibraryItem? existing = null;
+                    var needsRepair = false;
+                    if (matchingItems is not null)
+                    {
+                        foreach (var candidate in matchingItems)
+                        {
+                            var itemDirectory = Layout.GetItemDirectory(candidate.LibraryItemId);
+                            var filesDirectory = Layout.GetItemFilesDirectory(candidate.LibraryItemId);
+                            if (!Directory.Exists(itemDirectory) || !Directory.Exists(filesDirectory))
+                            {
+                                existing = candidate;
+                                needsRepair = true;
+                                break;
+                            }
+                            string currentDigest;
+                            try
+                            {
+                                currentDigest = await ModImportUtilities.ComputeDirectoryContentDigestAsync(
+                                        filesDirectory,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+                            {
+                                continue;
+                            }
+                            if (currentDigest == candidate.ImportedContentId)
+                            {
+                                existing = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    if (existing is not null)
                     {
                         var existingDirectory = Layout.GetItemDirectory(existing.LibraryItemId);
-                        if (!Directory.Exists(existingDirectory))
+                        if (needsRepair)
                         {
+                            var repaired = existing with
+                            {
+                                ContentGeneration = checked(existing.ContentGeneration + 1),
+                                CurrentFileCount = prepared.Item.CurrentFileCount,
+                                CurrentTotalBytes = prepared.Item.CurrentTotalBytes,
+                            };
                             await WriteItemMetadataAsync(
                                     Path.Combine(prepared.Directory, "library-item.json"),
-                                    existing,
+                                    repaired,
                                     cancellationToken)
                                 .ConfigureAwait(false);
+                            string? backup = null;
+                            if (Directory.Exists(existingDirectory))
+                            {
+                                backup = Path.Combine(Layout.StagingDirectory, $"repair-{Guid.NewGuid():N}");
+                                Directory.Move(existingDirectory, backup);
+                            }
                             Directory.Move(prepared.Directory, existingDirectory);
-                            movedDirectories.Add(existingDirectory);
+                            repairedDirectories.Add((existingDirectory, backup));
+                            known[repaired.LibraryItemId] = repaired;
+                            var candidateIndex = matchingItems!.FindIndex(candidate =>
+                                candidate.LibraryItemId == repaired.LibraryItemId);
+                            matchingItems[candidateIndex] = repaired;
+                            recoveredItems.Add(repaired);
+                            existing = repaired;
                         }
                         reused.Add(existing);
                         resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = existing });
@@ -373,15 +586,15 @@ public sealed partial class ModLibraryRepository
                         continue;
                     }
 
-                    var orphaned = await FindOrphanByContentAsync(
-                            prepared.Item.ContentId,
+                    var orphaned = await FindOrphanByImportedContentAsync(
+                            prepared.Item.ImportedContentId,
                             known.Keys,
                             cancellationToken)
                         .ConfigureAwait(false);
                     if (orphaned is not null)
                     {
                         known.Add(orphaned.LibraryItemId, orphaned);
-                        knownByContent.Add(orphaned.ContentId, orphaned);
+                        AddImportedContentCandidate(knownByImportedContent, orphaned);
                         recoveredItems.Add(orphaned);
                         reused.Add(orphaned);
                         resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = orphaned });
@@ -411,7 +624,7 @@ public sealed partial class ModLibraryRepository
                     Directory.Move(prepared.Directory, destination);
                     movedDirectories.Add(destination);
                     known.Add(prepared.Item.LibraryItemId, prepared.Item);
-                    knownByContent.Add(prepared.Item.ContentId, prepared.Item);
+                    AddImportedContentCandidate(knownByImportedContent, prepared.Item);
                     added.Add(prepared.Item);
                     resolvedPreparedByRoot.Add(prepared.RootPath, prepared);
                     resolvedItemsByPreparedId.Add(prepared.Item.LibraryItemId, prepared.Item);
@@ -453,18 +666,32 @@ public sealed partial class ModLibraryRepository
                         BundleCatalog = catalog,
                     };
                     await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                    NotifyChanged();
                 }
 
-                return new ModArchiveImportResult(added, reused)
+                var result = new ModArchiveImportResult(added, reused)
                 {
                     Bundles = importedBundles,
                     ResolvedItemsByPreparedId = resolvedItemsByPreparedId,
                 };
+                foreach (var (_, backup) in repairedDirectories)
+                {
+                    if (backup is not null)
+                        TryDeleteDirectory(backup);
+                }
+                return result;
             }
             catch
             {
                 foreach (var directory in movedDirectories)
                     TryDeleteDirectory(directory);
+                for (var index = repairedDirectories.Count - 1; index >= 0; index--)
+                {
+                    var (destination, backup) = repairedDirectories[index];
+                    TryDeleteDirectory(destination);
+                    if (backup is not null && Directory.Exists(backup))
+                        Directory.Move(backup, destination);
+                }
                 throw;
             }
         }
@@ -517,6 +744,7 @@ public sealed partial class ModLibraryRepository
                 }
 
                 await WriteIndexAtomicAsync(previousIndex, cancellationToken).ConfigureAwait(false);
+                NotifyChanged();
             }
             catch
             {
@@ -549,13 +777,16 @@ public sealed partial class ModLibraryRepository
             var second = right[index];
             if (first.Schema != second.Schema ||
                 first.LibraryItemId != second.LibraryItemId ||
-                first.ContentId != second.ContentId ||
+                first.ImportedContentId != second.ImportedContentId ||
                 first.RelativeStoragePath != second.RelativeStoragePath ||
                 first.ImportedAtUtc != second.ImportedAtUtc ||
                 first.SourceArchiveName != second.SourceArchiveName ||
                 first.OriginalRootPath != second.OriginalRootPath ||
                 first.FileCount != second.FileCount ||
                 first.TotalBytes != second.TotalBytes ||
+                first.ContentGeneration != second.ContentGeneration ||
+                first.CurrentFileCount != second.CurrentFileCount ||
+                first.CurrentTotalBytes != second.CurrentTotalBytes ||
                 !ManifestsEqual(first.Manifest, second.Manifest))
             {
                 return false;
@@ -579,85 +810,187 @@ public sealed partial class ModLibraryRepository
             pair.First.MinimumVersion == pair.Second.MinimumVersion) &&
         left.UpdateKeys.SequenceEqual(right.UpdateKeys, StringComparer.Ordinal);
 
+    private static async ValueTask<(int FileCount, long TotalBytes)> ComputeCurrentStatisticsAsync(
+        string root,
+        CancellationToken cancellationToken)
+    {
+        var fileCount = 0;
+        long totalBytes = 0;
+        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var info = new FileInfo(path);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+                continue;
+            fileCount = checked(fileCount + 1);
+            totalBytes = checked(totalBytes + info.Length);
+        }
+        if (fileCount < 1 || totalBytes < 1)
+            throw new InvalidDataException("A Mod library item has no current content.");
+        await Task.CompletedTask.ConfigureAwait(false);
+        return (fileCount, totalBytes);
+    }
+
+    internal async ValueTask<ModLibraryIndex> UpdateContentStatisticsUnlockedAsync(
+        ModLibraryIndex current,
+        IReadOnlySet<string> requested,
+        CancellationToken cancellationToken)
+    {
+        var items = current.Items.ToArray();
+        var changed = false;
+        for (var index = 0; index < items.Length; index++)
+        {
+            if (!requested.Contains(items[index].LibraryItemId))
+                continue;
+            var filesRoot = Layout.GetItemFilesDirectory(items[index].LibraryItemId);
+            if (!Directory.Exists(filesRoot))
+                throw new DirectoryNotFoundException("The Mod library item directory is missing.");
+            var (fileCount, totalBytes) = await ComputeCurrentStatisticsAsync(filesRoot, cancellationToken)
+                .ConfigureAwait(false);
+            items[index] = items[index] with
+            {
+                ContentGeneration = checked(items[index].ContentGeneration + 1),
+                CurrentFileCount = fileCount,
+                CurrentTotalBytes = totalBytes,
+            };
+            changed = true;
+        }
+        if (!changed)
+            throw new KeyNotFoundException("A Mod library item does not exist.");
+        return current with
+        {
+            Revision = checked(current.Revision + 1),
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Items = items,
+        };
+    }
+
     internal static JsonSerializerOptions SerializerOptions => JsonOptions;
 
-    public async ValueTask<ModBundleMutationResult> SetBundleMemberUnlockedAsync(
-        string bundleId,
-        string uniqueId,
-        bool unlocked,
-        CancellationToken cancellationToken = default)
+    internal static string ResolveContained(string root, string relative)
     {
-        if (!ModContentId.IsValid(bundleId))
-            throw new ArgumentException("The Mod bundle ID is invalid.", nameof(bundleId));
-        if (string.IsNullOrWhiteSpace(uniqueId) || uniqueId.Length > 256)
-            throw new ArgumentException("The Mod UniqueID is invalid.", nameof(uniqueId));
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var path = Path.GetFullPath(Path.Combine(
+            normalizedRoot,
+            SafeArchivePath.Parse(relative).Value.Replace('/', Path.DirectorySeparatorChar)));
+        if (!path.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new InvalidDataException("A Mod path escaped its item directory.");
+        return path;
+    }
 
-        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+    internal void CopyIndexForRollback(string transactionDirectory)
+    {
+        if (!File.Exists(Layout.IndexPath))
+            throw new InvalidDataException("The Mod library index is missing before a content mutation.");
+        File.Copy(Layout.IndexPath, Path.Combine(transactionDirectory, "library-index.before.json"), overwrite: false);
+    }
+
+    internal void RestoreIndexRollbackCopy(string transactionDirectory)
+    {
+        var backup = Path.Combine(transactionDirectory, "library-index.before.json");
+        if (!File.Exists(backup))
+            return;
+        var temporary = Layout.IndexPath + $".{Guid.NewGuid():N}.rollback";
         try
         {
-            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
-            EnsureDirectories();
-            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
-            var bundle = current.BundleCatalog.Bundles.FirstOrDefault(candidate => candidate.BundleId == bundleId)
-                         ?? throw new KeyNotFoundException("The Mod bundle does not exist.");
-            if (!bundle.Members.Any(member => member.UniqueId.Equals(uniqueId, StringComparison.OrdinalIgnoreCase)))
-                throw new KeyNotFoundException("The Mod is not a member of the selected bundle.");
-
-            var overrides = current.BundleCatalog.UnlockOverrides.ToList();
-            var index = overrides.FindIndex(value =>
-                value.FamilyKey == bundle.FamilyKey && value.UniqueId.Equals(uniqueId, StringComparison.OrdinalIgnoreCase));
-            if (unlocked == index >= 0)
-            {
-                return new ModBundleMutationResult(
-                    current,
-                    Changed: false,
-                    BundleRemainsVisible: CountActiveMembers(bundle, overrides) >= 2);
-            }
-            if (unlocked)
-                overrides.Add(new ModBundleUnlockOverride(bundle.FamilyKey, uniqueId));
-            else
-                overrides.RemoveAt(index);
-
-            var now = DateTimeOffset.UtcNow;
-            var catalog = current.BundleCatalog with
-            {
-                Revision = checked(current.BundleCatalog.Revision + 1),
-                UpdatedAtUtc = now,
-                UnlockOverrides = overrides
-                    .OrderBy(value => value.FamilyKey, StringComparer.Ordinal)
-                    .ThenBy(value => value.UniqueId, StringComparer.OrdinalIgnoreCase)
-                    .ToArray(),
-            };
-            var updated = current with
-            {
-                Revision = checked(current.Revision + 1),
-                UpdatedAtUtc = now,
-                BundleCatalog = catalog,
-            };
-            await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-            return new ModBundleMutationResult(
-                updated,
-                Changed: true,
-                BundleRemainsVisible: CountActiveMembers(bundle, overrides) >= 2);
+            File.Copy(backup, temporary, overwrite: false);
+            File.Move(temporary, Layout.IndexPath, overwrite: true);
         }
         finally
         {
-            operationLock.Release();
+            TryDeleteFile(temporary);
         }
     }
 
-    private void EnsureDirectories()
+    internal static async ValueTask WriteJsonDurableAsync<T>(
+        string path,
+        T value,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".tmp";
+        try
+        {
+            await using (var stream = new FileStream(
+                             temporary,
+                             FileMode.Create,
+                             FileAccess.Write,
+                             FileShare.None,
+                             16 * 1024,
+                             FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            TryDeleteFile(temporary);
+        }
+    }
+
+    internal void EnsureDirectories()
     {
         Directory.CreateDirectory(Layout.Root);
         Directory.CreateDirectory(Layout.LibraryDirectory);
         Directory.CreateDirectory(Layout.StagingDirectory);
-        Directory.CreateDirectory(Layout.QuarantineDirectory);
-        Directory.CreateDirectory(Layout.ExportsDirectory);
         Directory.CreateDirectory(Layout.TranslationsDirectory);
-        RecoverTranslationTransactions();
+        RecoverCatalogCommits();
+        RecoverFileMutations();
+        new ModTranslationHistoryRepository(this).RecoverTranslationTransactions();
     }
 
-    private async ValueTask<FileStream> AcquireProcessOperationLockAsync(CancellationToken cancellationToken)
+    private void RecoverFileMutations()
+    {
+        if (!Directory.Exists(Layout.StagingDirectory))
+            return;
+        foreach (var directory in Directory.EnumerateDirectories(Layout.StagingDirectory, "edit-*"))
+        {
+            if (File.Exists(Path.Combine(directory, "transaction.json")))
+                RecoverFileMutation(directory);
+        }
+    }
+
+    private void RecoverFileMutation(string transactionDirectory)
+    {
+        ModFileMutationJournal journal;
+        try
+        {
+            journal = JsonSerializer.Deserialize<ModFileMutationJournal>(
+                          File.ReadAllBytes(Path.Combine(transactionDirectory, "transaction.json")),
+                          SerializerOptions)
+                      ?? throw new InvalidDataException("A Mod file mutation journal is empty.");
+            journal.Validate();
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
+        {
+            return;
+        }
+        if (journal.Phase == "committed")
+        {
+            TryDeleteDirectory(transactionDirectory);
+            return;
+        }
+
+        var live = ResolveContained(Layout.GetItemFilesDirectory(journal.LibraryItemId), journal.RelativePath);
+        var old = Path.Combine(transactionDirectory, "old");
+        if (journal.HadOriginal)
+        {
+            if (File.Exists(old))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(live)!);
+                File.Copy(old, live, overwrite: true);
+            }
+        }
+        else if (File.Exists(live))
+            TryDeleteFile(live);
+        RestoreIndexRollbackCopy(transactionDirectory);
+        TryDeleteDirectory(transactionDirectory);
+    }
+
+    internal async ValueTask<FileStream> AcquireProcessOperationLockAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Layout.Root);
         var lockPath = Path.Combine(Layout.Root, ".library-operation.lock");
@@ -681,15 +1014,18 @@ public sealed partial class ModLibraryRepository
         }
     }
 
-    private async ValueTask<ModLibraryIndex> ReadUnlockedAsync(CancellationToken cancellationToken)
+    internal async ValueTask<ModLibraryIndex> ReadUnlockedAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(Layout.IndexPath))
         {
-            return new ModLibraryIndex(
+            var empty = new ModLibraryIndex(
                 ModLibraryIndex.CurrentSchema,
                 Revision: 1,
                 DateTimeOffset.UtcNow,
                 Array.Empty<ModLibraryItem>());
+            if (File.Exists(Layout.BundleCatalogPath))
+                throw new InvalidDataException("The Bundle catalog exists without its Mod library index.");
+            return empty;
         }
 
         var file = new FileInfo(Layout.IndexPath);
@@ -705,9 +1041,30 @@ public sealed partial class ModLibraryRepository
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         try
         {
-            var index = await JsonSerializer.DeserializeAsync<ModLibraryIndex>(stream, JsonOptions, cancellationToken)
-                .ConfigureAwait(false) ?? throw new InvalidDataException("The Mod library index is empty.");
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var index = document.RootElement.Deserialize<ModLibraryIndex>(JsonOptions)
+                        ?? throw new InvalidDataException("The Mod library index is empty.");
             index.Validate();
+            var usesSeparateCatalog = document.RootElement.TryGetProperty("bundleCatalogFile", out var catalogFile);
+            if (usesSeparateCatalog &&
+                (catalogFile.ValueKind != JsonValueKind.String ||
+                 catalogFile.GetString() != Path.GetFileName(Layout.BundleCatalogPath)))
+            {
+                throw new InvalidDataException("The Mod library Bundle catalog reference is invalid.");
+            }
+            if (usesSeparateCatalog)
+            {
+                if (!File.Exists(Layout.BundleCatalogPath))
+                    throw new InvalidDataException("The Mod library Bundle catalog is missing.");
+                var catalog = await ReadBundleCatalogDocumentAsync(cancellationToken).ConfigureAwait(false);
+                catalog.Validate(index.Items);
+                return index with { BundleCatalog = catalog };
+            }
+            if (File.Exists(Layout.BundleCatalogPath))
+                throw new InvalidDataException("The Mod library has an unreferenced Bundle catalog.");
+
+            await WriteIndexAtomicAsync(index, cancellationToken).ConfigureAwait(false);
             return index;
         }
         catch (JsonException exception)
@@ -733,8 +1090,8 @@ public sealed partial class ModLibraryRepository
         stream.Flush(flushToDisk: true);
     }
 
-    private async ValueTask<ModLibraryItem?> FindOrphanByContentAsync(
-        string contentId,
+    private async ValueTask<ModLibraryItem?> FindOrphanByImportedContentAsync(
+        string importedContentId,
         IEnumerable<string> indexedItemIds,
         CancellationToken cancellationToken)
     {
@@ -762,15 +1119,34 @@ public sealed partial class ModLibraryRepository
             {
                 continue;
             }
-            if (candidate.LibraryItemId != info.Name || candidate.ContentId != contentId)
+            if (candidate.LibraryItemId != info.Name || candidate.ImportedContentId != importedContentId)
                 continue;
-            if (!Directory.Exists(Path.Combine(directory, "files")))
+            var filesDirectory = Path.Combine(directory, "files");
+            if (!Directory.Exists(filesDirectory))
                 throw new InvalidDataException("An orphaned Mod library directory is incomplete.");
+            var currentDigest = await ModImportUtilities.ComputeDirectoryContentDigestAsync(
+                    filesDirectory,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (currentDigest != importedContentId)
+                continue;
             if (match is not null)
                 throw new InvalidDataException("Multiple orphaned Mod library items have the same imported content identity.");
             match = candidate;
         }
         return match;
+    }
+
+    private static void AddImportedContentCandidate(
+        IDictionary<string, List<ModLibraryItem>> candidates,
+        ModLibraryItem item)
+    {
+        if (!candidates.TryGetValue(item.ImportedContentId, out var matches))
+        {
+            matches = new List<ModLibraryItem>();
+            candidates.Add(item.ImportedContentId, matches);
+        }
+        matches.Add(item);
     }
 
     private static IReadOnlyList<ModBundleDefinition> CreateImportedBundles(
@@ -825,7 +1201,7 @@ public sealed partial class ModLibraryRepository
         };
     }
 
-    private static int CountActiveMembers(
+    internal static int CountActiveMembers(
         ModBundleDefinition bundle,
         IReadOnlyList<ModBundleUnlockOverride> overrides)
     {
@@ -836,28 +1212,172 @@ public sealed partial class ModLibraryRepository
         return bundle.Members.Count(member => !unlocked.Contains(member.UniqueId));
     }
 
-    private async ValueTask WriteIndexAtomicAsync(
+    internal async ValueTask WriteIndexAtomicAsync(
         ModLibraryIndex index,
         CancellationToken cancellationToken)
     {
         index.Validate();
-        var temporary = Layout.IndexPath + $".{Guid.NewGuid():N}.tmp";
+        var transactionDirectory = Path.Combine(Layout.StagingDirectory, $"catalog-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(transactionDirectory);
+        var hadLibraryIndex = File.Exists(Layout.IndexPath);
+        var hadBundleCatalog = File.Exists(Layout.BundleCatalogPath);
         try
         {
-            await using (var stream = new FileStream(
-                             temporary,
-                             FileMode.CreateNew,
-                             FileAccess.Write,
-                             FileShare.None,
-                             32 * 1024,
-                             FileOptions.Asynchronous | FileOptions.SequentialScan))
+            if (hadLibraryIndex)
+                File.Copy(Layout.IndexPath, Path.Combine(transactionDirectory, "library-index.before.json"));
+            if (hadBundleCatalog)
+                File.Copy(Layout.BundleCatalogPath, Path.Combine(transactionDirectory, "bundle-catalog.before.json"));
+
+            await WriteJsonDurableAsync(
+                    Path.Combine(transactionDirectory, "library-index.new.json"),
+                    new ModLibraryIndexDocument(
+                        index.Schema,
+                        index.Revision,
+                        index.UpdatedAtUtc,
+                        index.Items,
+                        Path.GetFileName(Layout.BundleCatalogPath)),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            await WriteJsonDurableAsync(
+                    Path.Combine(transactionDirectory, "bundle-catalog.new.json"),
+                    index.BundleCatalog,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var journalPath = Path.Combine(transactionDirectory, "transaction.json");
+            await WriteJsonDurableAsync(
+                    journalPath,
+                    new ModCatalogCommitJournal(
+                        ModCatalogCommitJournal.CurrentSchema,
+                        "prepared",
+                        hadLibraryIndex,
+                        hadBundleCatalog),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            File.Move(
+                Path.Combine(transactionDirectory, "bundle-catalog.new.json"),
+                Layout.BundleCatalogPath,
+                overwrite: true);
+            File.Move(
+                Path.Combine(transactionDirectory, "library-index.new.json"),
+                Layout.IndexPath,
+                overwrite: true);
+            await WriteJsonDurableAsync(
+                    journalPath,
+                    new ModCatalogCommitJournal(
+                        ModCatalogCommitJournal.CurrentSchema,
+                        "committed",
+                        hadLibraryIndex,
+                        hadBundleCatalog),
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            RecoverCatalogCommit(transactionDirectory);
+            throw;
+        }
+        finally
+        {
+            TryDeleteDirectory(transactionDirectory);
+        }
+    }
+
+    internal async ValueTask WriteBundleCatalogAtomicAsync(
+        ModBundleCatalog catalog,
+        IReadOnlyList<ModLibraryItem> libraryItems,
+        CancellationToken cancellationToken)
+    {
+        catalog.Validate(libraryItems);
+        await WriteJsonDurableAsync(Layout.BundleCatalogPath, catalog, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<ModBundleCatalog> ReadBundleCatalogDocumentAsync(CancellationToken cancellationToken)
+    {
+        var file = new FileInfo(Layout.BundleCatalogPath);
+        if (!file.Exists || file.Length is < 1 or > MaximumIndexBytes)
+            throw new InvalidDataException("The Bundle catalog has an invalid size.");
+        await using var stream = new FileStream(
+            Layout.BundleCatalogPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            32 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        try
+        {
+            return await JsonSerializer.DeserializeAsync<ModBundleCatalog>(stream, JsonOptions, cancellationToken)
+                       .ConfigureAwait(false)
+                   ?? throw new InvalidDataException("The Bundle catalog is empty.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The Bundle catalog JSON is malformed.", exception);
+        }
+    }
+
+    private void RecoverCatalogCommits()
+    {
+        foreach (var directory in Directory.EnumerateDirectories(Layout.StagingDirectory, "catalog-*"))
+        {
+            if (File.Exists(Path.Combine(directory, "transaction.json")))
+                RecoverCatalogCommit(directory);
+            else
+                TryDeleteDirectory(directory);
+        }
+    }
+
+    private void RecoverCatalogCommit(string transactionDirectory)
+    {
+        ModCatalogCommitJournal journal;
+        try
+        {
+            journal = JsonSerializer.Deserialize<ModCatalogCommitJournal>(
+                          File.ReadAllBytes(Path.Combine(transactionDirectory, "transaction.json")),
+                          JsonOptions)
+                      ?? throw new InvalidDataException("A catalog commit journal is empty.");
+            if (journal.Schema != ModCatalogCommitJournal.CurrentSchema ||
+                journal.Phase is not ("prepared" or "committed"))
             {
-                await JsonSerializer.SerializeAsync(stream, index, JsonOptions, cancellationToken)
-                    .ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
+                throw new InvalidDataException("A catalog commit journal is malformed.");
             }
-            File.Move(temporary, Layout.IndexPath, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
+        {
+            return;
+        }
+
+        if (journal.Phase == "committed")
+        {
+            TryDeleteDirectory(transactionDirectory);
+            return;
+        }
+
+        RestoreCatalogDocument(
+            Path.Combine(transactionDirectory, "library-index.before.json"),
+            Layout.IndexPath,
+            journal.HadLibraryIndex);
+        RestoreCatalogDocument(
+            Path.Combine(transactionDirectory, "bundle-catalog.before.json"),
+            Layout.BundleCatalogPath,
+            journal.HadBundleCatalog);
+        TryDeleteDirectory(transactionDirectory);
+    }
+
+    private static void RestoreCatalogDocument(string backup, string destination, bool hadDocument)
+    {
+        if (!hadDocument)
+        {
+            TryDeleteFile(destination);
+            return;
+        }
+        if (!File.Exists(backup))
+            throw new InvalidDataException("A catalog commit rollback document is missing.");
+        var temporary = destination + $".{Guid.NewGuid():N}.rollback";
+        try
+        {
+            File.Copy(backup, temporary, overwrite: false);
+            File.Move(temporary, destination, overwrite: true);
         }
         finally
         {
@@ -916,6 +1436,27 @@ public sealed partial class ModLibraryRepository
 }
 
 internal sealed record PreparedModLibraryItem(ModLibraryItem Item, string Directory, string RootPath = "");
+
+internal sealed record ModFileMutationJournal(
+    string Schema,
+    string TransactionId,
+    string Phase,
+    string LibraryItemId,
+    string RelativePath,
+    bool HadOriginal)
+{
+    public const string CurrentSchema = "junimogate-mod-file-mutation/v1";
+
+    public void Validate()
+    {
+        if (Schema != CurrentSchema || !Guid.TryParseExact(TransactionId, "N", out _) ||
+            Phase is not ("prepared" or "committed") || !ModLibraryItemId.IsValid(LibraryItemId) ||
+            !SafeArchivePath.TryParse(RelativePath, out var parsed) || parsed.Value != RelativePath)
+        {
+            throw new InvalidDataException("A Mod file mutation journal is malformed.");
+        }
+    }
+}
 
 internal static class ModContentId
 {

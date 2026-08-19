@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -87,15 +88,27 @@ public sealed class ModProfileV2Repository
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
     };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string profilesRoot;
-    private readonly SemaphoreSlim operationLock = new(1, 1);
+    private readonly SemaphoreSlim operationLock;
+    private readonly RepositoryChangeSignal changeSignal;
+    public event Action? Changed
+    {
+        add => changeSignal.Changed += value;
+        remove => changeSignal.Changed -= value;
+    }
 
     public ModProfileV2Repository(string profilesRoot)
     {
         if (string.IsNullOrWhiteSpace(profilesRoot) || !Path.IsPathFullyQualified(profilesRoot))
             throw new ArgumentException("The profiles root must be absolute.", nameof(profilesRoot));
         this.profilesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot));
+        operationLock = OperationLocks.GetOrAdd(this.profilesRoot, static _ => new SemaphoreSlim(1, 1));
+        changeSignal = ModRepositoryChangeSignals.Profiles.GetOrAdd(this.profilesRoot, static _ => new RepositoryChangeSignal());
     }
+
+    internal string ProfilesRoot => profilesRoot;
 
     public async ValueTask<IReadOnlyList<ModProfileV2>> ListAsync(
         CancellationToken cancellationToken = default)
@@ -182,6 +195,7 @@ public sealed class ModProfileV2Repository
                 {
                     await WriteAtomicAsync(GetProfilePath(profileId), profile, overwrite: false, cancellationToken)
                         .ConfigureAwait(false);
+                    changeSignal.Publish();
                     return profile;
                 }
                 catch
@@ -190,6 +204,42 @@ public sealed class ModProfileV2Repository
                     throw;
                 }
             }
+        }
+        finally
+        {
+            operationLock.Release();
+        }
+    }
+
+    public async ValueTask<ModProfileV2> OpenOrCreateDefaultAsync(
+        string displayName = "Default",
+        CancellationToken cancellationToken = default)
+    {
+        var profileId = ProfileId.Parse("default");
+        var normalizedName = NormalizeDisplayName(displayName);
+        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Directory.CreateDirectory(profilesRoot);
+            await EnsureNoModsUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            var path = GetProfilePath(profileId);
+            if (File.Exists(path))
+                return await ReadV2UnlockedAsync(profileId, cancellationToken).ConfigureAwait(false);
+            Directory.CreateDirectory(GetProfileDirectory(profileId));
+            var now = DateTimeOffset.UtcNow;
+            var profile = new ModProfileV2(
+                ModProfileV2.CurrentSchema,
+                profileId.Value,
+                normalizedName,
+                1,
+                null,
+                Array.Empty<ModProfileMember>(),
+                now,
+                now,
+                null);
+            await WriteAtomicAsync(path, profile, overwrite: false, cancellationToken).ConfigureAwait(false);
+            changeSignal.Publish();
+            return profile;
         }
         finally
         {
@@ -238,6 +288,7 @@ public sealed class ModProfileV2Repository
                     profile.Validate();
                     await WriteAtomicAsync(GetProfilePath(profileId), profile, overwrite: false, cancellationToken)
                         .ConfigureAwait(false);
+                    changeSignal.Publish();
                     return profile;
                 }
                 catch
@@ -288,6 +339,7 @@ public sealed class ModProfileV2Repository
             updated.Validate();
             await WriteAtomicAsync(GetProfilePath(profileId), updated, overwrite: true, cancellationToken)
                 .ConfigureAwait(false);
+            changeSignal.Publish();
             return updated;
         }
         finally
@@ -296,7 +348,7 @@ public sealed class ModProfileV2Repository
         }
     }
 
-    public async ValueTask<bool> DeleteAsync(
+    internal async ValueTask<bool> DeleteAsync(
         ProfileId profileId,
         CancellationToken cancellationToken = default)
     {
@@ -315,6 +367,7 @@ public sealed class ModProfileV2Repository
             var removed = Path.Combine(stagingRoot, $"delete-{Guid.NewGuid():N}");
             Directory.Move(source, removed);
             TryDeleteDirectory(removed);
+            changeSignal.Publish();
             return true;
         }
         finally
@@ -343,6 +396,7 @@ public sealed class ModProfileV2Repository
             if (existing is not null)
                 return existing;
             await WriteAtomicAsync(path, profile, overwrite: true, cancellationToken).ConfigureAwait(false);
+            changeSignal.Publish();
             return profile;
         }
         finally
@@ -378,6 +432,7 @@ public sealed class ModProfileV2Repository
         try
         {
             await WriteAtomicAsync(path, profile, overwrite: false, cancellationToken).ConfigureAwait(false);
+            changeSignal.Publish();
             return profile;
         }
         catch (IOException) when (File.Exists(path))

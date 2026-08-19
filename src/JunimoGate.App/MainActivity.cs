@@ -99,7 +99,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         ShowOpenSourceNoticeIfNeeded();
 
         lifetimeCancellation = new CancellationTokenSource();
-        modManagement = new ModManagementUiSession(AndroidPrivateStorage.GetUserDataRoot(this));
+        modManagement = new ModManagementUiSession(this, AndroidPrivateStorage.GetUserDataRoot(this));
         coordinator = new LauncherCoordinator(ApplicationContext ?? this);
         coordinator.StateChanged += OnLauncherStateChanged;
         OnLauncherStateChanged(coordinator.CurrentState);
@@ -222,7 +222,6 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
         try
         {
             await coordinator.UpdateBindingPolicyAsync(policy, cancellation.Token);
-            modManagement?.NotifyProfilesChanged();
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -237,6 +236,9 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
 
     internal ValueTask RefreshLauncherProfileAsync(CancellationToken cancellationToken) =>
         coordinator?.RefreshProfileAsync(cancellationToken) ?? ValueTask.CompletedTask;
+
+    internal ValueTask EnsureModProfilesReadyAsync(CancellationToken cancellationToken) =>
+        coordinator?.EnsureModProfilesReadyAsync(cancellationToken) ?? ValueTask.CompletedTask;
 
     private async Task RepairGameEnvironmentAsync()
     {
@@ -309,8 +311,7 @@ public sealed class MainActivity : AppCompatActivity, ILauncherUiHost
             var handle = await coordinator.InitializeAsync(cancellationToken);
             if (modManagement is { } session)
             {
-                session.NotifyLibraryChanged();
-                session.NotifyProfilesChanged();
+                session.ResetSnapshots();
                 _ = PreloadModManagementAsync(session, cancellationToken);
             }
             if (handle is not null && !destroyed)

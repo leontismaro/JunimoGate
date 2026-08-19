@@ -42,10 +42,9 @@ internal static class GameLaunchSchemaTests
         TestHarness.False(json.ContainsKey("internalDirectory"));
     }
 
-    public static void RetainsThePreviousDescriptorSchemaForPendingLaunches()
+    public static void UsesOnlyTheCurrentDescriptorSchema()
     {
         TestHarness.Equal("junimogate-game-launch-descriptor/v5", GameLaunchSchema.Descriptor);
-        TestHarness.Equal("junimogate-game-launch-descriptor/v4", GameLaunchSchema.LegacyDescriptorV4);
     }
 
     private static PreparedGameSnapshot CreateSnapshot(string schema) => new(

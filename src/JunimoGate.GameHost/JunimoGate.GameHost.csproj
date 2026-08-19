@@ -5,7 +5,7 @@
     <JunimoGateRequiresSmapi>true</JunimoGateRequiresSmapi>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.63" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2-junimogate.64" />
     <PackageReference Include="MonoGame.Framework.Android" Version="1.0.0-junimogate.f5d8bf.4" />
     <Reference Include="StardewValley">
       <HintPath>$(JunimoGateGameReferenceDir)/StardewValley.dll</HintPath>

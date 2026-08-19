@@ -7,7 +7,6 @@ public static class GameLaunchSchema
     public const string Snapshot = "junimogate-prepared-game-snapshot/v8";
     public const string LegacySnapshotV7 = "junimogate-prepared-game-snapshot/v7";
     public const string Descriptor = "junimogate-game-launch-descriptor/v5";
-    public const string LegacyDescriptorV4 = "junimogate-game-launch-descriptor/v4";
     public const string Activation = "junimogate-game-activation/v1";
     public const string Outcome = "junimogate-game-launch-outcome/v1";
 

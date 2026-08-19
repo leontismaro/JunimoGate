@@ -52,8 +52,10 @@ internal static class ModImportUtilities
                     throw new InvalidDataException("UpdateKeys must be an array.");
                 foreach (var updateKey in updateKeyArray.EnumerateArray())
                 {
-                    if (updateKey.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(updateKey.GetString()))
-                        throw new InvalidDataException("Each UpdateKeys entry must be a non-empty string.");
+                    if (updateKey.ValueKind != JsonValueKind.String)
+                        throw new InvalidDataException("Each UpdateKeys entry must be a string.");
+                    if (string.IsNullOrWhiteSpace(updateKey.GetString()))
+                        continue;
                     var value = updateKey.GetString()!.Trim();
                     if (value.Length > 4096)
                         throw new InvalidDataException("A Mod UpdateKeys entry is too long.");
@@ -88,6 +90,56 @@ internal static class ModImportUtilities
         BinaryPrimitives.WriteInt64BigEndian(header[4..], length);
         hash.AppendData(header);
         hash.AppendData(pathBytes);
+    }
+
+    public static async ValueTask<string> ComputeDirectoryContentDigestAsync(
+        string filesRoot,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(filesRoot) || !Path.IsPathFullyQualified(filesRoot))
+            throw new ArgumentException("The Mod files root must be absolute.", nameof(filesRoot));
+        if (!Directory.Exists(filesRoot))
+            throw new DirectoryNotFoundException("The Mod files root is missing.");
+
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(filesRoot));
+        var files = Directory.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories)
+            .Select(path =>
+            {
+                var relative = Path.GetRelativePath(normalizedRoot, path)
+                    .Replace(Path.DirectorySeparatorChar, '/');
+                return (Path: path, Relative: SafeArchivePath.Parse(relative).Value);
+            })
+            .OrderBy(file => file.Relative, StringComparer.Ordinal)
+            .ToArray();
+        using var contentHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[128 * 1024];
+        foreach (var file in files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var info = new FileInfo(file.Path);
+            if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("A Mod content file is unavailable or unsupported.");
+            AppendPathHeader(contentHash, file.Relative, info.Length);
+            await using var input = new FileStream(
+                file.Path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            long readBytes = 0;
+            while (true)
+            {
+                var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+                contentHash.AppendData(buffer, 0, read);
+                readBytes = checked(readBytes + read);
+            }
+            if (readBytes != info.Length)
+                throw new InvalidDataException("A Mod content file changed while its digest was calculated.");
+        }
+        return Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
     }
 
     public static bool IsContained(string root, string path)

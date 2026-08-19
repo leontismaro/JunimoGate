@@ -161,7 +161,7 @@ RuntimeProbe and build tooling also use the listed MonoMod dependencies. Their
 licenses apply only to the identified components and do not apply MIT to
 JunimoGate as a whole.
 
-- **Lib.Harmony 2.4.2-junimogate.63**
+- **Lib.Harmony 2.4.2-junimogate.64**
   - repository: <https://github.com/pardeike/Harmony>
   - upstream commit: `a264a1bf1ce689e4589e8dcc54b1e2818602a90a`
   - bundled pardeike/MonoMod commit: `dfc30a1506d37fb88a2c2be004f525205f46a24c`

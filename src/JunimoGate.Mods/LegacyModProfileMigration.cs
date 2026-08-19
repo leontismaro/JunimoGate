@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace JunimoGate.Mods;
 
@@ -13,6 +15,15 @@ public sealed record LegacyModProfileMigrationResult(
 
 public sealed class LegacyModProfileMigrator
 {
+    private const int MaximumProfileBytes = 64 * 1024;
+    private const string LegacyProfileSchema = "junimogate-mod-profile/v1";
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MigrationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private static readonly JsonSerializerOptions LegacyProfileJsonOptions = new(JsonSerializerDefaults.General)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() },
+    };
     private readonly string profilesRoot;
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
@@ -38,9 +49,28 @@ public sealed class LegacyModProfileMigrator
         string displayName,
         CancellationToken cancellationToken = default)
     {
+        var migrationLock = MigrationLocks.GetOrAdd(profilesRoot, static _ => new SemaphoreSlim(1, 1));
+        await migrationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await MigrateUnlockedAsync(profileId, displayName, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            migrationLock.Release();
+        }
+    }
+
+    private async ValueTask<LegacyModProfileMigrationResult> MigrateUnlockedAsync(
+        ProfileId profileId,
+        string displayName,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var migrated = await profiles.ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
+            var migratedLayout = new LegacyProfileLayout(profilesRoot, profileId);
+            await DeleteLegacyDirectoriesAsync(migratedLayout, cancellationToken).ConfigureAwait(false);
             return new LegacyModProfileMigrationResult(
                 migrated,
                 ImportedItems: 0,
@@ -54,9 +84,8 @@ public sealed class LegacyModProfileMigrator
             // A v1 document is the expected migration source.
         }
 
-        var legacy = await new ModProfileRepository(profilesRoot)
-            .ReadAsync(profileId, cancellationToken).ConfigureAwait(false);
-        var layout = new ProfileLayout(profilesRoot, profileId);
+        var legacy = await ReadLegacyProfileAsync(profileId, cancellationToken).ConfigureAwait(false);
+        var layout = new LegacyProfileLayout(profilesRoot, profileId);
         var candidates = new List<LegacyModDirectoryCandidate>();
         candidates.AddRange(await DiscoverAsync(layout.EnabledDirectory, enabled: true, cancellationToken)
             .ConfigureAwait(false));
@@ -102,6 +131,8 @@ public sealed class LegacyModProfileMigrator
                 now < legacy.UpdatedAtUtc ? legacy.UpdatedAtUtc : now,
                 Description: null);
             var stored = await profiles.WriteMigratedAsync(migratedProfile, cancellationToken).ConfigureAwait(false);
+            await ValidateMigratedProfileAsync(stored, cancellationToken).ConfigureAwait(false);
+            await DeleteLegacyDirectoriesAsync(layout, cancellationToken).ConfigureAwait(false);
             return new LegacyModProfileMigrationResult(
                 stored,
                 import.AddedItems.Count,
@@ -114,6 +145,76 @@ public sealed class LegacyModProfileMigrator
         {
             ModLibraryRepository.TryDeleteDirectory(transactionRoot);
         }
+    }
+
+    private async ValueTask ValidateMigratedProfileAsync(
+        ModProfileV2 migrated,
+        CancellationToken cancellationToken)
+    {
+        var verified = await profiles.ReadAsync(ProfileId.Parse(migrated.Id), cancellationToken)
+            .ConfigureAwait(false);
+        var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var known = index.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
+        foreach (var member in verified.Members)
+        {
+            if (member.LibraryItemId is not { } itemId)
+                continue;
+            if (!known.ContainsKey(itemId) || !Directory.Exists(library.Layout.GetItemFilesDirectory(itemId)))
+            {
+                throw new InvalidDataException("The migrated Profile references missing Mod content.");
+            }
+        }
+    }
+
+    public async ValueTask<IReadOnlyList<LegacyModProfileMigrationResult>> MigrateAllAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var migrationLock = MigrationLocks.GetOrAdd(profilesRoot, static _ => new SemaphoreSlim(1, 1));
+        await migrationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!Directory.Exists(profilesRoot))
+                return Array.Empty<LegacyModProfileMigrationResult>();
+            var results = new List<LegacyModProfileMigrationResult>();
+            foreach (var directory in Directory.EnumerateDirectories(profilesRoot)
+                         .OrderBy(Path.GetFileName, StringComparer.Ordinal))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(directory);
+                if (!ProfileId.TryParse(name, out var profileId) || profileId.Value == ModProfileV2.NoModsId ||
+                    !File.Exists(Path.Combine(directory, "profile.json")))
+                {
+                    continue;
+                }
+                results.Add(await MigrateUnlockedAsync(
+                        profileId,
+                        profileId.Value == "default" ? "Default" : profileId.Value,
+                        cancellationToken)
+                    .ConfigureAwait(false));
+            }
+            return results;
+        }
+        finally
+        {
+            migrationLock.Release();
+        }
+    }
+
+    private static ValueTask DeleteLegacyDirectoriesAsync(
+        LegacyProfileLayout layout,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var path in new[]
+                 {
+                     layout.ModsDirectory,
+                     layout.DownloadsDirectory,
+                     layout.StagingDirectory,
+                 })
+        {
+            ModLibraryRepository.TryDeleteDirectory(path);
+        }
+        return ValueTask.CompletedTask;
     }
 
     private async ValueTask<IReadOnlyList<LegacyModDirectoryCandidate>> DiscoverAsync(
@@ -219,12 +320,12 @@ public sealed class LegacyModProfileMigrator
                 throw new InvalidDataException("A legacy Mod file changed while being copied.");
         }
 
-        var contentId = Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
+        var importedContentId = Convert.ToHexString(contentHash.GetHashAndReset()).ToLowerInvariant();
         var libraryItemId = ModLibraryItemId.Create();
         var item = new ModLibraryItem(
             ModLibraryItem.CurrentSchema,
             libraryItemId,
-            contentId,
+            importedContentId,
             candidate.Manifest,
             $"library/{libraryItemId}/files",
             DateTimeOffset.UtcNow,
@@ -321,6 +422,73 @@ public sealed class LegacyModProfileMigrator
         if (normalized.Length > 80)
             throw new ArgumentException("The migrated Profile display name is too long.", nameof(value));
         return normalized;
+    }
+
+    private async ValueTask<LegacyProfileDocument> ReadLegacyProfileAsync(
+        ProfileId profileId,
+        CancellationToken cancellationToken)
+    {
+        var layout = new LegacyProfileLayout(profilesRoot, profileId);
+        var file = new FileInfo(layout.ProfileJsonPath);
+        if (!file.Exists)
+            throw new FileNotFoundException("The legacy Mod Profile does not exist.", layout.ProfileJsonPath);
+        if (file.Length is < 1 or > MaximumProfileBytes)
+            throw new InvalidDataException("The legacy Mod Profile has an invalid size.");
+
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(layout.ProfileJsonPath, cancellationToken).ConfigureAwait(false);
+            var profile = JsonSerializer.Deserialize<LegacyProfileDocument>(bytes, LegacyProfileJsonOptions)
+                ?? throw new InvalidDataException("The legacy Mod Profile is empty.");
+            var actualId = profile.Validate();
+            if (actualId != profileId)
+                throw new InvalidDataException("The legacy Mod Profile ID does not match its directory.");
+            return profile;
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The legacy Mod Profile JSON is malformed.", exception);
+        }
+    }
+
+    private sealed record LegacyProfileDocument(
+        string Schema,
+        string Id,
+        long Revision,
+        ModAssemblyBindingPolicy AssemblyBindingPolicy,
+        DateTimeOffset UpdatedAtUtc)
+    {
+        public ProfileId Validate()
+        {
+            if (Schema != LegacyProfileSchema || !ProfileId.TryParse(Id, out var profileId) || Revision < 1 ||
+                !Enum.IsDefined(AssemblyBindingPolicy) || UpdatedAtUtc == default)
+            {
+                throw new InvalidDataException("The legacy Mod Profile is malformed.");
+            }
+
+            return profileId;
+        }
+    }
+
+    private sealed class LegacyProfileLayout
+    {
+        public LegacyProfileLayout(string profilesRoot, ProfileId profileId)
+        {
+            var profileDirectory = Path.Combine(profilesRoot, profileId.Value);
+            ProfileJsonPath = Path.Combine(profileDirectory, "profile.json");
+            ModsDirectory = Path.Combine(profileDirectory, "Mods");
+            EnabledDirectory = Path.Combine(ModsDirectory, "enabled");
+            DisabledDirectory = Path.Combine(ModsDirectory, "disabled");
+            DownloadsDirectory = Path.Combine(profileDirectory, "downloads");
+            StagingDirectory = Path.Combine(profileDirectory, "staging");
+        }
+
+        public string ProfileJsonPath { get; }
+        public string ModsDirectory { get; }
+        public string EnabledDirectory { get; }
+        public string DisabledDirectory { get; }
+        public string DownloadsDirectory { get; }
+        public string StagingDirectory { get; }
     }
 
     private sealed record LegacyModDirectoryCandidate(

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using JunimoGate.Mods;
 using JunimoGate.Tests;
 
@@ -28,8 +29,11 @@ internal static class ModFileServiceTests
             .AsTask().GetAwaiter().GetResult();
         TestHarness.Equal("speed = 2\n", saved.Text);
         TestHarness.Equal("speed = 2\n", File.ReadAllText(Path.Combine(root, "config.toml")));
-        TestHarness.Equal(item.ContentId, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult()
-            .Items.Single().ContentId);
+        var updated = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Single();
+        TestHarness.Equal(item.ImportedContentId, updated.ImportedContentId);
+        TestHarness.Equal(item.ContentGeneration + 1, updated.ContentGeneration);
+        TestHarness.Equal(updated.FileCount + 3, updated.CurrentFileCount);
+        TestHarness.True(updated.CurrentTotalBytes > updated.TotalBytes);
     }
 
     public static void RejectsUnsafeProtectedAndConcurrentWrites()
@@ -94,6 +98,101 @@ internal static class ModFileServiceTests
         var opened = fixture.Files.ReadTextAsync(item.LibraryItemId, "boundary.txt")
             .AsTask().GetAwaiter().GetResult();
         TestHarness.True(opened.Text.EndsWith("\u00e9tail", StringComparison.Ordinal));
+    }
+
+    public static void RecoversInterruptedFileAndGenerationMutation()
+    {
+        using var fixture = new Fixture();
+        var item = fixture.Import();
+        var live = Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId),
+            "config.json");
+        File.WriteAllText(live, "original");
+
+        var transactionId = Guid.NewGuid().ToString("N");
+        var staging = Path.Combine(fixture.Repository.Layout.StagingDirectory, $"edit-{transactionId}");
+        Directory.CreateDirectory(staging);
+        File.Copy(
+            fixture.Repository.Layout.IndexPath,
+            Path.Combine(staging, "library-index.before.json"));
+        File.Move(live, Path.Combine(staging, "old"));
+        File.WriteAllText(live, "changed");
+        var changedIndex = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        changedIndex = changedIndex with
+        {
+            Revision = changedIndex.Revision + 1,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            Items = changedIndex.Items.Select(candidate => candidate.LibraryItemId == item.LibraryItemId
+                ? candidate with { ContentGeneration = candidate.ContentGeneration + 1 }
+                : candidate).ToArray(),
+        };
+        File.WriteAllText(
+            fixture.Repository.Layout.IndexPath,
+            JsonSerializer.Serialize(changedIndex, JsonOptions));
+        File.WriteAllText(
+            Path.Combine(staging, "transaction.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema = "junimogate-mod-file-mutation/v1",
+                transactionId,
+                phase = "prepared",
+                libraryItemId = item.LibraryItemId,
+                relativePath = "config.json",
+                hadOriginal = true,
+            }, JsonOptions));
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var recovered = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal("original", File.ReadAllText(live));
+        TestHarness.Equal(item.ContentGeneration, recovered.Items.Single().ContentGeneration);
+        TestHarness.False(Directory.Exists(staging));
+    }
+
+    public static void CommandGateBlocksContentMutations()
+    {
+        using var fixture = new Fixture();
+        var item = fixture.Import();
+        var root = fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId);
+        var path = Path.Combine(root, "config.json");
+        File.WriteAllText(path, "original");
+        var opened = fixture.Files.ReadTextAsync(item.LibraryItemId, "config.json")
+            .AsTask().GetAwaiter().GetResult();
+        var profilesRoot = Path.Combine(fixture.Root, "profiles");
+        var commands = new ModManagementCommandService(
+            fixture.Repository,
+            new ModProfileV2Repository(profilesRoot),
+            new ActiveModProfileSelectionRepository(profilesRoot),
+            new RejectingMutationGate(item.LibraryItemId));
+
+        TestHarness.Throws<ModContentInUseException>(() => commands.EditModFileAsync(
+                item.LibraryItemId,
+                opened,
+                "changed")
+            .AsTask().GetAwaiter().GetResult());
+
+        TestHarness.Equal("original", File.ReadAllText(path));
+        TestHarness.Equal(
+            item.ContentGeneration,
+            fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Single().ContentGeneration);
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    private sealed class RejectingMutationGate(string expectedLibraryItemId) : IModContentMutationGate
+    {
+        public ValueTask<IAsyncDisposable> AcquireAsync(
+            IReadOnlyCollection<string> affectedLibraryItemIds,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TestHarness.Equal(1, affectedLibraryItemIds.Count);
+            TestHarness.Equal(expectedLibraryItemId, affectedLibraryItemIds.Single());
+            return ValueTask.FromException<IAsyncDisposable>(
+                new ModContentInUseException(affectedLibraryItemIds));
+        }
     }
 
     private sealed class Fixture : IDisposable

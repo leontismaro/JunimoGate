@@ -164,11 +164,16 @@ public sealed class ModProfileTransferService
     };
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
+    private readonly IModContentMutationGate mutationGate;
 
-    public ModProfileTransferService(ModLibraryRepository library, ModProfileV2Repository profiles)
+    public ModProfileTransferService(
+        ModLibraryRepository library,
+        ModProfileV2Repository profiles,
+        IModContentMutationGate? mutationGate = null)
     {
         this.library = library ?? throw new ArgumentNullException(nameof(library));
         this.profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
+        this.mutationGate = mutationGate ?? PassThroughModContentMutationGate.Instance;
     }
 
     public async ValueTask<ModProfileExportResult> ExportManifestAsync(
@@ -360,7 +365,29 @@ public sealed class ModProfileTransferService
     public ModProfilePackageImportTransaction CreatePackageImportTransaction(
         string? sourceArchiveName = null,
         ModArchiveImportLimits? limits = null) =>
-        new(library, profiles, sourceArchiveName, limits ?? ModArchiveImportLimits.Default, JsonOptions);
+        new(
+            library,
+            profiles,
+            mutationGate,
+            sourceArchiveName,
+            limits ?? ModArchiveImportLimits.Default,
+            JsonOptions);
+
+    public ValueTask<ModProfilePackageImportTransaction?> TryPromotePackageImportTransactionAsync(
+        IModArchiveInstallTransaction transaction,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (transaction is not ModArchiveInstallTransaction scanned)
+            throw new ArgumentException("The Mod archive transaction cannot be promoted.", nameof(transaction));
+        return ModProfilePackageImportTransaction.TryCreateAsync(
+            library,
+            profiles,
+            mutationGate,
+            scanned,
+            JsonOptions,
+            cancellationToken);
+    }
 
     private static ModProfileTransferDocument CreateDocument(
         ModProfileV2 profile,
@@ -479,10 +506,9 @@ public sealed class ModProfileTransferService
             ModLibraryItem? bound = null;
             if (member.PackagedContentId is not null && packagedItems is not null)
                 packagedItems.TryGetValue(member.PackagedContentId, out bound);
-            if (bound is null && member.SourceLibraryItemId is not null)
-                indexed.TryGetValue(member.SourceLibraryItemId, out bound);
             if (bound is not null && !bound.Manifest.UniqueId.Equals(member.UniqueId, StringComparison.OrdinalIgnoreCase))
                 bound = null;
+            bound ??= ResolveInstalledMember(member, library.Items, indexed);
             result.Add(new ModProfileMember(
                 member.UniqueId,
                 bound?.LibraryItemId,
@@ -495,6 +521,30 @@ public sealed class ModProfileTransferService
         return result;
     }
 
+    private static ModLibraryItem? ResolveInstalledMember(
+        ModProfileTransferMember member,
+        IReadOnlyList<ModLibraryItem> items,
+        IReadOnlyDictionary<string, ModLibraryItem> indexed)
+    {
+        if (member.SourceLibraryItemId is not null &&
+            indexed.TryGetValue(member.SourceLibraryItemId, out var exact) &&
+            exact.Manifest.UniqueId.Equals(member.UniqueId, StringComparison.OrdinalIgnoreCase))
+        {
+            return exact;
+        }
+
+        var logicalCandidates = items
+            .Where(item => item.Manifest.UniqueId.Equals(member.UniqueId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (logicalCandidates.Length == 1)
+            return logicalCandidates[0];
+
+        var versionCandidates = logicalCandidates
+            .Where(item => item.Manifest.Version.Equals(member.ExpectedVersion, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        return versionCandidates.Length == 1 ? versionCandidates[0] : null;
+    }
+
     private static string GetSafeRelativePath(string root, string path)
     {
         var relative = Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
@@ -502,10 +552,11 @@ public sealed class ModProfileTransferService
     }
 }
 
-public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
+public sealed class ModProfilePackageImportTransaction : IModArchiveInstallTransaction
 {
     private readonly ModLibraryRepository library;
     private readonly ModProfileV2Repository profiles;
+    private readonly IModContentMutationGate mutationGate;
     private readonly ModArchiveInstallTransaction mods;
     private readonly JsonSerializerOptions jsonOptions;
     private bool hasPackagedMods;
@@ -514,19 +565,59 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
     internal ModProfilePackageImportTransaction(
         ModLibraryRepository library,
         ModProfileV2Repository profiles,
+        IModContentMutationGate mutationGate,
         string? sourceArchiveName,
         ModArchiveImportLimits limits,
         JsonSerializerOptions jsonOptions)
     {
         this.library = library;
         this.profiles = profiles;
+        this.mutationGate = mutationGate;
         this.jsonOptions = jsonOptions;
         mods = new ModArchiveInstallTransaction(library, sourceArchiveName, limits);
     }
 
+    private ModProfilePackageImportTransaction(
+        ModLibraryRepository library,
+        ModProfileV2Repository profiles,
+        IModContentMutationGate mutationGate,
+        ModArchiveInstallTransaction mods,
+        JsonSerializerOptions jsonOptions)
+    {
+        this.library = library;
+        this.profiles = profiles;
+        this.mutationGate = mutationGate;
+        this.mods = mods;
+        this.jsonOptions = jsonOptions;
+    }
+
     public ModProfileTransferDocument? Document { get; private set; }
-    public ModArchiveScanResult? ModScanResult => mods.ScanResult;
+    public ModInstallTransactionState State => mods.State;
+    public ModArchiveScanResult? ScanResult => mods.ScanResult;
+    public ModArchiveScanResult? ModScanResult => ScanResult;
     public ModProfileImportResult? ImportResult { get; private set; }
+    ModArchiveImportResult? IModArchiveInstallTransaction.ImportResult => mods.ImportResult;
+
+    internal static async ValueTask<ModProfilePackageImportTransaction?> TryCreateAsync(
+        ModLibraryRepository library,
+        ModProfileV2Repository profiles,
+        IModContentMutationGate mutationGate,
+        ModArchiveInstallTransaction mods,
+        JsonSerializerOptions jsonOptions,
+        CancellationToken cancellationToken)
+    {
+        if (mods.State != ModInstallTransactionState.AwaitingConfirmation || mods.ScanResult is null)
+            throw new InvalidOperationException("The Mod archive must be scanned before package detection.");
+        var transaction = new ModProfilePackageImportTransaction(
+            library,
+            profiles,
+            mutationGate,
+            mods,
+            jsonOptions);
+        return await transaction.TryLoadPackageAsync(cancellationToken).ConfigureAwait(false)
+            ? transaction
+            : null;
+    }
 
     public async ValueTask ScanAsync(Stream source, CancellationToken cancellationToken = default)
     {
@@ -534,10 +625,18 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         if (Document is not null)
             throw new InvalidOperationException("The Mod Profile package was already scanned.");
         await mods.ScanAsync(source, cancellationToken).ConfigureAwait(false);
+        if (!await TryLoadPackageAsync(cancellationToken).ConfigureAwait(false))
+            throw new InvalidDataException("The Mod Profile package metadata is missing.");
+    }
+
+    private async ValueTask<bool> TryLoadPackageAsync(CancellationToken cancellationToken)
+    {
         using var archive = ZipFile.OpenRead(mods.StoredArchivePath);
         var metadataEntries = archive.Entries
             .Where(entry => entry.FullName.Equals(ModProfileTransferDocument.PackageEntryName, StringComparison.Ordinal))
             .ToArray();
+        if (metadataEntries.Length == 0)
+            return false;
         if (metadataEntries.Length != 1 || metadataEntries[0].Length is < 2 or > ModProfileTransferDocument.MaximumDocumentBytes)
             throw new InvalidDataException("The Mod Profile package metadata is missing or duplicated.");
         await using (var metadata = metadataEntries[0].Open())
@@ -562,6 +661,7 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
             .ToArray();
         if (!expected.SequenceEqual(actual, StringComparer.OrdinalIgnoreCase))
             throw new InvalidDataException("The Mod Profile package files do not match its member list.");
+        return true;
     }
 
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
@@ -570,6 +670,16 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         if (Document is null || ImportResult is not null)
             throw new InvalidOperationException("The Mod Profile package is not ready to commit.");
 
+        var candidateIds = (mods.ScanResult?.Candidates ?? Array.Empty<ModArchiveCandidate>())
+            .Select(candidate => candidate.Manifest.UniqueId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var beforeLease = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var affectedItemIds = beforeLease.Items
+            .Where(item => candidateIds.Contains(item.Manifest.UniqueId))
+            .Select(item => item.LibraryItemId)
+            .ToArray();
+        await using var lease = await mutationGate.AcquireAsync(affectedItemIds, cancellationToken)
+            .ConfigureAwait(false);
         var previousIndex = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
         if (hasPackagedMods)
             await mods.CommitAsync(
@@ -583,7 +693,7 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         var addedIds = imported.AddedItems.Select(item => item.LibraryItemId).ToArray();
         try
         {
-            var packaged = imported.AllItems.ToDictionary(item => item.ContentId, StringComparer.Ordinal);
+            var packaged = imported.AllItems.ToDictionary(item => item.ImportedContentId, StringComparer.Ordinal);
             foreach (var member in Document.Members.Where(member => member.PackagedContentId is not null))
             {
                 if (!packaged.TryGetValue(member.PackagedContentId!, out var item) ||
@@ -627,6 +737,9 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
         }
     }
 
+    public ValueTask RollbackAsync(CancellationToken cancellationToken = default) =>
+        mods.RollbackAsync(cancellationToken);
+
     private async ValueTask<ModProfileTransferDocument> ReadPackageDocumentAsync(
         Stream stream,
         CancellationToken cancellationToken)
@@ -669,5 +782,24 @@ public sealed class ModProfilePackageImportTransaction : IAsyncDisposable
                 ProductDirectory: null,
                 members);
         }).ToArray();
+    }
+}
+
+internal sealed class PassThroughModContentMutationGate : IModContentMutationGate
+{
+    public static PassThroughModContentMutationGate Instance { get; } = new();
+
+    public ValueTask<IAsyncDisposable> AcquireAsync(
+        IReadOnlyCollection<string> affectedLibraryItemIds,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<IAsyncDisposable>(PassThroughLease.Instance);
+    }
+
+    private sealed class PassThroughLease : IAsyncDisposable
+    {
+        public static PassThroughLease Instance { get; } = new();
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

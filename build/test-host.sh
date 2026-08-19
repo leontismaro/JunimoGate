@@ -21,7 +21,7 @@ fi
 if [[ -x "$root/.toolchains/dotnet/dotnet" ]]; then
   "$root/build/build-harmony-android.sh"
 else
-  expected_package="$root/artifacts/nuget/Lib.Harmony.2.4.2-junimogate.63.nupkg"
+  expected_package="$root/artifacts/nuget/Lib.Harmony.2.4.2-junimogate.64.nupkg"
   [[ -f "$expected_package" ]] || {
     printf 'Missing patched Harmony package: %s\n' "$expected_package" >&2
     printf 'Bootstrap the project-local Android toolchain, then run build/build-harmony-android.sh.\n' >&2

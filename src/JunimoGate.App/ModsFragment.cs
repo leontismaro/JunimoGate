@@ -156,14 +156,13 @@ public sealed class ModsFragment : Fragment
         modManagement = ((MainActivity)RequireActivity()).ModManagement;
         modManagement.Changed += OnModManagementChanged;
         repository = modManagement.Library;
-        var profilesRoot = Path.Combine(AndroidPrivateStorage.GetUserDataRoot(RequireContext()), "profiles");
         profiles = modManagement.Profiles;
-        profileMutations = modManagement.MemberMutations;
+        profileMutations = modManagement.Commands.ProfileMembers;
         activeProfile = modManagement.ActiveProfile;
         settingsRepository = new LauncherSettingsRepository(Path.Combine(
             AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
             "settings"));
-        _ = InitializeContentAsync(profilesRoot, cancellation.Token);
+        _ = InitializeContentAsync(cancellation.Token);
     }
 
     public override void OnStop()
@@ -324,7 +323,8 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            var installations = await repository.ListTranslationInstallationsAsync(
+            var translations = modManagement?.Translations ?? new ModTranslationHistoryRepository(repository);
+            var installations = await translations.ListAsync(
                     item.Members.Select(member => member.LibraryItemId).ToArray(),
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -459,7 +459,6 @@ public sealed class ModsFragment : Fragment
             if (cancellation is { IsCancellationRequested: false } lifetime)
                 _ = RestoreTranslationAsync(
                     installation.InstallationId,
-                    installation.AffectedLibraryItemIds,
                     lifetime.Token);
         });
         dialog.Show();
@@ -467,7 +466,6 @@ public sealed class ModsFragment : Fragment
 
     private async Task RestoreTranslationAsync(
         string installationId,
-        IReadOnlyList<string> affectedLibraryItemIds,
         CancellationToken cancellationToken)
     {
         if (repository is null)
@@ -475,23 +473,8 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
-                    RequireContext(),
-                    cancellationToken)
+            var result = await modManagement!.Commands.RestoreTranslationAsync(installationId, cancellationToken)
                 .ConfigureAwait(false);
-            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
-                    RequireContext(),
-                    affectedLibraryItemIds,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            if (inUse.Count != 0)
-            {
-                if (IsAdded)
-                    Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
-                return;
-            }
-            var result = await repository.RestoreTranslationAsync(installationId, cancellationToken).ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() => ShowMessage(FormatString(
@@ -501,6 +484,11 @@ public sealed class ModsFragment : Fragment
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (ModContentInUseException)
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_restore_game_running));
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
@@ -693,27 +681,13 @@ public sealed class ModsFragment : Fragment
             batchDoneButton.Enabled = !busy;
     }
 
-    private async Task InitializeContentAsync(string profilesRoot, CancellationToken cancellationToken)
+    private async Task InitializeContentAsync(CancellationToken cancellationToken)
     {
         SetBusy(true);
         try
         {
-            await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
-            if (repository is not null && profiles is not null)
-            {
-                var migrator = new LegacyModProfileMigrator(profilesRoot, repository, profiles);
-                var migration = await migrator
-                    .MigrateAsync(ProfileId.Parse("default"), "Default", cancellationToken)
-                    .ConfigureAwait(false);
-                if (!migration.AlreadyMigrated)
-                {
-                    modManagement?.NotifyLibraryChanged();
-                    modManagement?.NotifyProfilesChanged();
-                }
-                Log.Info(
-                    "JunimoGate.Mods",
-                    $"profile-migration already={(migration.AlreadyMigrated ? 1 : 0)} imported={migration.ImportedItems} reused={migration.ReusedItems} enabled={migration.EnabledMembers} disabled={migration.DisabledMembers}");
-            }
+            await ((MainActivity)RequireActivity()).EnsureModProfilesReadyAsync(cancellationToken)
+                .ConfigureAwait(false);
             if (settingsRepository is not null)
                 launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
@@ -748,11 +722,27 @@ public sealed class ModsFragment : Fragment
         try
         {
             await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
-            var transaction = repository.CreateInstallTransaction(CurrentImportDocument?.DisplayName ?? ReadDisplayName(uri));
+            var transaction = modManagement!.Commands.CreateImportTransaction(
+                CurrentImportDocument?.DisplayName ?? ReadDisplayName(uri));
             pendingTransaction = transaction;
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected Mod archive could not be opened.");
             await transaction.ScanAsync(stream, cancellationToken).ConfigureAwait(false);
+            var package = await modManagement.Transfers
+                .TryPromotePackageImportTransactionAsync(transaction, cancellationToken)
+                .ConfigureAwait(false);
+            if (package is not null)
+            {
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref pendingTransaction, package, transaction), transaction))
+                {
+                    await package.DisposeAsync().ConfigureAwait(false);
+                    return;
+                }
+                if (!IsAdded || cancellationToken.IsCancellationRequested)
+                    return;
+                Activity?.RunOnUiThread(() => ShowPackageScanResult(package));
+                return;
+            }
             if (!IsAdded || cancellationToken.IsCancellationRequested)
                 return;
             Activity?.RunOnUiThread(() => ShowScanResult(transaction));
@@ -825,19 +815,127 @@ public sealed class ModsFragment : Fragment
         confirmDialog.Show();
     }
 
-    private async Task CommitArchiveAsync(
-        IModArchiveInstallTransaction transaction,
+    private void ShowPackageScanResult(ModProfilePackageImportTransaction transaction)
+    {
+        if (!ReferenceEquals(transaction, pendingTransaction) || transaction.Document is not { } document)
+            return;
+        var packaged = document.Members.Count(member => member.PackagedContentId is not null);
+        var confirmDialog = new MaterialAlertDialogBuilder(RequireContext());
+        confirmDialog.SetTitle(FormatImportDialogTitle(Resource.String.mod_groups_package_confirm_title));
+        confirmDialog.SetMessage(FormatString(
+            Resource.String.mod_groups_package_confirm_message,
+            new JString(document.DisplayName),
+            Java.Lang.Integer.ValueOf(document.Members.Count),
+            Java.Lang.Integer.ValueOf(packaged)));
+        confirmDialog.SetNegativeButton(
+            pendingImportDocuments.Count > 1 ? Resource.String.mods_import_skip : global::Android.Resource.String.Cancel,
+            (_, _) => _ = SkipCurrentImportAsync());
+        confirmDialog.SetPositiveButton(Resource.String.mod_groups_import_action, (_, _) =>
+        {
+            if (cancellation is { IsCancellationRequested: false } lifetime)
+                _ = CommitPackageArchiveAsync(transaction, lifetime.Token);
+        });
+        confirmDialog.SetOnCancelListener(new DialogCancelListener(() => _ = EndImportBatchAsync()));
+        confirmDialog.Show();
+    }
+
+    private async Task CommitPackageArchiveAsync(
+        ModProfilePackageImportTransaction transaction,
         CancellationToken cancellationToken)
     {
         try
         {
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             var result = transaction.ImportResult
+                ?? throw new InvalidDataException("The shared group import result is missing.");
+            Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
+            await transaction.DisposeAsync().ConfigureAwait(false);
+            if (repository is not null && profiles is not null)
+            {
+                try
+                {
+                    var index = await repository.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    _ = await ModProfileMissingMemberReconnector.ReconnectAsync(
+                            profiles,
+                            index.Items,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  UnauthorizedAccessException or InvalidOperationException)
+                {
+                    Log.Error("JunimoGate.Mods", "profile-package-reconnection-failed", exception);
+                }
+            }
+            await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(FormatString(
+                        Resource.String.mod_groups_import_result,
+                        new JString(result.Profile.DisplayName),
+                        Java.Lang.Integer.ValueOf(result.AddedItems.Count),
+                        Java.Lang.Integer.ValueOf(result.ReusedItems.Count),
+                        Java.Lang.Integer.ValueOf(result.MissingMembers),
+                        Java.Lang.Integer.ValueOf(result.DistinctContentCandidates)));
+                    ContinueImportBatch();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await DisposePendingAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                          UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Error("JunimoGate.Mods", "profile-package-import-failed", exception);
+            await DisposePendingAsync().ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(Resource.String.mod_groups_import_failed);
+                    ContinueImportBatch();
+                });
+            }
+        }
+    }
+
+    private async Task CommitArchiveAsync(
+        IModArchiveInstallTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await modManagement!.Commands.CommitImportAsync(transaction, cancellationToken).ConfigureAwait(false);
+            var result = transaction.ImportResult
                 ?? throw new InvalidDataException("The Mod import result is missing.");
             Interlocked.CompareExchange(ref pendingTransaction, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
             ModProfileAutoAssignmentResult? assignment = null;
+            var reconnectedMembers = 0;
             var assignmentFailed = false;
+            ModLibraryIndex? currentIndex = null;
+            if (repository is not null && profiles is not null)
+            {
+                try
+                {
+                    currentIndex = await repository.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    reconnectedMembers = await ModProfileMissingMemberReconnector.ReconnectAsync(
+                            profiles,
+                            currentIndex.Items,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  UnauthorizedAccessException or InvalidOperationException)
+                {
+                    assignmentFailed = true;
+                    Log.Error("JunimoGate.Mods", "archive-profile-reconnection-failed", exception);
+                }
+            }
             if (settingsRepository is not null)
             {
                 launcherSettings = await settingsRepository.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -848,6 +946,7 @@ public sealed class ModsFragment : Fragment
                         assignment = await ModProfileAutoAssignment.AddImportedToActiveProfileAsync(
                                 activeProfile,
                                 profiles,
+                                currentIndex?.Items ?? result.AllItems,
                                 result.AllItems,
                                 cancellationToken)
                             .ConfigureAwait(false);
@@ -860,9 +959,6 @@ public sealed class ModsFragment : Fragment
                     }
                 }
             }
-            modManagement?.NotifyLibraryChanged();
-            if (assignment?.AddedMembers > 0)
-                modManagement?.NotifyProfilesChanged();
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -912,7 +1008,7 @@ public sealed class ModsFragment : Fragment
             var targets = target.Members.Select(item => ModTranslationTarget.FromLibraryItem(
                 item,
                 originalRoots.TryGetValue(item.LibraryItemId, out var root) ? root : null)).ToArray();
-            var transaction = repository.CreateTranslationTransaction(targets, ReadDisplayName(uri));
+            var transaction = modManagement!.Commands.CreateTranslationTransaction(targets, ReadDisplayName(uri));
             pendingTranslationTransaction = transaction;
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected translation archive could not be opened.");
@@ -1132,40 +1228,14 @@ public sealed class ModsFragment : Fragment
     {
         try
         {
-            var affectedLibraryItemIds = transaction.ScanResult?.Files
-                .Select(file => file.LibraryItemId)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray() ?? Array.Empty<string>();
-            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
-                    RequireContext(),
-                    cancellationToken)
+            await modManagement!.Commands.CommitTranslationAsync(transaction, cancellationToken)
                 .ConfigureAwait(false);
-            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
-                    RequireContext(),
-                    affectedLibraryItemIds,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            if (inUse.Count != 0)
-            {
-                await DisposePendingTranslationAsync().ConfigureAwait(false);
-                if (IsAdded)
-                {
-                    Activity?.RunOnUiThread(() =>
-                    {
-                        ShowMessage(Resource.String.mod_translation_game_running);
-                        SetBusy(false);
-                    });
-                }
-                return;
-            }
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             var result = transaction.InstallResult
                 ?? throw new InvalidDataException("The translation installation result is missing.");
             Interlocked.CompareExchange(ref pendingTranslationTransaction, null, transaction);
             pendingTranslationTarget = null;
             pendingTranslationTargetItemId = null;
             await transaction.DisposeAsync().ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1181,6 +1251,18 @@ public sealed class ModsFragment : Fragment
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await DisposePendingTranslationAsync().ConfigureAwait(false);
+        }
+        catch (ModContentInUseException)
+        {
+            await DisposePendingTranslationAsync().ConfigureAwait(false);
+            if (IsAdded)
+            {
+                Activity?.RunOnUiThread(() =>
+                {
+                    ShowMessage(Resource.String.mod_translation_game_running);
+                    SetBusy(false);
+                });
+            }
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
@@ -1243,7 +1325,8 @@ public sealed class ModsFragment : Fragment
     {
         if (repository is null)
             return new HashSet<string>(StringComparer.Ordinal);
-        var installations = await repository.ListTranslationInstallationsAsync(null, cancellationToken)
+        var translations = modManagement?.Translations ?? new ModTranslationHistoryRepository(repository);
+        var installations = await translations.ListAsync(null, cancellationToken)
             .ConfigureAwait(false);
         return installations
             .SelectMany(installation => installation.AffectedLibraryItemIds)
@@ -1463,8 +1546,6 @@ public sealed class ModsFragment : Fragment
         {
             var result = await profileMutations.AddOrReplaceAsync(target, items, enabled: true)
                 .ConfigureAwait(false);
-            if (result.ChangedMembers > 0)
-                modManagement?.NotifyProfilesChanged();
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1617,14 +1698,13 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            var result = await repository.SetBundleMemberUnlockedAsync(
+            var bundles = modManagement?.Bundles ?? new ModBundleCatalogRepository(repository);
+            var result = await bundles.SetMemberUnlockedAsync(
                     bundleId,
                     uniqueId,
                     unlocked,
                     lifetime.Token)
                 .ConfigureAwait(false);
-            if (result.Changed)
-                modManagement?.NotifyLibraryChanged();
             if (IsAdded)
             {
                 Activity?.RunOnUiThread(() =>
@@ -1684,25 +1764,10 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            await using var coordination = await GameLaunchRegistry.AcquireModLibraryCoordinationAsync(
-                    RequireContext(),
-                    cancellationToken)
-                .ConfigureAwait(false);
-            var inUse = await GameLaunchRegistry.FindLibraryItemsInUseAsync(
-                    RequireContext(),
-                    items.Select(item => item.LibraryItemId).ToArray(),
-                    cancellationToken).ConfigureAwait(false);
-            if (inUse.Count != 0)
-            {
-                if (IsAdded)
-                    Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_in_use));
-                return;
-            }
-            var result = await repository.DeleteManyAsync(
+            var result = await modManagement!.Commands.DeleteInstalledModsAsync(
                     items.Select(item => item.LibraryItemId).ToArray(),
                     cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
             await RefreshAllAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -1718,6 +1783,11 @@ public sealed class ModsFragment : Fragment
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Leaving the screen cancels deletion before its next transaction boundary.
+        }
+        catch (ModContentInUseException)
+        {
+            if (IsAdded)
+                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mods_delete_in_use));
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or
                                           UnauthorizedAccessException or InvalidOperationException)
@@ -1884,7 +1954,7 @@ public sealed class ModsFragment : Fragment
 
     private void OnModManagementChanged(object? sender, ModManagementChangedEventArgs eventArgs)
     {
-        if (eventArgs.Kind != ModManagementChangeKind.Library)
+        if (eventArgs.Kind is not (ModManagementChangeKind.Library or ModManagementChangeKind.Bundle))
             return;
         Activity?.RunOnUiThread(() =>
         {
@@ -2055,434 +2125,4 @@ public sealed class ModsFragment : Fragment
     }
 
     private sealed record PendingImportDocument(global::Android.Net.Uri Uri, string? DisplayName);
-}
-
-internal sealed class ModLibraryAdapter(
-    Func<ModManagementItem, int, string> formatSummary,
-    Func<ModManagementItem, string> formatMetadata,
-    Action<ModManagementItem> showDetails,
-    Action<ModManagementItem> showFiles,
-    Action<ModManagementItem> installTranslation,
-    Action<ModManagementItem> addToGroup,
-    Action<ModManagementItem> delete,
-    Action<ModManagementItem> export,
-    Action<ModManagementItem, ModLibraryItem> unlock,
-    Action<ModManagementItem> restore,
-    Action selectionChanged) : RecyclerView.Adapter
-{
-    private IReadOnlyList<ModManagementItem> allItems = Array.Empty<ModManagementItem>();
-    private IReadOnlyList<ModManagementItem> items = Array.Empty<ModManagementItem>();
-    private IReadOnlyDictionary<string, int> versionCounts = new Dictionary<string, int>();
-    private IReadOnlySet<string> translatedItemIds = new HashSet<string>(StringComparer.Ordinal);
-    private readonly HashSet<string> selected = new(StringComparer.Ordinal);
-    private bool selectionMode;
-    private bool interactionEnabled = true;
-    private string query = string.Empty;
-    private string? expandedItemId;
-
-    public override int ItemCount => items.Count;
-    public int TotalCount => allItems.Count;
-    public bool IsSelectionMode => selectionMode;
-    public int SelectedEntryCount => allItems.Count(item => selected.Contains(item.ItemId));
-    public IReadOnlyList<ModLibraryItem> SelectedItems => allItems
-        .Where(item => selected.Contains(item.ItemId))
-        .SelectMany(item => item.Members)
-        .DistinctBy(item => item.LibraryItemId, StringComparer.Ordinal)
-        .ToArray();
-    public bool AreAllFilteredSelected => items.Count > 0 &&
-        items.All(item => selected.Contains(item.ItemId));
-
-    public void SetItems(IReadOnlyList<ModManagementItem> value, IReadOnlySet<string>? translatedIds = null)
-    {
-        var translationStateChanged = translatedIds is not null &&
-            !translatedItemIds.SetEquals(translatedIds);
-        if (translatedIds is not null)
-            translatedItemIds = new HashSet<string>(translatedIds, StringComparer.Ordinal);
-        allItems = value;
-        selected.RemoveWhere(id => value.All(item => item.ItemId != id));
-        versionCounts = value
-            .SelectMany(item => item.Members)
-            .GroupBy(item => item.Manifest.UniqueId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-        ApplyFilter();
-        if (translationStateChanged)
-            NotifyDataSetChanged();
-    }
-
-    public void SetQuery(string? value)
-    {
-        query = value?.Trim() ?? string.Empty;
-        ApplyFilter();
-    }
-
-    public void EnterSelectionMode()
-    {
-        selectionMode = true;
-        expandedItemId = null;
-        selected.Clear();
-        NotifyDataSetChanged();
-        selectionChanged();
-    }
-
-    public void ExitSelectionMode()
-    {
-        if (!selectionMode && selected.Count == 0)
-            return;
-        selectionMode = false;
-        selected.Clear();
-        NotifyDataSetChanged();
-        selectionChanged();
-    }
-
-    public void SelectAllFiltered()
-    {
-        if (!selectionMode)
-            return;
-        if (AreAllFilteredSelected)
-        {
-            foreach (var item in items)
-                selected.Remove(item.ItemId);
-        }
-        else
-        {
-            foreach (var item in items)
-                selected.Add(item.ItemId);
-        }
-        NotifyDataSetChanged();
-        selectionChanged();
-    }
-
-    public void SetInteractionEnabled(bool value)
-    {
-        interactionEnabled = value;
-        NotifyDataSetChanged();
-    }
-
-    private void ApplyFilter()
-    {
-        var filtered = string.IsNullOrEmpty(query)
-            ? allItems
-            : allItems.Where(item =>
-                    item.SearchTerms.Any(term => Contains(term, query)) ||
-                    item.Members.Any(member => Contains(member.Manifest.Version, query)))
-                .ToArray();
-        if (expandedItemId is not null && filtered.All(item => item.ItemId != expandedItemId))
-            expandedItemId = null;
-        var oldItems = items;
-        items = filtered;
-        DiffUtil.CalculateDiff(new ItemDiff(oldItems, items)).DispatchUpdatesTo(this);
-    }
-
-    private static bool Contains(string value, string query) =>
-        value.Contains(query, StringComparison.OrdinalIgnoreCase);
-
-    public override RecyclerView.ViewHolder OnCreateViewHolder(ViewGroup parent, int viewType)
-    {
-        var view = LayoutInflater.From(parent.Context)?.Inflate(Resource.Layout.item_mod_library, parent, false)
-            ?? throw new InvalidOperationException("The Mod library item layout could not be created.");
-        return new ModLibraryViewHolder(
-            view,
-            formatMetadata,
-            showDetails,
-            showFiles,
-            installTranslation,
-            addToGroup,
-            delete,
-            export,
-            unlock,
-            restore,
-            ToggleSelection,
-            ToggleExpanded);
-    }
-
-    public override void OnBindViewHolder(RecyclerView.ViewHolder holder, int position)
-    {
-        var item = items[position];
-        ((ModLibraryViewHolder)holder).Bind(
-            item,
-            formatSummary(item, item.IsBundle ? 1 : versionCounts[item.Members[0].Manifest.UniqueId]),
-            selected.Contains(item.ItemId),
-            selectionMode,
-            interactionEnabled,
-            item.ItemId == expandedItemId,
-            item.Members.Any(member => translatedItemIds.Contains(member.LibraryItemId)));
-    }
-
-    private void ToggleSelection(ModManagementItem item, bool value)
-    {
-        if (!selectionMode || !interactionEnabled)
-            return;
-        if (value)
-            selected.Add(item.ItemId);
-        else
-            selected.Remove(item.ItemId);
-        NotifyDataSetChanged();
-        selectionChanged();
-    }
-
-    private void ToggleExpanded(ModManagementItem item)
-    {
-        if (selectionMode || !interactionEnabled)
-            return;
-        var previous = expandedItemId;
-        expandedItemId = previous == item.ItemId ? null : item.ItemId;
-        NotifyItem(previous);
-        NotifyItem(expandedItemId);
-    }
-
-    private void NotifyItem(string? itemId)
-    {
-        if (itemId is null)
-            return;
-        var index = items.ToList().FindIndex(item => item.ItemId == itemId);
-        if (index >= 0)
-            NotifyItemChanged(index);
-    }
-
-    private sealed class ItemDiff(
-        IReadOnlyList<ModManagementItem> oldItems,
-        IReadOnlyList<ModManagementItem> newItems) : DiffUtil.Callback
-    {
-        public override int OldListSize => oldItems.Count;
-        public override int NewListSize => newItems.Count;
-        public override bool AreItemsTheSame(int oldItemPosition, int newItemPosition) =>
-            oldItems[oldItemPosition].ItemId == newItems[newItemPosition].ItemId;
-        public override bool AreContentsTheSame(int oldItemPosition, int newItemPosition) =>
-            oldItems[oldItemPosition] == newItems[newItemPosition];
-    }
-
-    private sealed class ModLibraryViewHolder : RecyclerView.ViewHolder
-    {
-        private const int MoreActionExport = 1;
-        private const int MoreActionRestore = 2;
-        private const int MoreActionDelete = 3;
-        private readonly TextView title;
-        private readonly TextView summary;
-        private readonly TextView description;
-        private readonly TextView metadata;
-        private readonly LinearLayout components;
-        private readonly ImageView expand;
-        private readonly View expanded;
-        private readonly CheckBox selected;
-        private readonly MaterialButton addButton;
-        private readonly MaterialButton detailsButton;
-        private readonly MaterialButton filesButton;
-        private readonly MaterialButton translationButton;
-        private readonly MaterialButton moreButton;
-        private readonly Action<ModManagementItem> showDetails;
-        private readonly Action<ModManagementItem> showFiles;
-        private readonly Action<ModManagementItem> installTranslation;
-        private readonly Action<ModManagementItem> addToGroup;
-        private readonly Action<ModManagementItem> delete;
-        private readonly Action<ModManagementItem> export;
-        private readonly Action<ModManagementItem, ModLibraryItem> unlock;
-        private readonly Action<ModManagementItem> restore;
-        private readonly Action<ModManagementItem, bool> toggleSelection;
-        private readonly Action<ModManagementItem> toggleExpanded;
-        private readonly Func<ModManagementItem, string> formatMetadata;
-        private ModManagementItem? item;
-        private bool selectionMode;
-
-        public ModLibraryViewHolder(
-            View view,
-            Func<ModManagementItem, string> formatMetadata,
-            Action<ModManagementItem> showDetails,
-            Action<ModManagementItem> showFiles,
-            Action<ModManagementItem> installTranslation,
-            Action<ModManagementItem> addToGroup,
-            Action<ModManagementItem> delete,
-            Action<ModManagementItem> export,
-            Action<ModManagementItem, ModLibraryItem> unlock,
-            Action<ModManagementItem> restore,
-            Action<ModManagementItem, bool> toggleSelection,
-            Action<ModManagementItem> toggleExpanded) : base(view)
-        {
-            this.formatMetadata = formatMetadata;
-            this.showDetails = showDetails;
-            this.showFiles = showFiles;
-            this.installTranslation = installTranslation;
-            this.addToGroup = addToGroup;
-            this.delete = delete;
-            this.export = export;
-            this.unlock = unlock;
-            this.restore = restore;
-            this.toggleSelection = toggleSelection;
-            this.toggleExpanded = toggleExpanded;
-            title = view.FindViewById<TextView>(Resource.Id.mod_item_title)
-                ?? throw new InvalidOperationException("The Mod item title is unavailable.");
-            summary = view.FindViewById<TextView>(Resource.Id.mod_item_summary)
-                ?? throw new InvalidOperationException("The Mod item summary is unavailable.");
-            description = view.FindViewById<TextView>(Resource.Id.mod_item_description)
-                ?? throw new InvalidOperationException("The Mod item description is unavailable.");
-            metadata = view.FindViewById<TextView>(Resource.Id.mod_item_metadata)
-                ?? throw new InvalidOperationException("The Mod item metadata is unavailable.");
-            components = view.FindViewById<LinearLayout>(Resource.Id.mod_item_components)
-                ?? throw new InvalidOperationException("The Mod item component list is unavailable.");
-            expand = view.FindViewById<ImageView>(Resource.Id.mod_item_expand)
-                ?? throw new InvalidOperationException("The Mod item expand affordance is unavailable.");
-            expanded = view.FindViewById<View>(Resource.Id.mod_item_expanded)
-                ?? throw new InvalidOperationException("The Mod item expanded area is unavailable.");
-            selected = view.FindViewById<CheckBox>(Resource.Id.mod_item_selected)
-                ?? throw new InvalidOperationException("The Mod item selection is unavailable.");
-            selected.Clickable = false;
-            selected.Focusable = false;
-            addButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_add)
-                ?? throw new InvalidOperationException("The Mod item add action is unavailable.");
-            detailsButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_details)
-                ?? throw new InvalidOperationException("The Mod item details button is unavailable.");
-            filesButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_files)
-                ?? throw new InvalidOperationException("The Mod item files button is unavailable.");
-            translationButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_translation)
-                ?? throw new InvalidOperationException("The Mod item translation button is unavailable.");
-            moreButton = view.FindViewById<MaterialButton>(Resource.Id.mod_item_more)
-                ?? throw new InvalidOperationException("The Mod item more action is unavailable.");
-            detailsButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.showDetails(item);
-            };
-            filesButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.showFiles(item);
-            };
-            translationButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.installTranslation(item);
-            };
-            addButton.Click += (_, _) =>
-            {
-                if (item is not null)
-                    this.addToGroup(item);
-            };
-            moreButton.Click += (_, _) => ShowMoreActions();
-            ItemView.Click += (_, _) =>
-            {
-                if (selectionMode && item is not null)
-                    this.toggleSelection(item, !selected.Checked);
-                else if (item is not null)
-                    this.toggleExpanded(item);
-            };
-        }
-
-        public void Bind(
-            ModManagementItem value,
-            string detail,
-            bool isSelected,
-            bool isSelectionMode,
-            bool interactionEnabled,
-            bool isExpanded,
-            bool hasTranslation)
-        {
-            item = value;
-            selectionMode = isSelectionMode;
-            title.Text = value.DisplayName;
-            summary.Text = detail;
-            description.Text = value.IsBundle
-                ? ItemView.Context?.GetString(Resource.String.mods_bundle_description)
-                : value.Members[0].Manifest.Description ?? ItemView.Context?.GetString(Resource.String.mods_no_description);
-            metadata.Text = formatMetadata(value);
-            BindComponents(value, interactionEnabled);
-            selected.Visibility = isSelectionMode ? ViewStates.Visible : ViewStates.Gone;
-            selected.Checked = isSelected;
-            selected.Enabled = interactionEnabled;
-            addButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            detailsButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            filesButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            translationButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            moreButton.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            expanded.Visibility = !isSelectionMode && isExpanded ? ViewStates.Visible : ViewStates.Gone;
-            expand.Visibility = isSelectionMode ? ViewStates.Gone : ViewStates.Visible;
-            expand.Rotation = isExpanded ? 180f : 0f;
-            addButton.Enabled = interactionEnabled;
-            detailsButton.Enabled = interactionEnabled;
-            filesButton.Enabled = interactionEnabled;
-            translationButton.Enabled = interactionEnabled;
-            translationButton.Selected = hasTranslation;
-            translationButton.ContentDescription = ItemView.Context?.GetString(hasTranslation
-                ? Resource.String.mod_translation_action_installed
-                : Resource.String.mod_translation_action);
-            moreButton.Enabled = interactionEnabled;
-        }
-
-        private void ShowMoreActions()
-        {
-            if (item is not { } value || !moreButton.Enabled)
-                return;
-            var context = ItemView.Context
-                ?? throw new InvalidOperationException("The Mod item context is unavailable.");
-            var menu = new PopupMenu(context, moreButton);
-            var popup = menu.Menu
-                ?? throw new InvalidOperationException("The Mod item action menu is unavailable.");
-            var order = 0;
-            if (value.IsBundle)
-                _ = popup.Add(0, MoreActionExport, order++, Resource.String.mods_bundle_export);
-            if (value.RestorableBundle is not null)
-                _ = popup.Add(0, MoreActionRestore, order++, Resource.String.mods_bundle_restore);
-            _ = popup.Add(0, MoreActionDelete, order, Resource.String.mods_delete_action);
-            menu.MenuItemClick += (_, eventArgs) =>
-            {
-                eventArgs.Handled = eventArgs.Item?.ItemId switch
-                {
-                    MoreActionExport => HandleMoreAction(this.export),
-                    MoreActionRestore => HandleMoreAction(this.restore),
-                    MoreActionDelete => HandleMoreAction(this.delete),
-                    _ => false,
-                };
-            };
-            menu.Show();
-        }
-
-        private bool HandleMoreAction(Action<ModManagementItem> action)
-        {
-            if (item is null)
-                return false;
-            action(item);
-            return true;
-        }
-
-        private void BindComponents(ModManagementItem value, bool interactionEnabled)
-        {
-            components.RemoveAllViews();
-            components.Visibility = value.IsBundle ? ViewStates.Visible : ViewStates.Gone;
-            if (!value.IsBundle)
-                return;
-            foreach (var member in value.Members)
-            {
-                var context = ItemView.Context
-                    ?? throw new InvalidOperationException("The Mod item context is unavailable.");
-                var row = new LinearLayout(context)
-                {
-                    Orientation = Orientation.Horizontal,
-                };
-                row.SetGravity(GravityFlags.CenterVertical);
-                var text = new TextView(context)
-                {
-                    Text = $"{member.Manifest.Name} {member.Manifest.Version}",
-                };
-                row.AddView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1));
-                var button = new MaterialButton(context)
-                {
-                    Text = string.Empty,
-                    ContentDescription = context.Resources?.GetString(
-                        Resource.String.mods_bundle_unlock_description,
-                        [new JString(member.Manifest.Name)]),
-                    TooltipText = context.GetString(Resource.String.mods_bundle_unlock),
-                    IconPadding = 0,
-                    Enabled = interactionEnabled,
-                };
-                var size = (int)Math.Round(48 * context.Resources!.DisplayMetrics!.Density);
-                var padding = (int)Math.Round(12 * context.Resources.DisplayMetrics.Density);
-                button.SetIconResource(Resource.Drawable.ic_lock_open_24);
-                button.SetMinWidth(0);
-                button.SetPadding(padding, padding, padding, padding);
-                button.Click += (_, _) => unlock(value, member);
-                row.AddView(button, new LinearLayout.LayoutParams(
-                    size,
-                    size));
-                components.AddView(row);
-            }
-        }
-    }
 }

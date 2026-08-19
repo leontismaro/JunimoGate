@@ -92,8 +92,10 @@ public sealed class HomeFragment : Fragment
     {
         try
         {
+            await ((MainActivity)RequireActivity()).EnsureModProfilesReadyAsync(cancellationToken)
+                .ConfigureAwait(false);
             var summary = await Task.Run(
-                () => new ProductInformationService(RequireContext()).ReadHomeSummary(),
+                () => new ProductInformationService(RequireContext()).ReadHomeSummary(cancellationToken),
                 cancellationToken);
             if (!cancellationToken.IsCancellationRequested)
             {
@@ -120,7 +122,7 @@ public sealed class HomeFragment : Fragment
         {
             // Leaving the screen cancels the low-cost summary refresh.
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException)
         {
             global::Android.Util.Log.Warn("JunimoGate.Home", $"summary-unavailable:{exception.GetType().Name}");
         }

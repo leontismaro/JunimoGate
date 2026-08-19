@@ -127,7 +127,15 @@ public sealed class ModFileService(ModLibraryRepository library)
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, path);
+            await library.CommitFileMutationAsync(
+                    libraryItemId,
+                    relativePath,
+                    temporary,
+                    requireExisting: false,
+                    expectedLength: null,
+                    expectedLastWriteTimeUtc: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -170,7 +178,15 @@ public sealed class ModFileService(ModLibraryRepository library)
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, path, overwrite: true);
+            await library.CommitFileMutationAsync(
+                    libraryItemId,
+                    original.RelativePath,
+                    temporary,
+                    requireExisting: true,
+                    original.Length,
+                    original.LastWriteTimeUtc,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {

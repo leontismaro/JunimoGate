@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json.Nodes;
 using JunimoGate.Mods;
 using JunimoGate.Tests;
 
@@ -53,7 +54,7 @@ internal static class ModLibraryTests
         }
     }
 
-    public static void RejectsUnsafeArchiveShapes()
+    public static void RejectsUnsafeArchivePaths()
     {
         using var fixture = new ModLibraryFixture();
         using (var traversal = CreateArchive(
@@ -73,24 +74,158 @@ internal static class ModLibraryTests
                 transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
         }
+    }
 
-        using (var overlapping = CreateArchive(
-                   ("manifest.json", Manifest("Example.Root", "1.0.0", entryDll: "Root.dll")),
-                   ("Root.dll", "root"),
-                   ("Nested/manifest.json", Manifest("Example.Nested", "1.0.0", entryDll: "Nested.dll")),
-                   ("Nested/Nested.dll", "nested")))
+    public static void UsesOutermostManifestRoot()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Bush/manifest.json", Manifest("Example.Bush", "1.0.0", entryDll: "Bush.dll")),
+            ("Bush/Bush.dll", "root"),
+            ("Bush/examples/Valid/manifest.json", Manifest("Example.Valid", "1.0.0", contentPackFor: "Example.Bush")),
+            ("Bush/examples/Valid/content.json", "{}"),
+            ("Bush/examples/Invalid/manifest.json", "{ invalid"),
+            ("Bush/examples/Invalid/readme.txt", "example"));
+        var limits = ModArchiveImportLimits.Default with { MaximumMods = 1 };
+        var transaction = fixture.Repository.CreateInstallTransaction("nested-examples.zip", limits);
+        try
         {
-            var transaction = fixture.Repository.CreateInstallTransaction();
-            try
-            {
-                transaction.ScanAsync(overlapping).AsTask().GetAwaiter().GetResult();
-                TestHarness.False(transaction.ScanResult!.CanCommit);
-                TestHarness.True(transaction.ScanResult.Issues.Any(issue => issue.Code == "overlapping_mod_roots"));
-            }
-            finally
-            {
-                transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            }
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.True(scan.CanCommit);
+            TestHarness.Equal(1, scan.Candidates.Count);
+            TestHarness.Equal(0, scan.IgnoredFileCount);
+            var candidate = scan.Candidates.Single();
+            TestHarness.Equal("Bush", candidate.RootPath);
+            TestHarness.Equal("Example.Bush", candidate.Manifest.UniqueId);
+            TestHarness.Equal(6, candidate.FileCount);
+            TestHarness.True(candidate.EntryPaths.Contains("Bush/examples/Invalid/manifest.json"));
+
+            transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
+            var imported = transaction.ImportResult?.AddedItems.Single()
+                ?? throw new InvalidOperationException("The imported Mod is missing.");
+            var files = fixture.Repository.Layout.GetItemFilesDirectory(imported.LibraryItemId);
+            TestHarness.Equal("{ invalid", File.ReadAllText(Path.Combine(files, "examples", "Invalid", "manifest.json")));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void RejectsTooManyOutermostManifestRoots()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Alpha/manifest.json", Manifest("Example.Alpha", "1.0.0", entryDll: "Alpha.dll")),
+            ("Alpha/Alpha.dll", "alpha"),
+            ("Beta/manifest.json", Manifest("Example.Beta", "1.0.0", entryDll: "Beta.dll")),
+            ("Beta/Beta.dll", "beta"));
+        var limits = ModArchiveImportLimits.Default with { MaximumMods = 1 };
+        var transaction = fixture.Repository.CreateInstallTransaction("two-mods.zip", limits);
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.False(scan.CanCommit);
+            TestHarness.Equal(2, scan.Candidates.Count);
+            TestHarness.True(scan.Issues.Any(issue => issue.Code == "too_many_mods"));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void RejectsInvalidOutermostManifest()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Parent/manifest.json", "{ invalid"),
+            ("Parent/data.json", "{}"),
+            ("Parent/Nested/manifest.json", Manifest("Example.Nested", "1.0.0", entryDll: "Nested.dll")),
+            ("Parent/Nested/Nested.dll", "nested"));
+        var transaction = fixture.Repository.CreateInstallTransaction();
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.False(scan.CanCommit);
+            TestHarness.Equal(0, scan.Candidates.Count);
+            TestHarness.True(scan.Issues.Any(issue =>
+                issue.Code == "invalid_manifest" && issue.Path == "Parent/manifest.json"));
+            TestHarness.False(scan.Issues.Any(issue => issue.Path == "Parent/Nested/manifest.json"));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void IgnoresBlankUpdateKeys()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = CreateArchive(
+            ("Mod/manifest.json", """
+                {"Name":"Example","Author":"Test","Version":"1.0.0","UniqueID":"Example.Keys","EntryDll":"Mod.dll","UpdateKeys":["", "   ", " Nexus:123 "]}
+                """),
+            ("Mod/Mod.dll", "content"));
+        var transaction = fixture.Repository.CreateInstallTransaction();
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            var scan = transaction.ScanResult ?? throw new InvalidOperationException("The scan result is missing.");
+            TestHarness.True(scan.CanCommit);
+            TestHarness.Equal(1, scan.Candidates.Count);
+            TestHarness.Equal(1, scan.Candidates[0].Manifest.UpdateKeys.Count);
+            TestHarness.Equal("Nexus:123", scan.Candidates[0].Manifest.UpdateKeys[0]);
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public static void RejectsMalformedUpdateKeys()
+    {
+        using var fixture = new ModLibraryFixture();
+        using (var nonArray = CreateArchive(
+                   ("Mod/manifest.json", """
+                       {"Name":"Example","Author":"Test","Version":"1.0.0","UniqueID":"Example.Keys","EntryDll":"Mod.dll","UpdateKeys":{}}
+                       """),
+                   ("Mod/Mod.dll", "content")))
+        {
+            AssertInvalidManifest(fixture.Repository, nonArray);
+        }
+
+        using (var nonString = CreateArchive(
+                   ("Mod/manifest.json", """
+                       {"Name":"Example","Author":"Test","Version":"1.0.0","UniqueID":"Example.Keys","EntryDll":"Mod.dll","UpdateKeys":[123]}
+                       """),
+                   ("Mod/Mod.dll", "content")))
+        {
+            AssertInvalidManifest(fixture.Repository, nonString);
+        }
+
+        var longKey = new string('x', 4097);
+        using var oversized = CreateArchive(
+            ("Mod/manifest.json", $"{{\"Name\":\"Example\",\"Author\":\"Test\",\"Version\":\"1.0.0\",\"UniqueID\":\"Example.Keys\",\"EntryDll\":\"Mod.dll\",\"UpdateKeys\":[\"{longKey}\"]}}"),
+            ("Mod/Mod.dll", "content"));
+        AssertInvalidManifest(fixture.Repository, oversized);
+    }
+
+    private static void AssertInvalidManifest(ModLibraryRepository repository, Stream archive)
+    {
+        var transaction = repository.CreateInstallTransaction();
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            TestHarness.False(transaction.ScanResult!.CanCommit);
+            TestHarness.True(transaction.ScanResult.Issues.Any(issue => issue.Code == "invalid_manifest"));
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
 
@@ -102,12 +237,15 @@ internal static class ModLibraryTests
         TestHarness.Equal(1, first.AddedItems.Count);
         TestHarness.Equal(0, first.ReusedItems.Count);
         var item = first.AddedItems[0];
-        TestHarness.False(item.LibraryItemId == item.ContentId);
+        TestHarness.False(item.LibraryItemId == item.ImportedContentId);
         TestHarness.True(File.Exists(Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "Mod.dll")));
         TestHarness.True(File.Exists(fixture.Repository.Layout.GetItemMetadataPath(item.LibraryItemId)));
-
-        var generated = Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "config.toml");
-        File.WriteAllText(generated, "speed = 2");
+        var serializedMetadata = File.ReadAllText(fixture.Repository.Layout.GetItemMetadataPath(item.LibraryItemId));
+        TestHarness.True(serializedMetadata.Contains("\"contentId\"", StringComparison.Ordinal));
+        TestHarness.False(serializedMetadata.Contains("\"importedContentId\"", StringComparison.Ordinal));
+        var reopened = new ModLibraryRepository(fixture.Repository.Layout.Root)
+            .ReadAsync().AsTask().GetAwaiter().GetResult().Items.Single();
+        TestHarness.Equal(item.ImportedContentId, reopened.ImportedContentId);
 
         var afterFirst = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(2L, afterFirst.Revision);
@@ -118,17 +256,86 @@ internal static class ModLibraryTests
         TestHarness.Equal(0, second.AddedItems.Count);
         TestHarness.Equal(1, second.ReusedItems.Count);
         TestHarness.Equal(item.LibraryItemId, second.ReusedItems[0].LibraryItemId);
-        TestHarness.Equal("speed = 2", File.ReadAllText(generated));
         var afterSecond = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(afterFirst.Revision, afterSecond.Revision);
         TestHarness.Equal(1, afterSecond.Items.Count);
 
-        Directory.Delete(fixture.Repository.Layout.GetItemDirectory(item.LibraryItemId), recursive: true);
+        var generated = Path.Combine(fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId), "config.toml");
+        File.WriteAllText(generated, "speed = 2");
+        using var modifiedRetryArchive = SingleModArchive("Example.Import", "1.2.3", "first-content");
+        var modifiedRetry = Import(fixture.Repository, modifiedRetryArchive, "original-again.zip");
+        TestHarness.Equal(1, modifiedRetry.AddedItems.Count);
+        TestHarness.Equal(0, modifiedRetry.ReusedItems.Count);
+        var freshItem = modifiedRetry.AddedItems.Single();
+        TestHarness.False(item.LibraryItemId == freshItem.LibraryItemId);
+        TestHarness.Equal(item.ImportedContentId, freshItem.ImportedContentId);
+        TestHarness.Equal("speed = 2", File.ReadAllText(generated));
+        TestHarness.False(File.Exists(Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(freshItem.LibraryItemId),
+            "config.toml")));
+        var afterModifiedRetry = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(checked(afterSecond.Revision + 1), afterModifiedRetry.Revision);
+        TestHarness.Equal(2, afterModifiedRetry.Items.Count);
+
+        Directory.Delete(fixture.Repository.Layout.GetItemDirectory(freshItem.LibraryItemId), recursive: true);
         using var repairArchive = SingleModArchive("Example.Import", "1.2.3", "first-content");
         var repaired = Import(fixture.Repository, repairArchive, "repair.zip");
         TestHarness.Equal(1, repaired.ReusedItems.Count);
-        TestHarness.True(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(item.LibraryItemId)));
-        TestHarness.Equal(afterSecond.Revision, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Revision);
+        TestHarness.Equal(freshItem.LibraryItemId, repaired.ReusedItems.Single().LibraryItemId);
+        TestHarness.True(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(freshItem.LibraryItemId)));
+        var afterRepair = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(afterModifiedRetry.Revision + 1, afterRepair.Revision);
+        TestHarness.Equal(
+            freshItem.ContentGeneration + 1,
+            afterRepair.Items.Single(candidate => candidate.LibraryItemId == freshItem.LibraryItemId).ContentGeneration);
+    }
+
+    public static void RepositoryInstancesShareChangeSignals()
+    {
+        using var fixture = new ModLibraryFixture();
+        var second = new ModLibraryRepository(fixture.Root);
+        var changed = 0;
+        second.Changed += () => changed++;
+
+        using var archive = CreateArchive(
+            ("Mod/manifest.json", Manifest("Example.Signal", "1.0.0", entryDll: "Mod.dll")),
+            ("Mod/Mod.dll", "signal"));
+        var transaction = fixture.Repository.CreateInstallTransaction("signal.zip");
+        try
+        {
+            transaction.ScanAsync(archive).AsTask().GetAwaiter().GetResult();
+            transaction.CommitAsync().AsTask().GetAwaiter().GetResult();
+        }
+        finally
+        {
+            transaction.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        TestHarness.Equal(1, changed);
+    }
+
+    public static void RepairsIndexedItemsWithMissingFilesDirectory()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = SingleModArchive("Example.Incomplete", "1.0.0", "original");
+        var item = Import(fixture.Repository, archive, "original.zip").AddedItems.Single();
+        var before = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var files = fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId);
+        Directory.Delete(files, recursive: true);
+
+        using var retry = SingleModArchive("Example.Incomplete", "1.0.0", "original");
+        var repaired = Import(fixture.Repository, retry, "repair.zip");
+
+        TestHarness.Equal(0, repaired.AddedItems.Count);
+        TestHarness.Equal(1, repaired.ReusedItems.Count);
+        TestHarness.Equal(item.LibraryItemId, repaired.ReusedItems.Single().LibraryItemId);
+        TestHarness.True(File.Exists(Path.Combine(files, "Mod.dll")));
+        var after = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var restored = after.Items.Single();
+        TestHarness.Equal(before.Revision + 1, after.Revision);
+        TestHarness.Equal(item.ContentGeneration + 1, restored.ContentGeneration);
+        TestHarness.Equal(item.FileCount, restored.CurrentFileCount);
+        TestHarness.Equal(item.TotalBytes, restored.CurrentTotalBytes);
     }
 
     public static void KeepsDistinctContentCandidates()
@@ -158,6 +365,12 @@ internal static class ModLibraryTests
         var afterImport = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, afterImport.BundleCatalog.Bundles.Count);
         TestHarness.Equal(bundle.BundleId, afterImport.BundleCatalog.Bundles[0].BundleId);
+        TestHarness.True(File.Exists(fixture.Repository.Layout.BundleCatalogPath));
+        TestHarness.False(File.ReadAllText(fixture.Repository.Layout.IndexPath)
+            .Contains("\"bundleCatalog\":", StringComparison.Ordinal));
+        TestHarness.True(File.ReadAllText(fixture.Repository.Layout.IndexPath)
+            .Contains("bundleCatalogFile", StringComparison.Ordinal));
+        var libraryIndexBytes = File.ReadAllBytes(fixture.Repository.Layout.IndexPath);
 
         using var repeatedArchive = BundledArchive();
         var repeated = Import(fixture.Repository, repeatedArchive, "renamed-bundle.zip");
@@ -166,7 +379,8 @@ internal static class ModLibraryTests
         TestHarness.Equal(afterImport.Revision, afterRepeat.Revision);
 
         var firstMember = bundle.Members[0];
-        var unlocked = fixture.Repository.SetBundleMemberUnlockedAsync(
+        var bundles = new ModBundleCatalogRepository(fixture.Repository);
+        var unlocked = bundles.SetMemberUnlockedAsync(
                 bundle.BundleId,
                 firstMember.UniqueId,
                 unlocked: true)
@@ -174,8 +388,11 @@ internal static class ModLibraryTests
         TestHarness.True(unlocked.Changed);
         TestHarness.False(unlocked.BundleRemainsVisible);
         TestHarness.Equal(1, unlocked.Library.BundleCatalog.UnlockOverrides.Count);
+        TestHarness.Equal(afterImport.Revision, unlocked.Library.Revision);
+        TestHarness.True(unlocked.Library.BundleCatalog.Revision > afterImport.BundleCatalog.Revision);
+        TestHarness.True(libraryIndexBytes.SequenceEqual(File.ReadAllBytes(fixture.Repository.Layout.IndexPath)));
 
-        var unchanged = fixture.Repository.SetBundleMemberUnlockedAsync(
+        var unchanged = bundles.SetMemberUnlockedAsync(
                 bundle.BundleId,
                 firstMember.UniqueId,
                 unlocked: true)
@@ -183,7 +400,7 @@ internal static class ModLibraryTests
         TestHarness.False(unchanged.Changed);
         TestHarness.Equal(unlocked.Library.Revision, unchanged.Library.Revision);
 
-        var restored = fixture.Repository.SetBundleMemberUnlockedAsync(
+        var restored = bundles.SetMemberUnlockedAsync(
                 bundle.BundleId,
                 firstMember.UniqueId,
                 unlocked: false)
@@ -197,6 +414,64 @@ internal static class ModLibraryTests
         var afterDelete = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, afterDelete.Items.Count);
         TestHarness.Equal(0, afterDelete.BundleCatalog.Bundles.Count);
+    }
+
+    public static void MigratesEmbeddedBundleCatalog()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = BundledArchive();
+        var imported = Import(fixture.Repository, archive, "legacy-bundle.zip");
+        var catalog = JsonNode.Parse(File.ReadAllText(fixture.Repository.Layout.BundleCatalogPath));
+        var legacy = JsonNode.Parse(File.ReadAllText(fixture.Repository.Layout.IndexPath))!.AsObject();
+        legacy.Remove("bundleCatalogFile");
+        legacy["bundleCatalog"] = catalog;
+        File.WriteAllText(fixture.Repository.Layout.IndexPath, legacy.ToJsonString());
+        File.Delete(fixture.Repository.Layout.BundleCatalogPath);
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var migrated = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(imported.Bundles.Single().BundleId, migrated.BundleCatalog.Bundles.Single().BundleId);
+        TestHarness.True(File.Exists(reopened.Layout.BundleCatalogPath));
+        TestHarness.False(File.ReadAllText(reopened.Layout.IndexPath)
+            .Contains("\"bundleCatalog\":", StringComparison.Ordinal));
+    }
+
+    public static void RejectsMissingBundleCatalog()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = BundledArchive();
+        _ = Import(fixture.Repository, archive, "missing-bundle-catalog.zip");
+        File.Delete(fixture.Repository.Layout.BundleCatalogPath);
+
+        TestHarness.Throws<InvalidDataException>(() =>
+            new ModLibraryRepository(fixture.Root).ReadAsync().AsTask().GetAwaiter().GetResult());
+    }
+
+    public static void RecoversInterruptedCatalogCommit()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = BundledArchive();
+        var imported = Import(fixture.Repository, archive, "catalog-recovery.zip");
+        var indexBefore = File.ReadAllBytes(fixture.Repository.Layout.IndexPath);
+        var catalogBefore = File.ReadAllBytes(fixture.Repository.Layout.BundleCatalogPath);
+        var transactionDirectory = Path.Combine(
+            fixture.Repository.Layout.StagingDirectory,
+            $"catalog-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(transactionDirectory);
+        File.WriteAllBytes(Path.Combine(transactionDirectory, "library-index.before.json"), indexBefore);
+        File.WriteAllBytes(Path.Combine(transactionDirectory, "bundle-catalog.before.json"), catalogBefore);
+        File.WriteAllText(
+            Path.Combine(transactionDirectory, "transaction.json"),
+            "{\"schema\":\"junimogate-mod-catalog-commit/v1\",\"phase\":\"prepared\",\"hadLibraryIndex\":true,\"hadBundleCatalog\":true}");
+        File.WriteAllText(fixture.Repository.Layout.IndexPath, "{}");
+        File.WriteAllText(fixture.Repository.Layout.BundleCatalogPath, "{}");
+
+        var reopened = new ModLibraryRepository(fixture.Root);
+        var recovered = reopened.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(imported.Bundles.Single().BundleId, recovered.BundleCatalog.Bundles.Single().BundleId);
+        TestHarness.True(indexBefore.SequenceEqual(File.ReadAllBytes(reopened.Layout.IndexPath)));
+        TestHarness.True(catalogBefore.SequenceEqual(File.ReadAllBytes(reopened.Layout.BundleCatalogPath)));
+        TestHarness.False(Directory.Exists(transactionDirectory));
     }
 
     public static void MutatesBundleProfileMembersAtomically()
@@ -331,6 +606,32 @@ internal static class ModLibraryTests
         var index = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
         TestHarness.Equal(1, index.Items.Count);
         TestHarness.Equal(item.LibraryItemId, index.Items[0].LibraryItemId);
+    }
+
+    public static void DoesNotRecoverAnEditedOrphanAsTheOriginalImport()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = SingleModArchive("Example.EditedOrphan", "1.0.0", "original");
+        var item = Import(fixture.Repository, archive, "original.zip").AddedItems.Single();
+        var source = fixture.Repository.Layout.GetItemDirectory(item.LibraryItemId);
+        var backup = Path.Combine(fixture.Root, "edited-orphan-backup");
+        CopyDirectory(source, backup);
+        TestHarness.True(fixture.Repository.DeleteAsync(item.LibraryItemId).AsTask().GetAwaiter().GetResult());
+        Directory.Move(backup, source);
+        File.WriteAllText(Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId),
+            "config.toml"), "edited = true");
+
+        using var retry = SingleModArchive("Example.EditedOrphan", "1.0.0", "original");
+        var imported = Import(fixture.Repository, retry, "retry.zip");
+
+        TestHarness.Equal(1, imported.AddedItems.Count);
+        TestHarness.Equal(0, imported.ReusedItems.Count);
+        TestHarness.False(item.LibraryItemId == imported.AddedItems.Single().LibraryItemId);
+        TestHarness.True(File.Exists(Path.Combine(
+            fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId),
+            "config.toml")));
+        TestHarness.Equal(1, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Items.Count);
     }
 
     private static ModArchiveImportResult Import(

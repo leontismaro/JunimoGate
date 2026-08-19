@@ -1,3 +1,4 @@
+using Android.Content;
 using JunimoGate.Mods;
 
 namespace JunimoGate.App;
@@ -7,6 +8,7 @@ internal enum ModManagementChangeKind
     Library,
     Profiles,
     ActiveProfile,
+    Bundle,
 }
 
 internal sealed class ModManagementChangedEventArgs(
@@ -19,7 +21,7 @@ internal sealed class ModManagementChangedEventArgs(
     public object? Origin { get; } = origin;
 }
 
-internal sealed class ModManagementUiSession : IDisposable
+internal class ModManagementStore : IDisposable
 {
     private readonly SemaphoreSlim libraryLock = new(1, 1);
     private readonly SemaphoreSlim profileLock = new(1, 1);
@@ -33,21 +35,36 @@ internal sealed class ModManagementUiSession : IDisposable
     private readonly object cacheGate = new();
     private bool disposed;
 
-    public ModManagementUiSession(string userDataRoot)
+    public ModManagementStore(Context context, string userDataRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userDataRoot);
         var profilesRoot = Path.Combine(userDataRoot, "profiles");
         Library = new ModLibraryRepository(Path.Combine(userDataRoot, "mods"));
         Profiles = new ModProfileV2Repository(profilesRoot);
         ActiveProfile = new ActiveModProfileSelectionRepository(profilesRoot);
-        MemberMutations = new ModProfileMemberMutationService(Profiles);
-        Transfers = new ModProfileTransferService(Library, Profiles);
+        var mutationGate = new AndroidModContentMutationGate(context);
+        Transfers = new ModProfileTransferService(Library, Profiles, mutationGate);
+        Installations = Library;
+        Bundles = new ModBundleCatalogRepository(Installations);
+        Translations = new ModTranslationHistoryRepository(Library);
+        Commands = new ModManagementCommandService(
+            Library,
+            Profiles,
+            ActiveProfile,
+            mutationGate);
+        Library.Changed += OnLibraryChanged;
+        Library.BundleChanged += OnBundleChanged;
+        Profiles.Changed += OnProfilesChanged;
+        ActiveProfile.Changed += OnActiveProfileChanged;
     }
 
     public ModLibraryRepository Library { get; }
+    public IModInstallRepository Installations { get; }
+    public IModBundleCatalogRepository Bundles { get; }
+    public IModTranslationHistoryRepository Translations { get; }
+    public ModManagementCommandService Commands { get; }
     public ModProfileV2Repository Profiles { get; }
     public ActiveModProfileSelectionRepository ActiveProfile { get; }
-    public ModProfileMemberMutationService MemberMutations { get; }
     public ModProfileTransferService Transfers { get; }
     public long LibraryGeneration => Interlocked.Read(ref libraryGeneration);
     public long ProfileGeneration => Interlocked.Read(ref profileGeneration);
@@ -58,35 +75,21 @@ internal sealed class ModManagementUiSession : IDisposable
     public async ValueTask<ModLibraryIndex> GetLibraryAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        lock (cacheGate)
-        {
-            if (librarySnapshot is { } cached)
-                return cached;
-        }
-
         await libraryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
+            var loaded = await Library.ReadAsync(cancellationToken).ConfigureAwait(false);
             lock (cacheGate)
             {
-                if (librarySnapshot is { } cached)
+                if (librarySnapshot is { } cached &&
+                    cached.Revision == loaded.Revision &&
+                    cached.BundleCatalog.Revision == loaded.BundleCatalog.Revision)
                     return cached;
-            }
-
-            while (true)
-            {
-                long generation;
-                lock (cacheGate)
-                    generation = libraryGeneration;
-                var loaded = await Library.ReadAsync(cancellationToken).ConfigureAwait(false);
-                lock (cacheGate)
-                {
-                    if (generation != libraryGeneration)
-                        continue;
-                    librarySnapshot ??= loaded;
-                    return librarySnapshot;
-                }
+                librarySnapshot = loaded;
+                if (librarySnapshot is not null && loaded.Revision > 0)
+                    libraryGeneration++;
+                return loaded;
             }
         }
         finally
@@ -99,34 +102,18 @@ internal sealed class ModManagementUiSession : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        lock (cacheGate)
-        {
-            if (profileSnapshot is { } cached)
-                return cached;
-        }
         await profileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
+            var loaded = await Profiles.ListAsync(cancellationToken).ConfigureAwait(false);
             lock (cacheGate)
             {
-                if (profileSnapshot is { } cached)
+                if (profileSnapshot is { } cached && ProfilesEquivalent(cached, loaded))
                     return cached;
-            }
-
-            while (true)
-            {
-                long generation;
-                lock (cacheGate)
-                    generation = profileGeneration;
-                var loaded = await Profiles.ListAsync(cancellationToken).ConfigureAwait(false);
-                lock (cacheGate)
-                {
-                    if (generation != profileGeneration)
-                        continue;
-                    profileSnapshot ??= loaded;
-                    return profileSnapshot;
-                }
+                profileSnapshot = loaded;
+                profileGeneration++;
+                return loaded;
             }
         }
         finally
@@ -139,36 +126,22 @@ internal sealed class ModManagementUiSession : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        lock (cacheGate)
-        {
-            if (activeProfileSnapshot is { } cached)
-                return cached;
-        }
         await activeProfileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
+            var loaded = await ActiveProfile
+                .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
+                .ConfigureAwait(false);
             lock (cacheGate)
             {
-                if (activeProfileSnapshot is { } cached)
+                if (activeProfileSnapshot is { } cached &&
+                    cached.Revision == loaded.Revision &&
+                    cached.ActiveProfileId == loaded.ActiveProfileId)
                     return cached;
-            }
-
-            while (true)
-            {
-                long generation;
-                lock (cacheGate)
-                    generation = activeProfileGeneration;
-                var loaded = await ActiveProfile
-                    .OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken)
-                    .ConfigureAwait(false);
-                lock (cacheGate)
-                {
-                    if (generation != activeProfileGeneration)
-                        continue;
-                    activeProfileSnapshot ??= loaded;
-                    return activeProfileSnapshot;
-                }
+                activeProfileSnapshot = loaded;
+                activeProfileGeneration++;
+                return loaded;
             }
         }
         finally
@@ -177,7 +150,36 @@ internal sealed class ModManagementUiSession : IDisposable
         }
     }
 
-    public void NotifyLibraryChanged()
+    public void ResetSnapshots()
+    {
+        InvalidateLibrary(null);
+        InvalidateProfiles(null);
+        InvalidateActiveProfile(null);
+    }
+
+    private void OnLibraryChanged() => InvalidateLibrary(null);
+    private void OnBundleChanged() => InvalidateBundle(null);
+    private void OnProfilesChanged() => InvalidateProfiles(null);
+    private void OnActiveProfileChanged() => InvalidateActiveProfile(null);
+
+    private static bool ProfilesEquivalent(
+        IReadOnlyList<ModProfileV2> first,
+        IReadOnlyList<ModProfileV2> second)
+    {
+        if (first.Count != second.Count)
+            return false;
+        var indexed = first.ToDictionary(profile => profile.Id, StringComparer.Ordinal);
+        foreach (var profile in second)
+        {
+            if (!indexed.TryGetValue(profile.Id, out var existing) ||
+                existing.Revision != profile.Revision ||
+                existing.UpdatedAtUtc != profile.UpdatedAtUtc)
+                return false;
+        }
+        return true;
+    }
+
+    private void InvalidateLibrary(object? origin)
     {
         if (disposed)
             return;
@@ -187,10 +189,19 @@ internal sealed class ModManagementUiSession : IDisposable
             librarySnapshot = null;
             generation = ++libraryGeneration;
         }
-        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Library, generation));
+        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Library, generation, origin));
     }
 
-    public void NotifyProfilesChanged(object? origin = null)
+    private void InvalidateBundle(object? origin)
+    {
+        if (disposed)
+            return;
+        lock (cacheGate)
+            librarySnapshot = null;
+        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.Bundle, LibraryGeneration, origin));
+    }
+
+    private void InvalidateProfiles(object? origin)
     {
         if (disposed)
             return;
@@ -206,7 +217,7 @@ internal sealed class ModManagementUiSession : IDisposable
             origin));
     }
 
-    public void NotifyActiveProfileChanged()
+    private void InvalidateActiveProfile(object? origin)
     {
         if (disposed)
             return;
@@ -216,7 +227,7 @@ internal sealed class ModManagementUiSession : IDisposable
             activeProfileSnapshot = null;
             generation = ++activeProfileGeneration;
         }
-        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.ActiveProfile, generation));
+        Changed?.Invoke(this, new ModManagementChangedEventArgs(ModManagementChangeKind.ActiveProfile, generation, origin));
     }
 
     public void Dispose()
@@ -224,6 +235,10 @@ internal sealed class ModManagementUiSession : IDisposable
         if (disposed)
             return;
         disposed = true;
+        Library.Changed -= OnLibraryChanged;
+        Library.BundleChanged -= OnBundleChanged;
+        Profiles.Changed -= OnProfilesChanged;
+        ActiveProfile.Changed -= OnActiveProfileChanged;
         Changed = null;
         lock (cacheGate)
         {
@@ -232,4 +247,9 @@ internal sealed class ModManagementUiSession : IDisposable
             activeProfileSnapshot = null;
         }
     }
+}
+
+internal sealed class ModManagementUiSession(Context context, string userDataRoot)
+    : ModManagementStore(context, userDataRoot)
+{
 }

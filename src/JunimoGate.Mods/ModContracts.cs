@@ -12,21 +12,7 @@ public enum ModInstallTransactionState
     Failed,
 }
 
-public enum DependencyResolutionStatus
-{
-    Compatible,
-    MissingDependency,
-    VersionConflict,
-    CycleDetected,
-    InvalidManifest,
-}
-
-public sealed record DependencyResolution(
-    DependencyResolutionStatus Status,
-    IReadOnlyList<string> OrderedModIds,
-    IReadOnlyList<string> Messages);
-
-/// <summary>Future ZIP installer transaction boundary. Implementations must pre-scan before writing.</summary>
+/// <summary>ZIP installer transaction boundary. Implementations pre-scan before writing.</summary>
 public interface IModArchiveInstallTransaction : IAsyncDisposable
 {
     ModInstallTransactionState State { get; }
@@ -40,10 +26,4 @@ public interface IModArchiveInstallTransaction : IAsyncDisposable
     ValueTask CommitAsync(CancellationToken cancellationToken = default);
 
     ValueTask RollbackAsync(CancellationToken cancellationToken = default);
-}
-
-/// <summary>Future dependency graph boundary; no resolver is claimed by this scaffold.</summary>
-public interface IModDependencyGraph
-{
-    DependencyResolution Resolve(IEnumerable<string> selectedModIds);
 }

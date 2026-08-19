@@ -315,7 +315,6 @@ public sealed class ModGroupsFragment : Fragment
             if (isManifest)
             {
                 var result = await service.ImportManifestAsync(input, cancellationToken).ConfigureAwait(false);
-                modManagement?.NotifyProfilesChanged();
                 await RefreshAsync(cancellationToken).ConfigureAwait(false);
                 ShowImportResult(result);
                 return;
@@ -388,8 +387,23 @@ public sealed class ModGroupsFragment : Fragment
                 ?? throw new InvalidDataException("The shared group import result is missing.");
             Interlocked.CompareExchange(ref pendingPackageImport, null, transaction);
             await transaction.DisposeAsync().ConfigureAwait(false);
-            modManagement?.NotifyLibraryChanged();
-            modManagement?.NotifyProfilesChanged();
+            if (library is not null && profiles is not null)
+            {
+                try
+                {
+                    var index = await library.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    _ = await ModProfileMissingMemberReconnector.ReconnectAsync(
+                            profiles,
+                            index.Items,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or
+                                                  UnauthorizedAccessException or InvalidOperationException)
+                {
+                    Log.Error("JunimoGate.Mods", "profile-import-reconnection-failed", exception);
+                }
+            }
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
             ShowImportResult(result);
         }
@@ -475,9 +489,10 @@ public sealed class ModGroupsFragment : Fragment
         SetBusy(true);
         try
         {
-            var profile = await profiles.CreateAsync(displayName, cancellationToken: cancellationToken)
+            var profile = await modManagement!.Commands.CreateProfileAsync(
+                    displayName,
+                    cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.NotifyProfilesChanged();
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
             if (IsAdded)
             {
@@ -522,12 +537,8 @@ public sealed class ModGroupsFragment : Fragment
         SetBusy(true);
         try
         {
-            var current = modManagement is null
-                ? await selection.OpenOrCreateAsync(ProfileId.Parse("default"), cancellationToken).ConfigureAwait(false)
-                : await modManagement.GetActiveProfileAsync(cancellationToken).ConfigureAwait(false);
-            await selection.SetAsync(current.Revision, ProfileId.Parse(profile.Id), cancellationToken)
+            await modManagement!.Commands.SelectProfileAsync(ProfileId.Parse(profile.Id), cancellationToken)
                 .ConfigureAwait(false);
-            modManagement?.NotifyActiveProfileChanged();
             await ((MainActivity)RequireActivity())
                 .RefreshLauncherProfileAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -577,8 +588,8 @@ public sealed class ModGroupsFragment : Fragment
         SetBusy(true);
         try
         {
-            await profiles.DeleteAsync(ProfileId.Parse(profile.Id), cancellationToken).ConfigureAwait(false);
-            modManagement?.NotifyProfilesChanged();
+            await modManagement!.Commands.DeleteProfileAsync(ProfileId.Parse(profile.Id), cancellationToken)
+                .ConfigureAwait(false);
             await RefreshAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -712,127 +723,5 @@ public sealed class ModGroupsFragment : Fragment
     private sealed class DialogCancelListener(Action onCancel) : Java.Lang.Object, IDialogInterfaceOnCancelListener
     {
         public void OnCancel(IDialogInterface? dialog) => onCancel();
-    }
-}
-
-internal sealed record ModGroupListItem(
-    ModProfileV2 Profile,
-    string DisplayName,
-    bool IsActive,
-    int MissingCount,
-    bool CanDelete);
-
-internal sealed class ModGroupAdapter(
-    Func<ModGroupListItem, string> formatSummary,
-    Action<ModProfileV2> open,
-    Action<ModProfileV2> select,
-    Action<ModProfileV2> share,
-    Action<ModGroupListItem> delete) : RecyclerView.Adapter
-{
-    private List<ModGroupListItem> items = [];
-
-    public override int ItemCount => items.Count;
-
-    public void SetItems(IReadOnlyList<ModGroupListItem> value)
-    {
-        items = [.. value];
-        NotifyDataSetChanged();
-    }
-
-    public void SetActiveProfile(string profileId)
-    {
-        var activeIndex = items.FindIndex(item => item.IsActive);
-        var selectedIndex = items.FindIndex(item => item.Profile.Id == profileId);
-        if (selectedIndex < 0 || activeIndex == selectedIndex)
-            return;
-
-        if (activeIndex >= 0)
-        {
-            var previous = items[activeIndex];
-            items[activeIndex] = previous with
-            {
-                IsActive = false,
-                CanDelete = previous.Profile.Id is not (ModProfileV2.NoModsId or "default"),
-            };
-            NotifyItemChanged(activeIndex);
-        }
-
-        items[selectedIndex] = items[selectedIndex] with
-        {
-            IsActive = true,
-            CanDelete = false,
-        };
-        NotifyItemChanged(selectedIndex);
-    }
-
-    public override RecyclerView.ViewHolder OnCreateViewHolder(ViewGroup parent, int viewType)
-    {
-        var view = LayoutInflater.From(parent.Context)?.Inflate(Resource.Layout.item_mod_group, parent, false)
-            ?? throw new InvalidOperationException("The Mod group item layout could not be created.");
-        return new Holder(view, open, select, share, delete);
-    }
-
-    public override void OnBindViewHolder(RecyclerView.ViewHolder holder, int position)
-    {
-        var item = items[position];
-        ((Holder)holder).Bind(item, formatSummary(item));
-    }
-
-    private sealed class Holder : RecyclerView.ViewHolder
-    {
-        private readonly TextView title;
-        private readonly TextView summary;
-        private readonly MaterialButton openButton;
-        private readonly MaterialRadioButton activeButton;
-        private readonly MaterialButton shareButton;
-        private readonly MaterialButton deleteButton;
-        private readonly Action<ModProfileV2> open;
-        private readonly Action<ModProfileV2> select;
-        private readonly Action<ModProfileV2> share;
-        private readonly Action<ModGroupListItem> delete;
-        private ModGroupListItem? item;
-
-        public Holder(
-            View view,
-            Action<ModProfileV2> open,
-            Action<ModProfileV2> select,
-            Action<ModProfileV2> share,
-            Action<ModGroupListItem> delete) : base(view)
-        {
-            this.open = open;
-            this.select = select;
-            this.share = share;
-            this.delete = delete;
-            title = view.FindViewById<TextView>(Resource.Id.mod_group_title)!;
-            summary = view.FindViewById<TextView>(Resource.Id.mod_group_summary)!;
-            openButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_open)!;
-            activeButton = view.FindViewById<MaterialRadioButton>(Resource.Id.mod_group_active)!;
-            shareButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_share)!;
-            deleteButton = view.FindViewById<MaterialButton>(Resource.Id.mod_group_delete)!;
-            openButton.Click += (_, _) => { if (item is not null) this.open(item.Profile); };
-            activeButton.Click += (_, _) => SelectCurrent();
-            ItemView.Click += (_, _) => SelectCurrent();
-            shareButton.Click += (_, _) => { if (item is not null) this.share(item.Profile); };
-            deleteButton.Click += (_, _) => { if (item is not null) this.delete(item); };
-        }
-
-        public void Bind(ModGroupListItem value, string detail)
-        {
-            item = value;
-            title.Text = value.DisplayName;
-            summary.Text = detail;
-            activeButton.Checked = value.IsActive;
-            var selectLabel = ItemView.Context?.GetString(
-                value.IsActive ? Resource.String.mod_groups_selected : Resource.String.mod_groups_select);
-            activeButton.ContentDescription = selectLabel;
-            activeButton.TooltipText = selectLabel;
-            deleteButton.Visibility = value.CanDelete ? ViewStates.Visible : ViewStates.Gone;
-        }
-
-        private void SelectCurrent()
-        {
-            if (item is { IsActive: false } value)
-                select(value.Profile);
-        }
     }
 }

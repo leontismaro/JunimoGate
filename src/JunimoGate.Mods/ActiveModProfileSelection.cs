@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace JunimoGate.Mods;
@@ -28,15 +29,28 @@ public sealed class ActiveModProfileSelectionRepository
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string path;
-    private readonly SemaphoreSlim operationLock = new(1, 1);
+    private readonly SemaphoreSlim operationLock;
+    private readonly RepositoryChangeSignal changeSignal;
+    public event Action? Changed
+    {
+        add => changeSignal.Changed += value;
+        remove => changeSignal.Changed -= value;
+    }
 
     public ActiveModProfileSelectionRepository(string profilesRoot)
     {
         if (string.IsNullOrWhiteSpace(profilesRoot) || !Path.IsPathFullyQualified(profilesRoot))
             throw new ArgumentException("The profiles root must be absolute.", nameof(profilesRoot));
-        path = Path.Combine(Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot)), "active-profile.json");
+        ProfilesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(profilesRoot));
+        path = Path.Combine(ProfilesRoot, "active-profile.json");
+        operationLock = OperationLocks.GetOrAdd(ProfilesRoot, static _ => new SemaphoreSlim(1, 1));
+        changeSignal = ModRepositoryChangeSignals.ActiveProfiles.GetOrAdd(ProfilesRoot, static _ => new RepositoryChangeSignal());
     }
+
+    internal string ProfilesRoot { get; }
 
     public async ValueTask<ActiveModProfileSelection> OpenOrCreateAsync(
         ProfileId fallbackProfileId,
@@ -83,7 +97,7 @@ public sealed class ActiveModProfileSelectionRepository
         }
     }
 
-    public async ValueTask<ActiveModProfileSelection> SetAsync(
+    internal async ValueTask<ActiveModProfileSelection> SetAsync(
         long expectedRevision,
         ProfileId profileId,
         CancellationToken cancellationToken = default)
@@ -103,6 +117,7 @@ public sealed class ActiveModProfileSelectionRepository
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             await WriteAtomicAsync(updated, overwrite: true, cancellationToken).ConfigureAwait(false);
+            changeSignal.Publish();
             return updated;
         }
         finally

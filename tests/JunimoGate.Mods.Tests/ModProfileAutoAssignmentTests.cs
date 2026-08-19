@@ -68,15 +68,96 @@ internal static class ModProfileAutoAssignmentTests
     {
         using var fixture = new Fixture();
         fixture.WriteDefault([]);
-        var active = fixture.Active.OpenOrCreateAsync(ProfileId.Parse("default")).AsTask().GetAwaiter().GetResult();
         _ = fixture.Profiles.ListAsync().AsTask().GetAwaiter().GetResult();
-        _ = fixture.Active.SetAsync(active.Revision, ProfileId.Parse(ModProfileV2.NoModsId)).AsTask().GetAwaiter().GetResult();
+        _ = fixture.SelectProfile(ProfileId.Parse(ModProfileV2.NoModsId));
         var result = ModProfileAutoAssignment.AddImportedToActiveProfileAsync(
                 fixture.Active,
                 fixture.Profiles,
                 [fixture.Item("Author.New", "1.0.0", 'f')])
             .AsTask().GetAwaiter().GetResult();
         TestHarness.True(result.BlockedByReadOnlyProfile);
+    }
+
+    public static void ReconnectsDanglingMembersWithoutReplacingValidBindings()
+    {
+        using var fixture = new Fixture();
+        var retained = fixture.Item("Author.Retained", "1.0.0", 'a');
+        var restored = fixture.Item("Author.Restored", "2.0.0", 'b');
+        var oldId = new string('c', 64);
+        var now = DateTimeOffset.UtcNow;
+        fixture.WriteDefault([
+            ModProfileMember.FromLibraryItem(retained, enabled: true),
+            new ModProfileMember(
+                restored.Manifest.UniqueId,
+                oldId,
+                Enabled: false,
+                "Old restored name",
+                restored.Manifest.Version,
+                "Old author",
+                now),
+        ]);
+
+        var count = ModProfileMissingMemberReconnector.ReconnectAsync(
+                fixture.Profiles,
+                [retained, restored])
+            .AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal(1, count);
+        var members = fixture.Profiles.ReadAsync(ProfileId.Parse("default")).AsTask().GetAwaiter().GetResult().Members;
+        TestHarness.Equal(retained.LibraryItemId, members.Single(member => member.UniqueId == retained.Manifest.UniqueId).LibraryItemId);
+        var reconnected = members.Single(member => member.UniqueId == restored.Manifest.UniqueId);
+        TestHarness.Equal(restored.LibraryItemId, reconnected.LibraryItemId);
+        TestHarness.False(reconnected.Enabled);
+        TestHarness.Equal(now, reconnected.AddedAtUtc);
+    }
+
+    public static void LeavesAmbiguousDanglingMembersMissing()
+    {
+        using var fixture = new Fixture();
+        var first = fixture.Item("Author.Ambiguous", "1.0.0", 'a');
+        var second = fixture.Item("Author.Ambiguous", "1.0.0", 'b');
+        fixture.WriteDefault([new ModProfileMember(
+            first.Manifest.UniqueId,
+            new string('c', 64),
+            Enabled: true,
+            "Expected",
+            "1.0.0",
+            "Author",
+            DateTimeOffset.UtcNow)]);
+
+        var count = ModProfileMissingMemberReconnector.ReconnectAsync(fixture.Profiles, [first, second])
+            .AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal(0, count);
+        TestHarness.Equal<string?>(null, fixture.Profiles.ReadAsync(ProfileId.Parse("default"))
+            .AsTask().GetAwaiter().GetResult().Members.Single().LibraryItemId);
+    }
+
+    public static void DoesNotReconnectAgainstOnlyTheNewImportWhenTheLibraryIsAmbiguous()
+    {
+        using var fixture = new Fixture();
+        var existing = fixture.Item("Author.Ambiguous", "1.0.0", 'a');
+        var imported = fixture.Item("Author.Ambiguous", "1.0.0", 'b');
+        fixture.WriteDefault([new ModProfileMember(
+            imported.Manifest.UniqueId,
+            LibraryItemId: null,
+            Enabled: true,
+            "Expected",
+            "1.0.0",
+            "Author",
+            DateTimeOffset.UtcNow)]);
+
+        var result = ModProfileAutoAssignment.AddImportedToActiveProfileAsync(
+                fixture.Active,
+                fixture.Profiles,
+                [existing, imported],
+                [imported])
+            .AsTask().GetAwaiter().GetResult();
+
+        TestHarness.Equal(0, result.AddedMembers);
+        TestHarness.Equal(1, result.AmbiguousUniqueIds);
+        TestHarness.Equal<string?>(null, fixture.Profiles.ReadAsync(ProfileId.Parse("default"))
+            .AsTask().GetAwaiter().GetResult().Members.Single().LibraryItemId);
     }
 
     private sealed class Fixture : IDisposable
@@ -90,6 +171,14 @@ internal static class ModProfileAutoAssignmentTests
 
         public ModProfileV2Repository Profiles { get; }
         public ActiveModProfileSelectionRepository Active { get; }
+
+        public ActiveModProfileSelection SelectProfile(ProfileId profileId) =>
+            new ModManagementCommandService(
+                    new ModLibraryRepository(Path.Combine(root, "mods")),
+                    Profiles,
+                    Active,
+                    new PassThroughMutationGate())
+                .SelectProfileAsync(profileId).AsTask().GetAwaiter().GetResult();
 
         public ModLibraryItem Item(string uniqueId, string version, char content)
         {
@@ -141,6 +230,14 @@ internal static class ModProfileAutoAssignmentTests
         {
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
+        }
+
+        private sealed class PassThroughMutationGate : IModContentMutationGate
+        {
+            public ValueTask<IAsyncDisposable> AcquireAsync(
+                IReadOnlyCollection<string> affectedLibraryItemIds,
+                CancellationToken cancellationToken = default) =>
+                throw new InvalidOperationException("This test does not mutate Mod content.");
         }
     }
 }
