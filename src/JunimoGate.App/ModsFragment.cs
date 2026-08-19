@@ -324,7 +324,8 @@ public sealed class ModsFragment : Fragment
         SetBusy(true);
         try
         {
-            var installations = await repository.ListTranslationInstallationsAsync(
+            var translations = modManagement?.Translations ?? new ModTranslationHistoryRepository(repository);
+            var installations = await translations.ListAsync(
                     item.Members.Select(member => member.LibraryItemId).ToArray(),
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -1233,7 +1234,8 @@ public sealed class ModsFragment : Fragment
     {
         if (repository is null)
             return new HashSet<string>(StringComparer.Ordinal);
-        var installations = await repository.ListTranslationInstallationsAsync(null, cancellationToken)
+        var translations = modManagement?.Translations ?? new ModTranslationHistoryRepository(repository);
+        var installations = await translations.ListAsync(null, cancellationToken)
             .ConfigureAwait(false);
         return installations
             .SelectMany(installation => installation.AffectedLibraryItemIds)

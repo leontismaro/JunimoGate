@@ -39,10 +39,6 @@ public sealed class ModBundleCatalogRepository(IModInstallRepository installs) :
     }
 }
 
-/// <summary>
-/// Translation history has a separate ownership boundary even though the current
-/// on-disk transaction implementation still shares the library process lock.
-/// </summary>
 public interface IModTranslationHistoryRepository
 {
     ModTranslationInstallTransaction CreateInstallTransaction(
@@ -57,23 +53,4 @@ public interface IModTranslationHistoryRepository
     ValueTask<ModTranslationRestoreResult> RestoreAsync(
         string installationId,
         CancellationToken cancellationToken = default);
-}
-
-public sealed class ModTranslationHistoryRepository(ModLibraryRepository library) : IModTranslationHistoryRepository
-{
-    public ModTranslationInstallTransaction CreateInstallTransaction(
-        IReadOnlyList<ModTranslationTarget> targets,
-        string? sourceArchiveName = null,
-        ModArchiveImportLimits? limits = null) =>
-        library.CreateTranslationTransaction(targets, sourceArchiveName, limits);
-
-    public ValueTask<IReadOnlyList<ModTranslationInstallationSummary>> ListAsync(
-        IReadOnlyCollection<string>? libraryItemIds = null,
-        CancellationToken cancellationToken = default) =>
-        library.ListTranslationInstallationsAsync(libraryItemIds, cancellationToken);
-
-    public ValueTask<ModTranslationRestoreResult> RestoreAsync(
-        string installationId,
-        CancellationToken cancellationToken = default) =>
-        library.RestoreTranslationAsync(installationId, cancellationToken);
 }

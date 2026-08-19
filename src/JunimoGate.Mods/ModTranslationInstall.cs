@@ -98,7 +98,7 @@ public sealed record ModTranslationRestoreResult(
 
 public sealed class ModTranslationInstallTransaction : IAsyncDisposable
 {
-    private readonly ModLibraryRepository repository;
+    private readonly ModTranslationHistoryRepository repository;
     private readonly IReadOnlyList<ModTranslationTarget> targets;
     private readonly string? sourceArchiveName;
     private readonly ModArchiveImportLimits limits;
@@ -109,7 +109,7 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
     private bool disposed;
 
     internal ModTranslationInstallTransaction(
-        ModLibraryRepository repository,
+        ModTranslationHistoryRepository repository,
         IReadOnlyList<ModTranslationTarget> targets,
         string? sourceArchiveName,
         ModArchiveImportLimits limits)
@@ -124,7 +124,7 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
         this.sourceArchiveName = NormalizeArchiveName(sourceArchiveName);
         this.limits = limits;
         limits.Validate();
-        transactionDirectory = Path.Combine(repository.Layout.StagingDirectory, $"translation-{transactionId}");
+        transactionDirectory = Path.Combine(repository.Library.Layout.StagingDirectory, $"translation-{transactionId}");
         archivePath = Path.Combine(transactionDirectory, "archive.zip");
         State = ModInstallTransactionState.Created;
     }
@@ -404,7 +404,7 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
 
     private async ValueTask<IReadOnlyList<TargetInventory>> LoadTargetInventoriesAsync(CancellationToken cancellationToken)
     {
-        var index = await repository.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var index = await repository.Library.ReadAsync(cancellationToken).ConfigureAwait(false);
         var known = index.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
         var result = new List<TargetInventory>();
         foreach (var target in targets)
@@ -414,7 +414,7 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
             {
                 throw new KeyNotFoundException("A selected Mod translation target no longer exists.");
             }
-            var root = repository.Layout.GetItemFilesDirectory(target.LibraryItemId);
+            var root = repository.Library.Layout.GetItemFilesDirectory(target.LibraryItemId);
             var files = EnumerateSafeRelativeFiles(root, cancellationToken);
             var directories = files.Select(GetParent).Where(path => path.Length > 0).ToHashSet(StringComparer.Ordinal);
             result.Add(new TargetInventory(target, root, files.ToHashSet(StringComparer.Ordinal), directories));
@@ -627,7 +627,7 @@ public sealed class ModTranslationInstallTransaction : IAsyncDisposable
                 throw new InvalidDataException("A translation target changed while scanning.");
             result.Add(plan with
             {
-                ExpectedTargetSha256 = await ModLibraryRepository.HashFileAsync(path, cancellationToken).ConfigureAwait(false),
+                ExpectedTargetSha256 = await ModTranslationHistoryRepository.HashFileAsync(path, cancellationToken).ConfigureAwait(false),
             });
         }
         return result;
@@ -846,17 +846,43 @@ internal sealed record ModTranslationInstalledFile(
     string InstalledSha256,
     string? BackupRelativePath);
 
-public sealed partial class ModLibraryRepository
+public sealed class ModTranslationHistoryRepository : IModTranslationHistoryRepository
 {
+    internal ModLibraryRepository Library { get; }
+
+    public ModTranslationHistoryRepository(ModLibraryRepository library)
+    {
+        Library = library ?? throw new ArgumentNullException(nameof(library));
+    }
+
+    public ModTranslationInstallTransaction CreateInstallTransaction(
+        IReadOnlyList<ModTranslationTarget> targets,
+        string? sourceArchiveName = null,
+        ModArchiveImportLimits? limits = null) =>
+        new(this, targets, sourceArchiveName, limits ?? ModArchiveImportLimits.Default);
+
+    public ValueTask<IReadOnlyList<ModTranslationInstallationSummary>> ListAsync(
+        IReadOnlyCollection<string>? libraryItemIds = null,
+        CancellationToken cancellationToken = default) =>
+        ListTranslationInstallationsAsync(libraryItemIds, cancellationToken);
+
+    public ValueTask<ModTranslationRestoreResult> RestoreAsync(
+        string installationId,
+        CancellationToken cancellationToken = default) =>
+        RestoreTranslationAsync(installationId, cancellationToken);
+
+    private SemaphoreSlim OperationLock => Library.OperationLock;
+    internal ModLibraryLayout Layout => Library.Layout;
+
     public async ValueTask<IReadOnlyList<ModTranslationInstallationSummary>> ListTranslationInstallationsAsync(
         IReadOnlyCollection<string>? libraryItemIds = null,
         CancellationToken cancellationToken = default)
     {
-        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await OperationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
-            EnsureDirectories();
+            await using var processLock = await Library.AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
+            Library.EnsureDirectories();
             var filter = libraryItemIds?.ToHashSet(StringComparer.Ordinal);
             var result = new List<ModTranslationInstallationSummary>();
             foreach (var directory in Directory.EnumerateDirectories(Layout.TranslationsDirectory))
@@ -877,7 +903,7 @@ public sealed partial class ModLibraryRepository
         }
         finally
         {
-            operationLock.Release();
+            OperationLock.Release();
         }
     }
 
@@ -888,12 +914,12 @@ public sealed partial class ModLibraryRepository
         if (!Guid.TryParseExact(installationId, "N", out _))
             throw new ArgumentException("The translation installation ID is invalid.", nameof(installationId));
 
-        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await OperationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
-            EnsureDirectories();
-            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            await using var processLock = await Library.AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
+            Library.EnsureDirectories();
+            var current = await Library.ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var installationDirectory = Path.Combine(Layout.TranslationsDirectory, installationId);
             if (!Directory.Exists(installationDirectory))
                 throw new KeyNotFoundException("The translation installation does not exist.");
@@ -901,7 +927,7 @@ public sealed partial class ModLibraryRepository
             var affected = record.Files.Select(file => file.LibraryItemId).Distinct(StringComparer.Ordinal).ToArray();
             foreach (var file in record.Files)
             {
-                var live = ResolveContained(Layout.GetItemFilesDirectory(file.LibraryItemId), file.RelativePath);
+                var live = ModLibraryRepository.ResolveContained(Layout.GetItemFilesDirectory(file.LibraryItemId), file.RelativePath);
                 if (!File.Exists(live) ||
                     await HashFileAsync(live, cancellationToken).ConfigureAwait(false) != file.InstalledSha256)
                 {
@@ -919,12 +945,12 @@ public sealed partial class ModLibraryRepository
                 CopyDirectory(live, staged, cancellationToken);
                 foreach (var file in record.Files.Where(value => value.LibraryItemId == itemId))
                 {
-                    var destination = ResolveContained(staged, file.RelativePath);
+                    var destination = ModLibraryRepository.ResolveContained(staged, file.RelativePath);
                     if (file.Replaced)
                     {
                         if (file.BackupRelativePath is null)
                             throw new InvalidDataException("A translated file backup reference is missing.");
-                        var backup = ResolveContained(installationDirectory, file.BackupRelativePath);
+                        var backup = ModLibraryRepository.ResolveContained(installationDirectory, file.BackupRelativePath);
                         if (!File.Exists(backup))
                             throw new InvalidDataException("A translated file backup is missing.");
                         File.Copy(backup, destination, overwrite: true);
@@ -938,8 +964,8 @@ public sealed partial class ModLibraryRepository
             }
 
             var journalPath = Path.Combine(transactionDirectory, "transaction.json");
-            CopyIndexForRollback(transactionDirectory);
-            await WriteJsonDurableAsync(
+            Library.CopyIndexForRollback(transactionDirectory);
+                    await ModLibraryRepository.WriteJsonDurableAsync(
                     journalPath,
                     new ModTranslationTransactionJournal(
                         ModTranslationTransactionJournal.CurrentSchema,
@@ -958,13 +984,13 @@ public sealed partial class ModLibraryRepository
                     Directory.Move(Path.Combine(transactionDirectory, $"{itemId}-new"), live);
                 }
                 Directory.Move(installationDirectory, Path.Combine(transactionDirectory, "removed-record"));
-                var updated = await UpdateContentStatisticsUnlockedAsync(
+                var updated = await Library.UpdateContentStatisticsUnlockedAsync(
                         current,
                         affected.ToHashSet(StringComparer.Ordinal),
                         cancellationToken)
                     .ConfigureAwait(false);
-                await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-                await WriteJsonDurableAsync(
+                await Library.WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                await ModLibraryRepository.WriteJsonDurableAsync(
                         journalPath,
                         new ModTranslationTransactionJournal(
                             ModTranslationTransactionJournal.CurrentSchema,
@@ -974,19 +1000,19 @@ public sealed partial class ModLibraryRepository
                             installationId),
                         CancellationToken.None)
                     .ConfigureAwait(false);
-                Changed?.Invoke();
+                Library.NotifyChanged();
             }
             catch
             {
                 RecoverTranslationTransaction(transactionDirectory);
                 throw;
             }
-            TryDeleteDirectory(transactionDirectory);
+            ModLibraryRepository.TryDeleteDirectory(transactionDirectory);
             return new ModTranslationRestoreResult(installationId, record.Files.Count, affected);
         }
         finally
         {
-            operationLock.Release();
+            OperationLock.Release();
         }
     }
 
@@ -998,12 +1024,12 @@ public sealed partial class ModLibraryRepository
         ModTranslationScanResult scan,
         CancellationToken cancellationToken)
     {
-        await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await OperationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await using var processLock = await AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
-            EnsureDirectories();
-            var current = await ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            await using var processLock = await Library.AcquireProcessOperationLockAsync(cancellationToken).ConfigureAwait(false);
+            Library.EnsureDirectories();
+            var current = await Library.ReadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             var known = current.Items.ToDictionary(item => item.LibraryItemId, StringComparer.Ordinal);
             var affected = scan.Files.Select(file => file.LibraryItemId).Distinct(StringComparer.Ordinal).ToArray();
             if (affected.Any(id => !known.ContainsKey(id)))
@@ -1024,7 +1050,7 @@ public sealed partial class ModLibraryRepository
                 CopyDirectory(live, staged, cancellationToken);
                 foreach (var plan in scan.Files.Where(file => file.LibraryItemId == itemId))
                 {
-                    var destination = ResolveContained(staged, plan.TargetPath);
+                    var destination = ModLibraryRepository.ResolveContained(staged, plan.TargetPath);
                     if (plan.Action == ModTranslationFileAction.Add && File.Exists(destination) ||
                         plan.Action == ModTranslationFileAction.Replace &&
                         (!File.Exists(destination) || plan.ExpectedTargetSha256 is null ||
@@ -1037,7 +1063,7 @@ public sealed partial class ModLibraryRepository
                     if (plan.Action == ModTranslationFileAction.Replace)
                     {
                         backupRelative = $"backups/{itemId}/{plan.TargetPath}";
-                        var backup = ResolveContained(recordDirectory, backupRelative);
+                        var backup = ModLibraryRepository.ResolveContained(recordDirectory, backupRelative);
                         Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
                         File.Copy(destination, backup, overwrite: false);
                     }
@@ -1059,11 +1085,11 @@ public sealed partial class ModLibraryRepository
                 DateTimeOffset.UtcNow,
                 sourceArchiveName,
                 installedFiles);
-            await WriteJsonDurableAsync(Path.Combine(recordDirectory, "installation.json"), record, cancellationToken)
+            await ModLibraryRepository.WriteJsonDurableAsync(Path.Combine(recordDirectory, "installation.json"), record, cancellationToken)
                 .ConfigureAwait(false);
             var journalPath = Path.Combine(transactionDirectory, "transaction.json");
-            CopyIndexForRollback(transactionDirectory);
-            await WriteJsonDurableAsync(
+            Library.CopyIndexForRollback(transactionDirectory);
+            await ModLibraryRepository.WriteJsonDurableAsync(
                     journalPath,
                     new ModTranslationTransactionJournal(
                         ModTranslationTransactionJournal.CurrentSchema, transactionId, "prepared", affected),
@@ -1081,19 +1107,19 @@ public sealed partial class ModLibraryRepository
                     Directory.Move(staged, live);
                 }
                 Directory.Move(recordDirectory, Path.Combine(Layout.TranslationsDirectory, transactionId));
-                var updated = await UpdateContentStatisticsUnlockedAsync(
+                var updated = await Library.UpdateContentStatisticsUnlockedAsync(
                         current,
                         affected.ToHashSet(StringComparer.Ordinal),
                         cancellationToken)
                     .ConfigureAwait(false);
-                await WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
-                await WriteJsonDurableAsync(
+                await Library.WriteIndexAtomicAsync(updated, cancellationToken).ConfigureAwait(false);
+                await ModLibraryRepository.WriteJsonDurableAsync(
                         journalPath,
                         new ModTranslationTransactionJournal(
                             ModTranslationTransactionJournal.CurrentSchema, transactionId, "committed", affected),
                         CancellationToken.None)
                     .ConfigureAwait(false);
-                Changed?.Invoke();
+                Library.NotifyChanged();
             }
             catch
             {
@@ -1110,11 +1136,11 @@ public sealed partial class ModLibraryRepository
         }
         finally
         {
-            operationLock.Release();
+            OperationLock.Release();
         }
     }
 
-    private void RecoverTranslationTransactions()
+    internal void RecoverTranslationTransactions()
     {
         if (!Directory.Exists(Layout.StagingDirectory))
             return;
@@ -1132,7 +1158,7 @@ public sealed partial class ModLibraryRepository
         {
             journal = JsonSerializer.Deserialize<ModTranslationTransactionJournal>(
                           File.ReadAllBytes(Path.Combine(transactionDirectory, "transaction.json")),
-                          SerializerOptions)
+                          ModLibraryRepository.SerializerOptions)
                       ?? throw new InvalidDataException("A translation transaction journal is empty.");
             if (journal.Schema != ModTranslationTransactionJournal.CurrentSchema)
                 throw new InvalidDataException("A translation transaction journal is unsupported.");
@@ -1153,7 +1179,7 @@ public sealed partial class ModLibraryRepository
             var destination = Path.Combine(Layout.TranslationsDirectory, journal.TransactionId);
             if (Directory.Exists(record) && !Directory.Exists(destination))
                 Directory.Move(record, destination);
-            TryDeleteDirectory(transactionDirectory);
+            ModLibraryRepository.TryDeleteDirectory(transactionDirectory);
             return;
         }
 
@@ -1164,10 +1190,10 @@ public sealed partial class ModLibraryRepository
             if (!Directory.Exists(old))
                 continue;
             if (Directory.Exists(live))
-                TryDeleteDirectory(live);
+                ModLibraryRepository.TryDeleteDirectory(live);
             CopyDirectory(old, live, CancellationToken.None);
         }
-        RestoreIndexRollbackCopy(transactionDirectory);
+        Library.RestoreIndexRollbackCopy(transactionDirectory);
         if (journal.RemovedInstallationId is { } removedInstallationId)
         {
             var removedRecord = Path.Combine(transactionDirectory, "removed-record");
@@ -1177,33 +1203,9 @@ public sealed partial class ModLibraryRepository
         }
         else
         {
-            TryDeleteDirectory(Path.Combine(Layout.TranslationsDirectory, journal.TransactionId));
+            ModLibraryRepository.TryDeleteDirectory(Path.Combine(Layout.TranslationsDirectory, journal.TransactionId));
         }
-        TryDeleteDirectory(transactionDirectory);
-    }
-
-    private void CopyIndexForRollback(string transactionDirectory)
-    {
-        if (!File.Exists(Layout.IndexPath))
-            throw new InvalidDataException("The Mod library index is missing before a content mutation.");
-        File.Copy(Layout.IndexPath, Path.Combine(transactionDirectory, "library-index.before.json"), overwrite: false);
-    }
-
-    private void RestoreIndexRollbackCopy(string transactionDirectory)
-    {
-        var backup = Path.Combine(transactionDirectory, "library-index.before.json");
-        if (!File.Exists(backup))
-            return;
-        var temporary = Layout.IndexPath + $".{Guid.NewGuid():N}.rollback";
-        try
-        {
-            File.Copy(backup, temporary, overwrite: false);
-            File.Move(temporary, Layout.IndexPath, overwrite: true);
-        }
-        finally
-        {
-            TryDeleteFile(temporary);
-        }
+        ModLibraryRepository.TryDeleteDirectory(transactionDirectory);
     }
 
     private static async ValueTask ExtractEntryAsync(
@@ -1234,7 +1236,7 @@ public sealed partial class ModLibraryRepository
         output.Flush(flushToDisk: true);
     }
 
-    private static void CopyDirectory(string source, string destination, CancellationToken cancellationToken)
+    internal static void CopyDirectory(string source, string destination, CancellationToken cancellationToken)
     {
         var sourceInfo = new DirectoryInfo(source);
         if (!sourceInfo.Exists)
@@ -1264,15 +1266,6 @@ public sealed partial class ModLibraryRepository
         }
     }
 
-    internal static string ResolveContained(string root, string relative)
-    {
-        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        var path = Path.GetFullPath(Path.Combine(normalizedRoot, SafeArchivePath.Parse(relative).Value.Replace('/', Path.DirectorySeparatorChar)));
-        if (!path.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new InvalidDataException("A translation path escaped its target directory.");
-        return path;
-    }
-
     internal static async ValueTask<string> HashFileAsync(string path, CancellationToken cancellationToken)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
@@ -1280,28 +1273,7 @@ public sealed partial class ModLibraryRepository
         return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false));
     }
 
-    private static async ValueTask WriteJsonDurableAsync<T>(string path, T value, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp";
-        try
-        {
-            await using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 16 * 1024,
-                             FileOptions.Asynchronous | FileOptions.SequentialScan))
-            {
-                await JsonSerializer.SerializeAsync(stream, value, SerializerOptions, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            TryDeleteFile(temporary);
-        }
-    }
-
-    private static async ValueTask<ModTranslationInstallationRecord> ReadInstallationRecordAsync(
+    internal static async ValueTask<ModTranslationInstallationRecord> ReadInstallationRecordAsync(
         string directory,
         CancellationToken cancellationToken)
     {
@@ -1314,7 +1286,7 @@ public sealed partial class ModLibraryRepository
         try
         {
             var record = await JsonSerializer.DeserializeAsync<ModTranslationInstallationRecord>(
-                             stream, SerializerOptions, cancellationToken).ConfigureAwait(false)
+                             stream, ModLibraryRepository.SerializerOptions, cancellationToken).ConfigureAwait(false)
                          ?? throw new InvalidDataException("A translation installation record is empty.");
             if (record.Schema != ModTranslationInstallationRecord.CurrentSchema ||
                 record.InstallationId != Path.GetFileName(directory) || record.InstalledAtUtc == default ||
@@ -1339,7 +1311,7 @@ public sealed partial class ModLibraryRepository
         entry.FullName.EndsWith('\\') ||
         ((entry.ExternalAttributes >> 16) & 0xF000) == 0x4000;
 
-    private static void RemoveEmptyParents(string directory, string root)
+    internal static void RemoveEmptyParents(string directory, string root)
     {
         var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         for (var current = Path.GetFullPath(directory);
