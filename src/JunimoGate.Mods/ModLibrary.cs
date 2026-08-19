@@ -111,8 +111,6 @@ public sealed class ModLibraryLayout
         IndexPath = Path.Combine(Root, "library-index.json");
         LibraryDirectory = Path.Combine(Root, "library");
         StagingDirectory = Path.Combine(Root, "staging");
-        QuarantineDirectory = Path.Combine(Root, "quarantine");
-        ExportsDirectory = Path.Combine(Root, "exports");
         TranslationsDirectory = Path.Combine(Root, "translations");
     }
 
@@ -120,8 +118,6 @@ public sealed class ModLibraryLayout
     public string IndexPath { get; }
     public string LibraryDirectory { get; }
     public string StagingDirectory { get; }
-    public string QuarantineDirectory { get; }
-    public string ExportsDirectory { get; }
     public string TranslationsDirectory { get; }
 
     public string GetItemDirectory(string libraryItemId) => Path.Combine(LibraryDirectory, libraryItemId);
@@ -905,8 +901,6 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
         Directory.CreateDirectory(Layout.Root);
         Directory.CreateDirectory(Layout.LibraryDirectory);
         Directory.CreateDirectory(Layout.StagingDirectory);
-        Directory.CreateDirectory(Layout.QuarantineDirectory);
-        Directory.CreateDirectory(Layout.ExportsDirectory);
         Directory.CreateDirectory(Layout.TranslationsDirectory);
         RecoverFileMutations();
         RecoverTranslationTransactions();
