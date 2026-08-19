@@ -282,7 +282,35 @@ internal static class ModLibraryTests
         TestHarness.Equal(1, repaired.ReusedItems.Count);
         TestHarness.Equal(freshItem.LibraryItemId, repaired.ReusedItems.Single().LibraryItemId);
         TestHarness.True(Directory.Exists(fixture.Repository.Layout.GetItemDirectory(freshItem.LibraryItemId)));
-        TestHarness.Equal(afterModifiedRetry.Revision, fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult().Revision);
+        var afterRepair = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        TestHarness.Equal(afterModifiedRetry.Revision + 1, afterRepair.Revision);
+        TestHarness.Equal(
+            freshItem.ContentGeneration + 1,
+            afterRepair.Items.Single(candidate => candidate.LibraryItemId == freshItem.LibraryItemId).ContentGeneration);
+    }
+
+    public static void RepairsIndexedItemsWithMissingFilesDirectory()
+    {
+        using var fixture = new ModLibraryFixture();
+        using var archive = SingleModArchive("Example.Incomplete", "1.0.0", "original");
+        var item = Import(fixture.Repository, archive, "original.zip").AddedItems.Single();
+        var before = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var files = fixture.Repository.Layout.GetItemFilesDirectory(item.LibraryItemId);
+        Directory.Delete(files, recursive: true);
+
+        using var retry = SingleModArchive("Example.Incomplete", "1.0.0", "original");
+        var repaired = Import(fixture.Repository, retry, "repair.zip");
+
+        TestHarness.Equal(0, repaired.AddedItems.Count);
+        TestHarness.Equal(1, repaired.ReusedItems.Count);
+        TestHarness.Equal(item.LibraryItemId, repaired.ReusedItems.Single().LibraryItemId);
+        TestHarness.True(File.Exists(Path.Combine(files, "Mod.dll")));
+        var after = fixture.Repository.ReadAsync().AsTask().GetAwaiter().GetResult();
+        var restored = after.Items.Single();
+        TestHarness.Equal(before.Revision + 1, after.Revision);
+        TestHarness.Equal(item.ContentGeneration + 1, restored.ContentGeneration);
+        TestHarness.Equal(item.FileCount, restored.CurrentFileCount);
+        TestHarness.Equal(item.TotalBytes, restored.CurrentTotalBytes);
     }
 
     public static void KeepsDistinctContentCandidates()

@@ -244,6 +244,8 @@ return TestHarness.Run(
         ModManagementProjectionTests.DiagnosesDependenciesWithoutBlocking()),
     ("Mod library repairs missing and orphaned item directories", () =>
         ModLibraryTests.RepairsRecoverableLibraryState()),
+    ("Mod library repairs indexed items missing their files directory", () =>
+        ModLibraryTests.RepairsIndexedItemsWithMissingFilesDirectory()),
     ("Mod library does not recover an edited orphan as the original import", () =>
         ModLibraryTests.DoesNotRecoverAnEditedOrphanAsTheOriginalImport()),
     ("Mod library deletes one exact item", () =>

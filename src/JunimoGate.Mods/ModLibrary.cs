@@ -474,6 +474,7 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
             var reused = new List<ModLibraryItem>();
             var recoveredItems = new List<ModLibraryItem>();
             var movedDirectories = new List<string>();
+            var repairedDirectories = new List<(string Destination, string? Backup)>();
             var resolvedPreparedByRoot = new Dictionary<string, PreparedModLibraryItem>(StringComparer.Ordinal);
             var resolvedItemsByPreparedId = new Dictionary<string, ModLibraryItem>(StringComparer.Ordinal);
             try
@@ -483,16 +484,32 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                     cancellationToken.ThrowIfCancellationRequested();
                     prepared.Item.Validate();
                     knownByImportedContent.TryGetValue(prepared.Item.ImportedContentId, out var matchingItems);
-                    var existing = matchingItems?.FirstOrDefault(item =>
-                        !Directory.Exists(Layout.GetItemDirectory(item.LibraryItemId)));
-                    if (existing is null && matchingItems is not null)
+                    ModLibraryItem? existing = null;
+                    var needsRepair = false;
+                    if (matchingItems is not null)
                     {
                         foreach (var candidate in matchingItems)
                         {
-                            var currentDigest = await ModImportUtilities.ComputeDirectoryContentDigestAsync(
-                                    Layout.GetItemFilesDirectory(candidate.LibraryItemId),
-                                    cancellationToken)
-                                .ConfigureAwait(false);
+                            var itemDirectory = Layout.GetItemDirectory(candidate.LibraryItemId);
+                            var filesDirectory = Layout.GetItemFilesDirectory(candidate.LibraryItemId);
+                            if (!Directory.Exists(itemDirectory) || !Directory.Exists(filesDirectory))
+                            {
+                                existing = candidate;
+                                needsRepair = true;
+                                break;
+                            }
+                            string currentDigest;
+                            try
+                            {
+                                currentDigest = await ModImportUtilities.ComputeDirectoryContentDigestAsync(
+                                        filesDirectory,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+                            {
+                                continue;
+                            }
                             if (currentDigest == candidate.ImportedContentId)
                             {
                                 existing = candidate;
@@ -503,15 +520,33 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                     if (existing is not null)
                     {
                         var existingDirectory = Layout.GetItemDirectory(existing.LibraryItemId);
-                        if (!Directory.Exists(existingDirectory))
+                        if (needsRepair)
                         {
+                            var repaired = existing with
+                            {
+                                ContentGeneration = checked(existing.ContentGeneration + 1),
+                                CurrentFileCount = prepared.Item.CurrentFileCount,
+                                CurrentTotalBytes = prepared.Item.CurrentTotalBytes,
+                            };
                             await WriteItemMetadataAsync(
                                     Path.Combine(prepared.Directory, "library-item.json"),
-                                    existing,
+                                    repaired,
                                     cancellationToken)
                                 .ConfigureAwait(false);
+                            string? backup = null;
+                            if (Directory.Exists(existingDirectory))
+                            {
+                                backup = Path.Combine(Layout.StagingDirectory, $"repair-{Guid.NewGuid():N}");
+                                Directory.Move(existingDirectory, backup);
+                            }
                             Directory.Move(prepared.Directory, existingDirectory);
-                            movedDirectories.Add(existingDirectory);
+                            repairedDirectories.Add((existingDirectory, backup));
+                            known[repaired.LibraryItemId] = repaired;
+                            var candidateIndex = matchingItems!.FindIndex(candidate =>
+                                candidate.LibraryItemId == repaired.LibraryItemId);
+                            matchingItems[candidateIndex] = repaired;
+                            recoveredItems.Add(repaired);
+                            existing = repaired;
                         }
                         reused.Add(existing);
                         resolvedPreparedByRoot.Add(prepared.RootPath, prepared with { Item = existing });
@@ -602,16 +637,29 @@ public sealed partial class ModLibraryRepository : IModInstallRepository
                     Changed?.Invoke();
                 }
 
-                return new ModArchiveImportResult(added, reused)
+                var result = new ModArchiveImportResult(added, reused)
                 {
                     Bundles = importedBundles,
                     ResolvedItemsByPreparedId = resolvedItemsByPreparedId,
                 };
+                foreach (var (_, backup) in repairedDirectories)
+                {
+                    if (backup is not null)
+                        TryDeleteDirectory(backup);
+                }
+                return result;
             }
             catch
             {
                 foreach (var directory in movedDirectories)
                     TryDeleteDirectory(directory);
+                for (var index = repairedDirectories.Count - 1; index >= 0; index--)
+                {
+                    var (destination, backup) = repairedDirectories[index];
+                    TryDeleteDirectory(destination);
+                    if (backup is not null && Directory.Exists(backup))
+                        Directory.Move(backup, destination);
+                }
                 throw;
             }
         }
