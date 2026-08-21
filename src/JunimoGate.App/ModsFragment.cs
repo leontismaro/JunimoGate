@@ -64,8 +64,10 @@ public sealed class ModsFragment : Fragment
     private ModTranslationInstallTransaction? pendingTranslationTransaction;
     private ModManagementItem? pendingTranslationTarget;
     private string? pendingTranslationTargetItemId;
+    private global::Android.Net.Uri? pendingTranslationDocumentUri;
     private string? pendingExportBundleId;
     private int actualComponentCount;
+    private readonly ModOperationBusyState busyState = new();
     private bool busy;
 
     public override void OnCreate(Bundle? savedInstanceState)
@@ -163,6 +165,7 @@ public sealed class ModsFragment : Fragment
             AndroidPrivateStorage.GetUserDataRoot(RequireContext()),
             "settings"));
         _ = InitializeContentAsync(cancellation.Token);
+        TryStartPendingTranslationScan();
     }
 
     public override void OnStop()
@@ -189,6 +192,7 @@ public sealed class ModsFragment : Fragment
         settingsRepository = null;
         launcherSettings = null;
         SetBusy(false);
+        SetTranslationBusy(false);
         base.OnStop();
     }
 
@@ -320,7 +324,7 @@ public sealed class ModsFragment : Fragment
     {
         if (repository is null)
             return;
-        SetBusy(true);
+        SetTranslationBusy(true);
         try
         {
             var translations = modManagement?.Translations ?? new ModTranslationHistoryRepository(repository);
@@ -332,7 +336,7 @@ public sealed class ModsFragment : Fragment
                 return;
             Activity?.RunOnUiThread(() =>
             {
-                SetBusy(false);
+                SetTranslationBusy(false);
                 ShowTranslationManagement(item, installations);
             });
         }
@@ -343,7 +347,7 @@ public sealed class ModsFragment : Fragment
         {
             Log.Error("JunimoGate.Mods", "translation-list-failed", exception);
             if (IsAdded)
-                Activity?.RunOnUiThread(() => { SetBusy(false); ShowMessage(Resource.String.mod_translation_manage_failed); });
+                Activity?.RunOnUiThread(() => { SetTranslationBusy(false); ShowMessage(Resource.String.mod_translation_manage_failed); });
         }
     }
 
@@ -470,7 +474,7 @@ public sealed class ModsFragment : Fragment
     {
         if (repository is null)
             return;
-        SetBusy(true);
+        SetTranslationBusy(true);
         try
         {
             var result = await modManagement!.Commands.RestoreTranslationAsync(installationId, cancellationToken)
@@ -500,7 +504,7 @@ public sealed class ModsFragment : Fragment
         finally
         {
             if (IsAdded)
-                Activity?.RunOnUiThread(() => SetBusy(false));
+                Activity?.RunOnUiThread(() => SetTranslationBusy(false));
         }
     }
 
@@ -510,6 +514,8 @@ public sealed class ModsFragment : Fragment
         {
             pendingTranslationTarget = null;
             pendingTranslationTargetItemId = null;
+            pendingTranslationDocumentUri = null;
+            Log.Info("JunimoGate.Mods", $"translation-picker-cancelled resultCode={result.ResultCode}");
             return;
         }
         var uri = GetSingleDocumentUri(result.Data);
@@ -518,40 +524,59 @@ public sealed class ModsFragment : Fragment
         {
             pendingTranslationTarget = null;
             pendingTranslationTargetItemId = null;
+            pendingTranslationDocumentUri = null;
+            Log.Warn("JunimoGate.Mods", "translation-picker-invalid-result");
             ShowMessage(Resource.String.mod_translation_picker_failed);
             return;
         }
-        if (cancellation is { IsCancellationRequested: false } lifetime)
-            _ = ResolveTranslationTargetAndScanAsync(uri, targetItemId, lifetime.Token);
+        pendingTranslationDocumentUri = uri;
+        Log.Info("JunimoGate.Mods", "translation-picker-document-received");
+        TryStartPendingTranslationScan();
+    }
+
+    private void TryStartPendingTranslationScan()
+    {
+        if (pendingTranslationDocumentUri is not { } uri ||
+            pendingTranslationTargetItemId is not { } targetItemId)
+            return;
+        if (cancellation is not { IsCancellationRequested: false } lifetime || modManagement is null)
+        {
+            Log.Info("JunimoGate.Mods", "translation-picker-result-deferred lifecycle=inactive");
+            return;
+        }
+
+        pendingTranslationDocumentUri = null;
+        SetTranslationBusy(true);
+        _ = ResolveTranslationTargetAndScanAsync(uri, targetItemId, modManagement, lifetime.Token);
     }
 
     private async Task ResolveTranslationTargetAndScanAsync(
         global::Android.Net.Uri uri,
         string targetItemId,
+        ModManagementUiSession management,
         CancellationToken cancellationToken)
     {
-        if (repository is null)
-            return;
         try
         {
-            var index = modManagement is null
-                ? await repository.ReadAsync(cancellationToken).ConfigureAwait(false)
-                : await modManagement.GetLibraryAsync(cancellationToken).ConfigureAwait(false);
+            var index = await management.GetLibraryAsync(cancellationToken).ConfigureAwait(false);
             var target = ModManagementProjection.Create(index).Items.SingleOrDefault(item => item.ItemId == targetItemId)
                 ?? throw new KeyNotFoundException("The selected translation target no longer exists.");
             pendingTranslationTarget = target;
-            await ScanTranslationAsync(uri, target, cancellationToken).ConfigureAwait(false);
+            await ScanTranslationAsync(uri, target, management, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or KeyNotFoundException)
+        catch (Exception exception)
         {
-            Log.Error("JunimoGate.Mods", "translation-target-resolution-failed", exception);
-            pendingTranslationTarget = null;
-            pendingTranslationTargetItemId = null;
+            Log.Error("JunimoGate.Mods", "translation-processing-failed", exception);
+            await DisposePendingTranslationAsync().ConfigureAwait(false);
             if (IsAdded)
-                Activity?.RunOnUiThread(() => ShowMessage(Resource.String.mod_translation_picker_failed));
+                Activity?.RunOnUiThread(() =>
+                {
+                    SetTranslationBusy(false);
+                    ShowMessage(Resource.String.mod_translation_scan_failed);
+                });
         }
     }
 
@@ -993,11 +1018,9 @@ public sealed class ModsFragment : Fragment
     private async Task ScanTranslationAsync(
         global::Android.Net.Uri uri,
         ModManagementItem target,
+        ModManagementUiSession management,
         CancellationToken cancellationToken)
     {
-        if (repository is null)
-            return;
-        SetBusy(true);
         try
         {
             await AndroidPrivateStorage.EnsureMigratedAsync(RequireContext(), cancellationToken).ConfigureAwait(false);
@@ -1008,7 +1031,7 @@ public sealed class ModsFragment : Fragment
             var targets = target.Members.Select(item => ModTranslationTarget.FromLibraryItem(
                 item,
                 originalRoots.TryGetValue(item.LibraryItemId, out var root) ? root : null)).ToArray();
-            var transaction = modManagement!.Commands.CreateTranslationTransaction(targets, ReadDisplayName(uri));
+            var transaction = management.Commands.CreateTranslationTransaction(targets, ReadDisplayName(uri));
             pendingTranslationTransaction = transaction;
             await using var stream = RequireContext().ContentResolver?.OpenInputStream(uri)
                 ?? throw new IOException("The selected translation archive could not be opened.");
@@ -1043,7 +1066,7 @@ public sealed class ModsFragment : Fragment
         {
             var message = FormatTranslationIssues(scan.Issues);
             _ = DisposePendingTranslationAsync();
-            SetBusy(false);
+            SetTranslationBusy(false);
             ShowDialog(Resource.String.mod_translation_rejected, message);
             return;
         }
@@ -1066,7 +1089,7 @@ public sealed class ModsFragment : Fragment
         dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
         {
             _ = DisposePendingTranslationAsync();
-            SetBusy(false);
+            SetTranslationBusy(false);
         });
         dialog.SetNeutralButton(Resource.String.mod_translation_ignore_action, (_, _) =>
             ShowTranslationConfirmation(transaction, target, scan.UnmappedFiles.Count));
@@ -1075,7 +1098,7 @@ public sealed class ModsFragment : Fragment
         dialog.SetOnCancelListener(new DialogCancelListener(() =>
         {
             _ = DisposePendingTranslationAsync();
-            SetBusy(false);
+            SetTranslationBusy(false);
         }));
         dialog.Show();
     }
@@ -1181,7 +1204,7 @@ public sealed class ModsFragment : Fragment
         if (!scan.CanCommit)
         {
             _ = DisposePendingTranslationAsync();
-            SetBusy(false);
+            SetTranslationBusy(false);
             ShowDialog(Resource.String.mod_translation_rejected, FormatTranslationIssues(scan.Issues));
             return;
         }
@@ -1207,7 +1230,7 @@ public sealed class ModsFragment : Fragment
         dialog.SetNegativeButton(global::Android.Resource.String.Cancel, (_, _) =>
         {
             _ = DisposePendingTranslationAsync();
-            SetBusy(false);
+            SetTranslationBusy(false);
         });
         dialog.SetPositiveButton(Resource.String.mod_translation_install_action, (_, _) =>
         {
@@ -1217,7 +1240,7 @@ public sealed class ModsFragment : Fragment
         dialog.SetOnCancelListener(new DialogCancelListener(() =>
         {
             _ = DisposePendingTranslationAsync();
-            SetBusy(false);
+            SetTranslationBusy(false);
         }));
         dialog.Show();
     }
@@ -1240,7 +1263,7 @@ public sealed class ModsFragment : Fragment
             {
                 Activity?.RunOnUiThread(() =>
                 {
-                    SetBusy(false);
+                    SetTranslationBusy(false);
                     ShowMessage(FormatString(
                         Resource.String.mod_translation_installed,
                         Java.Lang.Integer.ValueOf(result.AddedFiles),
@@ -1260,7 +1283,7 @@ public sealed class ModsFragment : Fragment
                 Activity?.RunOnUiThread(() =>
                 {
                     ShowMessage(Resource.String.mod_translation_game_running);
-                    SetBusy(false);
+                    SetTranslationBusy(false);
                 });
             }
         }
@@ -1270,7 +1293,7 @@ public sealed class ModsFragment : Fragment
             Log.Error("JunimoGate.Mods", "translation-install-failed", exception);
             await DisposePendingTranslationAsync().ConfigureAwait(false);
             if (IsAdded)
-                Activity?.RunOnUiThread(() => { SetBusy(false); ShowMessage(Resource.String.mod_translation_install_failed); });
+                Activity?.RunOnUiThread(() => { SetTranslationBusy(false); ShowMessage(Resource.String.mod_translation_install_failed); });
         }
     }
 
@@ -1278,7 +1301,7 @@ public sealed class ModsFragment : Fragment
     {
         await DisposePendingTranslationAsync().ConfigureAwait(false);
         if (IsAdded)
-            Activity?.RunOnUiThread(() => { SetBusy(false); ShowMessage(Resource.String.mod_translation_scan_failed); });
+            Activity?.RunOnUiThread(() => { SetTranslationBusy(false); ShowMessage(Resource.String.mod_translation_scan_failed); });
     }
 
     private async Task RefreshAsync(CancellationToken cancellationToken)
@@ -2096,16 +2119,28 @@ public sealed class ModsFragment : Fragment
 
     private void SetBusy(bool value)
     {
-        busy = value;
+        busyState.SetGeneralOperation(value);
+        RenderBusyState();
+    }
+
+    private void SetTranslationBusy(bool value)
+    {
+        busyState.SetTranslationOperation(value);
+        RenderBusyState();
+    }
+
+    private void RenderBusyState()
+    {
+        busy = busyState.IsBusy;
         if (importButton is not null)
-            importButton.Enabled = !value;
+            importButton.Enabled = !busy;
         if (batchButton is not null)
-            batchButton.Enabled = !value;
+            batchButton.Enabled = !busy;
         if (deleteSelectedButton is not null)
-            deleteSelectedButton.Enabled = !value;
+            deleteSelectedButton.Enabled = !busy;
         if (progress is not null)
-            progress.Visibility = value ? ViewStates.Visible : ViewStates.Gone;
-        adapter?.SetInteractionEnabled(!value);
+            progress.Visibility = busy ? ViewStates.Visible : ViewStates.Gone;
+        adapter?.SetInteractionEnabled(!busy);
         UpdateBatchState();
     }
 

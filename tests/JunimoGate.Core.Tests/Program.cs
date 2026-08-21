@@ -159,6 +159,17 @@ return TestHarness.Run(
             .SequenceEqual(new[] { "same", "other" }));
         TestHarness.Equal(0, ModDocumentPickerPolicy.ResolveDocuments<string>(null, Array.Empty<string>()).Count);
     }),
+    ("Mod operations stay busy until initialization and translation both finish", () =>
+    {
+        var state = new ModOperationBusyState();
+        state.SetGeneralOperation(true);
+        TestHarness.True(state.IsBusy);
+        state.SetTranslationOperation(true);
+        state.SetGeneralOperation(false);
+        TestHarness.True(state.IsBusy);
+        state.SetTranslationOperation(false);
+        TestHarness.False(state.IsBusy);
+    }),
     ("Sha256Digest accepts canonical lowercase hex", () =>
     {
         var text = new string('a', Sha256Digest.HexLength);

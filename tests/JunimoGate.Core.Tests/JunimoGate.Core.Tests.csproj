@@ -7,6 +7,7 @@
     <Compile Include="../Shared/TestHarness.cs" Link="TestHarness.cs" />
     <Compile Include="../../src/JunimoGate.App/GitHubUpdateService.cs" Link="App/GitHubUpdateService.cs" />
     <Compile Include="../../src/JunimoGate.App/ModDocumentPickerPolicy.cs" Link="App/ModDocumentPickerPolicy.cs" />
+    <Compile Include="../../src/JunimoGate.App/ModOperationBusyState.cs" Link="App/ModOperationBusyState.cs" />
     <Compile Include="../../src/JunimoGate.App/SmapiLogUploadClient.cs" Link="App/SmapiLogUploadClient.cs" />
     <ProjectReference Include="../../src/JunimoGate.Core/JunimoGate.Core.csproj" />
   </ItemGroup>
