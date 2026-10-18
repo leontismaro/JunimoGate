@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Pinned source inputs for the JunimoGate Android Harmony package.
 
-HARMONY_ANDROID_PACKAGE_VERSION="2.4.2-junimogate.64"
-HARMONY_ANDROID_PATCH_SHA256="8dd12074d4bc99ed6d81dfc34d8f1990548b943e64532a196cbac0008a5833c1"
+HARMONY_ANDROID_PACKAGE_VERSION="2.4.2-junimogate.67"
+HARMONY_ANDROID_PATCH_SHA256="823e0727a88a714b4d4e99833abf535c7ed9ee6f3706b894f7b7df142ae83c3d"
 
 HARMONY_COMMIT="a264a1bf1ce689e4589e8dcc54b1e2818602a90a"
 HARMONY_ARCHIVE_URL="https://github.com/pardeike/Harmony/archive/${HARMONY_COMMIT}.tar.gz"
