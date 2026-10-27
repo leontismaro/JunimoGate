@@ -1,13 +1,14 @@
 diff --git a/Directory.Build.props b/Directory.Build.props
-index 4fd1656..998e80a 100644
+index 4fd1656..9803493 100644
 --- a/Directory.Build.props
 +++ b/Directory.Build.props
 @@ -1,10 +1,10 @@
- <Project>
+-<Project>
++﻿<Project>
  	<PropertyGroup Label="Harmony Defines">
  		<HarmonyVersion>2.4.2.0</HarmonyVersion>
 -		<HarmonyPrerelease></HarmonyPrerelease>
-+		<HarmonyPrerelease>-junimogate.64</HarmonyPrerelease>
++		<HarmonyPrerelease>-junimogate.67</HarmonyPrerelease>
  
 -		<!-- set empty to build from local LocalMonoMod submodule -->
 -		<MonoModCoreVersion>1.3.3</MonoModCoreVersion>
@@ -25,6 +26,20 @@ index 4fd1656..998e80a 100644
  		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
  		<LangVersion>preview</LangVersion>
  		<CheckEolTargetFramework>false</CheckEolTargetFramework>
+diff --git a/Lib.Harmony/ILRepack.targets b/Lib.Harmony/ILRepack.targets
+index fcb1fe7..882388e 100644
+--- a/Lib.Harmony/ILRepack.targets
++++ b/Lib.Harmony/ILRepack.targets
+@@ -2,8 +2,7 @@
+ <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+ 	<Target Name="ILRepacker" AfterTargets="Build">
+ 		<PropertyGroup>
+-			<DebugInfo>true</DebugInfo>
+-			<DebugInfo Condition="'$(TargetFramework)' == 'netstandard2.0'">false</DebugInfo>
++			<DebugInfo>false</DebugInfo>
+ 		</PropertyGroup>
+ 		
+ 		<ItemGroup>
 diff --git a/Lib.Harmony/Lib.Harmony.csproj b/Lib.Harmony/Lib.Harmony.csproj
 index 158ef23..832a8ee 100644
 --- a/Lib.Harmony/Lib.Harmony.csproj
@@ -135,10 +150,74 @@ index 92f3adb..c6930cd 100644
          }
      }
  }
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/Arm64Arch.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/Arm64Arch.cs
+index 4e706de..b072924 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/Arm64Arch.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/Arm64Arch.cs
+@@ -1,4 +1,4 @@
+-using MonoMod.Core.Utils;
++﻿using MonoMod.Core.Utils;
+ using MonoMod.Utils;
+ using System;
+ using System.Collections.Generic;
+@@ -26,17 +26,17 @@ namespace MonoMod.Core.Platforms.Architectures
+ 
+         public NativeDetourInfo ComputeDetourInfo(IntPtr from, IntPtr target, int maxSizeHint)
+         {
+-            // Should work for arm64 as well
+-            x86Shared.FixSizeHint(ref maxSizeHint);
+-
+-            if (maxSizeHint < BranchRegisterKind.Instance.Size)
+-            {
+-                MMDbgLog.Warning($"Size too small for all known detour kinds! Defaulting to BranchRegister. provided size: {maxSizeHint}");
+-            }
++            ValidateDetourSize(maxSizeHint);
+ 
+             return new(from, target, BranchRegisterKind.Instance, null);
+         }
+ 
++        private static void ValidateDetourSize(int maxSizeHint)
++        {
++            if (maxSizeHint < -1 || (maxSizeHint >= 0 && maxSizeHint < BranchRegisterKind.Instance.Size))
++                throw new NotSupportedException($"ARM64 detour requires {BranchRegisterKind.Instance.Size} bytes; available: {maxSizeHint}.");
++        }
++
+         public int GetDetourBytes(NativeDetourInfo info, Span<byte> buffer, out IDisposable? allocationHandle)
+         {
+             return DetourKindBase.GetDetourBytes(info, buffer, out allocationHandle);
+@@ -44,8 +44,7 @@ namespace MonoMod.Core.Platforms.Architectures
+ 
+         public NativeDetourInfo ComputeRetargetInfo(NativeDetourInfo detour, IntPtr target, int maxSizeHint = -1)
+         {
+-            // Should work for arm64 as well
+-            x86Shared.FixSizeHint(ref maxSizeHint);
++            ValidateDetourSize(maxSizeHint);
+ 
+             if (DetourKindBase.TryFindRetargetInfo(detour, target, maxSizeHint, out var retarget))
+             {
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props b/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props
+index fea0009..426796a 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props
+@@ -7,7 +7,7 @@
+     <Arm64HelperOS Include="linux" Ext="so" Item="Arm64HelperLinux" TargetTriple="aarch64-linux-none"
+         ExtraOpts="-shared -Wl,--eh-frame-hdr,-z,now,-z,noexecstack,-z,norelro,--build-id=none -nodefaultlibs -nostdlib" />
+     <Arm64HelperOS Include="macos" Ext="dylib" Item="Arm64HelperMacOS" TargetTriple="aarch64-macos"
+-        ExtraOpts="-shared -mmacosx-version-min=11" />
++        ExtraOpts="-shared -mmacosx-version-min=11 -Wl,-install_name,@rpath/exhelper_macos_arm64.dylib" />
+ 
+     <Arm64HelperLinux Include="$(MSBuildThisFileDirectory)exhelper_linux_macos_arm64.S" />
+     <Arm64HelperMacOS Include="$(MSBuildThisFileDirectory)exhelper_linux_macos_arm64.S" />
 diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs
-index 001110b..42104d4 100644
+index 001110b..79ae10b 100644
 --- a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs
 +++ b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs
+@@ -1,4 +1,4 @@
+-using Mono.Cecil.Cil;
++﻿using Mono.Cecil.Cil;
+ using MonoMod.Backports;
+ using MonoMod.Core.Utils;
+ using MonoMod.Logs;
 @@ -88,7 +88,7 @@ namespace MonoMod.Core.Platforms
              {
                  OSKind.Posix => throw new NotImplementedException(),
@@ -161,6 +240,104 @@ index 001110b..42104d4 100644
          /// <summary>
          /// Gets the <see cref="IArchitecture"/> for this <see cref="PlatformTriple"/>.
          /// </summary>
+@@ -384,6 +390,7 @@ namespace MonoMod.Core.Platforms
+ 
+             MMDbgLog.Trace($"Creating simple detour 0x{from:x16} => 0x{to:x16}");
+ 
++            detourMaxSize = ValidateAndroidDetour(from, to, detourMaxSize);
+             var detourInfo = Architecture.ComputeDetourInfo(from, to, detourMaxSize);
+ 
+             // detours are usually fairly small, so we'll stackalloc it
+@@ -398,11 +405,52 @@ namespace MonoMod.Core.Platforms
+             // allocate a backup
+             var backup = new byte[detourInfo.Size];
+ 
+-            // now we can apply the detour through the system
+-            System.PatchData(PatchTargetKind.Executable, fromRw, detourData, backup);
++            // Allocate all ownership state before modifying executable memory.
++            var pending = new SimpleNativeDetour(this, detourInfo, backup, allocHandle, applied: false);
++            try
++            {
++                PatchExecutable(from, fromRw, detourData, backup);
++                pending.MarkApplied();
++                return pending;
++            }
++            catch
++            {
++                allocHandle?.Dispose();
++                throw;
++            }
++        }
++
++        private int ValidateAndroidDetour(nint from, nint to, int maxSize)
++        {
++            if (PlatformDetection.OS == OSKind.Android && Architecture.Target == ArchitectureKind.Arm64)
++            {
++                if (maxSize < -1)
++                    throw new ArgumentOutOfRangeException(nameof(maxSize));
++                const ulong addressMask = 0x00ff_ffff_ffff_ffffUL;
++                from = (nint)((nuint)from & addressMask);
++                to = (nint)((nuint)to & addressMask);
++                if (((nuint)from & 3) != 0 || ((nuint)to & 3) != 0)
++                    throw new NotSupportedException("ARM64 detour addresses must be instruction aligned.");
++                if (Runtime is Runtimes.MonoRuntime)
++                {
++                    var actualSize = Runtimes.MonoRuntime.GetAndroidJitCodeSize(from);
++                    maxSize = maxSize < 0 ? actualSize : Math.Min(maxSize, actualSize);
++                }
++                else if (maxSize < 0)
++                    throw new NotSupportedException("Android ARM64 native detour requires an explicit code size.");
++                var maps = global::System.IO.File.ReadAllLines("/proc/self/maps");
++                Systems.AndroidMemoryPatch.RequireExecutable(maps, from, Math.Min(maxSize, 16));
++                Systems.AndroidMemoryPatch.RequireExecutable(maps, to, 4);
++            }
++            return maxSize;
++        }
+ 
+-            // and now we just create the NativeDetour object
+-            return new SimpleNativeDetour(this, detourInfo, backup, allocHandle);
++        private void PatchExecutable(nint code, nint write, ReadOnlySpan<byte> data, Span<byte> backup)
++        {
++            if (PlatformDetection.OS == OSKind.Android && System is Systems.LinuxSystem linux)
++                linux.PatchAndroidData(PatchTargetKind.Executable, code, write, data, backup);
++            else
++                System.PatchData(PatchTargetKind.Executable, write, data, backup);
+         }
+ 
+         /// <summary>
+@@ -448,6 +496,7 @@ namespace MonoMod.Core.Platforms
+ 
+             MMDbgLog.Trace($"Creating simple detour 0x{from:x16} => 0x{to:x16}");
+ 
++            detourMaxSize = ValidateAndroidDetour(from, to, detourMaxSize);
+             var detourInfo = Architecture.ComputeDetourInfo(from, to, detourMaxSize);
+ 
+             // detours are usually fairly small, so we'll stackalloc it
+@@ -474,11 +523,19 @@ namespace MonoMod.Core.Platforms
+             // allocate a backup
+             var backup = new byte[detourInfo.Size];
+ 
+-            // now we can apply the detour through the system
+-            System.PatchData(PatchTargetKind.Executable, fromRw, detourData, backup);
+-
+-            // and now we just create the NativeDetour object
+-            return new NativeDetour(new(this, detourInfo, backup, allocHandle), altEntry, altHandle);
++            var pending = new SimpleNativeDetour(this, detourInfo, backup, allocHandle, applied: false);
++            try
++            {
++                PatchExecutable(from, fromRw, detourData, backup);
++                pending.MarkApplied();
++                return new NativeDetour(pending, altEntry, altHandle);
++            }
++            catch
++            {
++                allocHandle?.Dispose();
++                altHandle?.Dispose();
++                throw;
++            }
+         }
+ 
+         /// <summary>
 diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs
 index d435ccc..c97851a 100644
 --- a/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTripleDetourFactory.cs
@@ -184,9 +361,15 @@ index d435ccc..c97851a 100644
                  return Triple.CreateSimpleDetour(from, to);
              }
 diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs
-index f72c399..b3b36cc 100644
+index f72c399..2004fef 100644
 --- a/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs
 +++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs
+@@ -1,4 +1,4 @@
+-using MonoMod.Backports;
++﻿using MonoMod.Backports;
+ using MonoMod.Utils;
+ using System;
+ using System.Collections.Concurrent;
 @@ -6,6 +6,7 @@ using System.Collections.Generic;
  using System.Linq;
  using System.Reflection;
@@ -195,7 +378,7 @@ index f72c399..b3b36cc 100644
  using System.Threading;
  
  namespace MonoMod.Core.Platforms.Runtimes
-@@ -342,20 +343,37 @@ namespace MonoMod.Core.Platforms.Runtimes
+@@ -342,20 +343,68 @@ namespace MonoMod.Core.Platforms.Runtimes
              return pinnedHandles.TryGetValue(GetMethodHandle(method), out var pin) ? pin.Pin.Method : method;
          }
  
@@ -215,6 +398,37 @@ index f72c399..b3b36cc 100644
 +            }
 +
 +            return handle.GetFunctionPointer();
++        }
++
++        [DllImport("libmonosgen-2.0.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "mono_domain_get")]
++        private static extern IntPtr MonoDomainGet();
++
++        [DllImport("libmonosgen-2.0.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "mono_jit_info_table_find")]
++        private static extern IntPtr MonoJitInfoTableFind(IntPtr domain, IntPtr address);
++
++        [DllImport("libmonosgen-2.0.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "mono_jit_info_get_code_start")]
++        private static extern IntPtr MonoJitInfoGetCodeStart(IntPtr info);
++
++        [DllImport("libmonosgen-2.0.so", CallingConvention = CallingConvention.Cdecl, EntryPoint = "mono_jit_info_get_code_size")]
++        private static extern int MonoJitInfoGetCodeSize(IntPtr info);
++
++        internal static int ValidateJitCodeSize(nint entry, nint start, int size)
++        {
++            if (entry == 0 || entry != start || size <= 0)
++                throw new NotSupportedException("Android Mono detour requires a known JIT body start and positive code size.");
++            _ = checked((nuint)start + (nuint)size);
++            return size;
++        }
++
++        internal static int GetAndroidJitCodeSize(nint entry)
++        {
++            var domain = MonoDomainGet();
++            if (domain == IntPtr.Zero)
++                throw new NotSupportedException("Android Mono current domain is unavailable.");
++            var info = MonoJitInfoTableFind(domain, entry);
++            if (info == IntPtr.Zero)
++                throw new NotSupportedException("Android Mono detour source has no JIT code metadata.");
++            return ValidateJitCodeSize(entry, MonoJitInfoGetCodeStart(info), MonoJitInfoGetCodeSize(info));
 +        }
 +
          public IntPtr GetMethodEntryPoint(MethodBase method)
@@ -237,20 +451,275 @@ index f72c399..b3b36cc 100644
          }
      }
  }
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/SimpleNativeDetour.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/SimpleNativeDetour.cs
+index 9bf91bf..c50fcc7 100644
+--- a/LocalMonoMod/src/MonoMod.Core/Platforms/SimpleNativeDetour.cs
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/SimpleNativeDetour.cs
+@@ -31,14 +31,18 @@ namespace MonoMod.Core.Platforms
+         /// </summary>
+         public IntPtr Destination => detourInfo.To;
+ 
+-        internal SimpleNativeDetour(PlatformTriple triple, NativeDetourInfo detourInfo, Memory<byte> backup, IDisposable? allocHandle)
++        internal SimpleNativeDetour(PlatformTriple triple, NativeDetourInfo detourInfo, Memory<byte> backup, IDisposable? allocHandle, bool applied = true)
+         {
++            disposedValue = !applied;
+             this.triple = triple;
+             this.detourInfo = detourInfo;
+             this.backup = backup;
+             AllocHandle = allocHandle;
+         }
+ 
++        // A pending instance cannot undo code until PatchData has successfully committed.
++        internal void MarkApplied() => disposedValue = false;
++
+         // TODO: when this is a NativeDetour, we need to fix up the alt entry point too, if the new patch is bigger
+ 
+         /// <summary>
+diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/AndroidMemoryPatch.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/AndroidMemoryPatch.cs
+new file mode 100644
+index 0000000..07c28eb
+--- /dev/null
++++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/AndroidMemoryPatch.cs
+@@ -0,0 +1,226 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.Diagnostics.CodeAnalysis;
++using System.Runtime.ExceptionServices;
++
++namespace MonoMod.Core.Platforms.Systems
++{
++    // Android-only policy. Kept separate from syscalls so the exact packaged implementation
++    // can be tested with synthetic maps and injected protection/cache failures on the host.
++    internal static class AndroidMemoryPatch
++    {
++        private const int Read = 1, Write = 2, Execute = 4;
++
++        private readonly record struct Mapping(nuint Start, nuint End, int Protection, bool Shared,
++            nuint Offset, string Device, ulong Inode);
++
++        internal readonly record struct Region(nint Address, nint Length, int Protection);
++
++        private static nuint AddressMask => IntPtr.Size == 8 ? unchecked((nuint)0x00ff_ffff_ffff_ffffUL) : nuint.MaxValue;
++        private static nuint ForMaps(nint address) => (nuint)address & AddressMask;
++
++        private static nuint End(nuint start, int length)
++        {
++            if (start == 0 || length <= 0)
++                throw new ArgumentOutOfRangeException(nameof(length), "A memory range must have a nonzero start and positive length.");
++            var end = checked(start + (nuint)length);
++            if (end > AddressMask)
++                throw new OverflowException("Android memory range crosses the untagged address space.");
++            return end;
++        }
++
++        private static List<Mapping> Parse(string[] lines)
++        {
++            var result = new List<Mapping>();
++            foreach (var line in lines)
++            {
++                var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
++                if (fields.Length < 5)
++                    continue;
++                var separator = fields[0].IndexOf('-', StringComparison.Ordinal);
++                if (separator <= 0 || fields[1].Length != 4
++                    || !nuint.TryParse(fields[0].AsSpan(0, separator), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var start)
++                    || !nuint.TryParse(fields[0].AsSpan(separator + 1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var end)
++                    || start >= end
++                    || !nuint.TryParse(fields[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var offset)
++                    || !ulong.TryParse(fields[4], NumberStyles.None, CultureInfo.InvariantCulture, out var inode))
++                    continue;
++                var permissions = fields[1];
++                var protection = (permissions[0] == 'r' ? Read : 0)
++                    | (permissions[1] == 'w' ? Write : 0) | (permissions[2] == 'x' ? Execute : 0);
++                if (result.Count > 0 && start < result[result.Count - 1].End)
++                    throw new InvalidOperationException("Android memory mappings overlap or are unordered.");
++                result.Add(new(start, end, protection, permissions[3] == 's', offset, fields[3], inode));
++            }
++            return result;
++        }
++
++        private static List<Mapping> RequireRange(List<Mapping> mappings, nuint start, nuint end, int required)
++        {
++            var result = new List<Mapping>();
++            var cursor = start;
++            foreach (var mapping in mappings)
++            {
++                if (mapping.End <= cursor)
++                    continue;
++                if (mapping.Start > cursor || (mapping.Protection & required) != required)
++                    break;
++                result.Add(mapping);
++                cursor = mapping.End < end ? mapping.End : end;
++                if (cursor == end)
++                    return result;
++            }
++            throw new InvalidOperationException($"Android memory range 0x{start:x}-0x{end:x} is unmapped or lacks permissions {required}.");
++        }
++
++        internal static void RequireExecutable(string[] lines, nint address, int length)
++        {
++            var start = ForMaps(address);
++            _ = RequireRange(Parse(lines), start, End(start, length), Read | Execute);
++        }
++
++        internal static Region[] Plan(string[] lines, nint executableAddress, nint writeAddress,
++            int length, bool executable, nint pageSize)
++        {
++            var start = ForMaps(writeAddress);
++            var end = End(start, length);
++            var page = (nuint)pageSize;
++            if (pageSize <= 0 || (page & (page - 1)) != 0)
++                throw new ArgumentOutOfRangeException(nameof(pageSize));
++            var mappings = Parse(lines);
++            var writes = RequireRange(mappings, start, end, Read);
++            if (executable)
++            {
++                var codeStart = ForMaps(executableAddress);
++                var code = RequireRange(mappings, codeStart, End(codeStart, length), Read | Execute);
++                if (codeStart != start)
++                {
++                    // Only accept provable aliases of the same shared file bytes. Anonymous
++                    // or private mappings cannot establish alias identity from /proc/self/maps.
++                    var offset = (nuint)0;
++                    var codeIndex = 0;
++                    var writeIndex = 0;
++                    while (offset < (nuint)length)
++                    {
++                        var rx = code[codeIndex];
++                        var rw = writes[writeIndex];
++                        var rxCursor = checked(codeStart + offset);
++                        var rwCursor = checked(start + offset);
++                        if (!rx.Shared || !rw.Shared || rx.Inode == 0 || rx.Inode != rw.Inode
++                            || rx.Device != rw.Device || (rw.Protection & Write) == 0
++                            || checked(rx.Offset + rxCursor - rx.Start) != checked(rw.Offset + rwCursor - rw.Start))
++                            throw new InvalidOperationException("Android executable write alias could not be verified.");
++                        var chunk = Math.Min(rx.End - rxCursor, rw.End - rwCursor);
++                        offset = checked(offset + Math.Min(chunk, (nuint)length - offset));
++                        if (codeStart + offset == rx.End) codeIndex++;
++                        if (start + offset == rw.End) writeIndex++;
++                    }
++                }
++            }
++
++            var alignedStart = start & ~(page - 1);
++            var alignedEnd = checked(end + page - 1) & ~(page - 1);
++            var regions = new List<Region>();
++            foreach (var mapping in RequireRange(mappings, alignedStart, alignedEnd, Read))
++            {
++                if ((mapping.Start & (page - 1)) != 0 || (mapping.End & (page - 1)) != 0)
++                    throw new InvalidOperationException("Android mapping is not page aligned.");
++                var regionStart = Math.Max(alignedStart, mapping.Start);
++                var regionEnd = Math.Min(alignedEnd, mapping.End);
++                regions.Add(new((nint)regionStart, checked((nint)(regionEnd - regionStart)), mapping.Protection));
++            }
++            return regions.ToArray();
++        }
++
++        internal static unsafe void Apply(bool executable, nint executableAddress, nint writeAddress,
++            ReadOnlySpan<byte> data, Span<byte> backup, nint pageSize, string[] maps,
++            Action<nint, nint, int> protect, Action<nint, nint> flush, Action<string, Exception> failFast)
++        {
++            if (data.IsEmpty)
++                return;
++            if (!backup.IsEmpty && backup.Length < data.Length)
++                throw new ArgumentException("The backup cannot hold the complete patch.", nameof(backup));
++            var regions = Plan(maps, executableAddress, writeAddress, data.Length, executable, pageSize);
++            // Normalize only mapping/syscall addresses. Preserve the original logical tag for
++            // actual data access so ARM64 tagged memory does not become an untagged pointer.
++            var target = new Span<byte>((void*)writeAddress, data.Length);
++            // Always retain our own backup, including for Undo/ChangeTarget callers that pass none.
++            var original = target.ToArray();
++            var replacement = data.ToArray();
++            if (!backup.IsEmpty)
++                original.AsSpan().CopyTo(backup);
++            var attemptedProtection = new bool[regions.Length];
++            var wrote = false;
++            try
++            {
++                for (var i = 0; i < regions.Length; i++)
++                {
++                    var region = regions[i];
++                    if ((region.Protection & Write) == 0)
++                    {
++                        // Mark before the syscall: a failed mprotect can have changed some pages.
++                        attemptedProtection[i] = true;
++                        protect(region.Address, region.Length, region.Protection | Write);
++                    }
++                }
++                wrote = true;
++                replacement.AsSpan().CopyTo(target);
++                Flush(executable, executableAddress, writeAddress, data.Length, flush);
++                Restore(regions, attemptedProtection, protect);
++            }
++            catch (Exception failure)
++            {
++                try
++                {
++                    if (wrote)
++                    {
++                        for (var i = 0; i < regions.Length; i++)
++                        {
++                            if (attemptedProtection[i])
++                            {
++                                var region = regions[i];
++                                protect(region.Address, region.Length, region.Protection | Write);
++                            }
++                        }
++                        original.AsSpan().CopyTo(target);
++                        Flush(executable, executableAddress, writeAddress, data.Length, flush);
++                        if (!target.SequenceEqual(original))
++                            throw new InvalidOperationException("Android patch rollback bytes differ from the original.");
++                    }
++                    Restore(regions, attemptedProtection, protect);
++                }
++                catch (Exception rollbackFailure)
++                {
++                    failFast("Android detour rollback failed; continuing could execute damaged code.",
++                        new AggregateException(failure, rollbackFailure));
++                    throw new InvalidOperationException("The fatal Android rollback handler returned.");
++                }
++                throw;
++            }
++        }
++
++        [SuppressMessage("Design", "CA1031:Do not catch general exception types",
++            Justification = "Every mapping must be restored before propagating the first failure with its original stack.")]
++        private static void Restore(Region[] regions, bool[] attempted, Action<nint, nint, int> protect)
++        {
++            // Attempt every restoration even if an earlier region fails.
++            Exception? failure = null;
++            for (var i = regions.Length - 1; i >= 0; i--)
++            {
++                if (!attempted[i]) continue;
++                var region = regions[i];
++                try { protect(region.Address, region.Length, region.Protection); }
++                catch (Exception error) { failure ??= error; }
++            }
++            if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
++        }
++
++        private static void Flush(bool executable, nint code, nint write, int length, Action<nint, nint> flush)
++        {
++            if (!executable) return;
++            flush(write, length);
++            if (code != write) flush(code, length);
++        }
++    }
++}
 diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs b/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs
-index fd70570..374f6f4 100644
+index fd70570..0ee35ea 100644
 --- a/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs
 +++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs
-@@ -7,6 +7,8 @@ using System.Collections.Generic;
+@@ -7,6 +7,7 @@ using System.Collections.Generic;
  using System.ComponentModel;
  using System.Diagnostics;
  using System.Diagnostics.CodeAnalysis;
-+using System.Globalization;
 +using System.IO;
  using System.Linq;
  using System.Reflection;
  
-@@ -33,7 +35,7 @@ namespace MonoMod.Core.Platforms.Systems
+@@ -33,7 +34,7 @@ namespace MonoMod.Core.Platforms.Systems
  
          public LinuxSystem()
          {
@@ -259,92 +728,49 @@ index fd70570..374f6f4 100644
              allocator = new MmapPagedMemoryAllocator(PageSize);
  
              switch (PlatformDetection.Architecture)
-@@ -89,11 +91,21 @@ namespace MonoMod.Core.Platforms.Systems
+@@ -88,48 +89,72 @@ namespace MonoMod.Core.Platforms.Systems
+ 
          public unsafe void PatchData(PatchTargetKind patchKind, IntPtr patchTarget, ReadOnlySpan<byte> data, Span<byte> backup)
          {
-             // TODO: should this be thread-safe? It definitely is not right now.
-+            Unix.Protection? androidOriginalProtection = null;
-+            var restoreAndroidProtection = false;
- 
+-            // TODO: should this be thread-safe? It definitely is not right now.
+-
 -            // Update the protection of this
 -            if (patchKind == PatchTargetKind.Executable)
 +            if (PlatformDetection.OS == OSKind.Android)
-+            {
-+                androidOriginalProtection = GetAndroidProtection(patchTarget);
-+                var writableProtection = androidOriginalProtection.Value | Unix.Protection.Write;
-+                if (writableProtection != androidOriginalProtection.Value)
-+                {
-+                    Protect(patchTarget, data.Length, writableProtection);
-+                    restoreAndroidProtection = true;
-+                }
-+            }
-+            else if (patchKind == PatchTargetKind.Executable)
              {
 -                // Because Windows is Windows, we don't actually need to do anything except make sure we're in RWX
-                 ProtectRWX(patchTarget, data.Length);
+-                ProtectRWX(patchTarget, data.Length);
++                PatchAndroidData(patchKind, patchTarget, patchTarget, data, backup);
++                return;
              }
++            if (patchKind == PatchTargetKind.Executable)
++                ProtectRWX(patchTarget, data.Length);
              else
-@@ -101,35 +113,96 @@ namespace MonoMod.Core.Platforms.Systems
+-            {
                  ProtectRW(patchTarget, data.Length);
-             }
- 
--            var target = new Span<byte>((void*)patchTarget, data.Length);
+-            }
+-
+             var target = new Span<byte>((void*)patchTarget, data.Length);
 -            // now we copy target to backup, then data to target, then flush the instruction cache
--            _ = target.TryCopyTo(backup);
--            data.CopyTo(target);
-+            try
-+            {
-+                var target = new Span<byte>((void*)patchTarget, data.Length);
-+                _ = target.TryCopyTo(backup);
-+                data.CopyTo(target);
-+
-+                if (patchKind == PatchTargetKind.Executable && PlatformDetection.OS == OSKind.Android)
-+                {
-+                    FlushInstructionCache(patchTarget, data.Length);
-+                }
-+            }
-+            finally
-+            {
-+                if (restoreAndroidProtection)
-+                {
-+                    Protect(patchTarget, data.Length, androidOriginalProtection!.Value);
-+                }
-+            }
-+        }
-+
-+        private static Unix.Protection GetAndroidProtection(nint address)
-+        {
-+            var target = (nuint)UntagForSystemCall(address);
-+            foreach (var line in File.ReadLines("/proc/self/maps"))
-+            {
-+                var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-+                if (fields.Length < 2)
-+                    continue;
-+
-+                var separator = fields[0].IndexOf('-');
-+                if (separator <= 0
-+                    || !nuint.TryParse(fields[0].AsSpan(0, separator), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var start)
-+                    || !nuint.TryParse(fields[0].AsSpan(separator + 1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var end)
-+                    || target < start
-+                    || target >= end)
-+                {
-+                    continue;
-+                }
-+
-+                var permissions = fields[1];
-+                var protection = Unix.Protection.None;
-+                if (permissions.Length > 0 && permissions[0] == 'r')
-+                    protection |= Unix.Protection.Read;
-+                if (permissions.Length > 1 && permissions[1] == 'w')
-+                    protection |= Unix.Protection.Write;
-+                if (permissions.Length > 2 && permissions[2] == 'x')
-+                    protection |= Unix.Protection.Execute;
-+                return protection;
-+            }
-+
-+            throw new InvalidOperationException($"Could not find Android memory mapping for 0x{target:x16}.");
+             _ = target.TryCopyTo(backup);
+             data.CopyTo(target);
          }
  
++        internal void PatchAndroidData(PatchTargetKind kind, nint executableAddress, nint writeAddress,
++            ReadOnlySpan<byte> data, Span<byte> backup)
++        {
++            if (data.IsEmpty) return;
++            var executable = kind == PatchTargetKind.Executable;
++            // Resolve and invoke the helper before changing permissions or bytes. An empty
++            // interval performs no cache access, but detects missing libraries/exports early.
++            if (executable)
++                Unix.JunimoGateClearCache(IntPtr.Zero, IntPtr.Zero);
++            AndroidMemoryPatch.Apply(executable, executableAddress, writeAddress,
++                data, backup, PageSize, File.ReadAllLines("/proc/self/maps"),
++                (address, length, protection) => Protect(address, length, (Unix.Protection)protection),
++                FlushInstructionCache, Environment.FailFast);
++        }
++
          private void RoundToPageBoundary(ref nint addr, ref nint size)
          {
 +            addr = UntagForSystemCall(addr);
@@ -419,28 +845,3 @@ index b24aad6..cdbb589 100644
 +    "rollForward": "latestFeature"
    }
  }
-diff --git a/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props b/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props
---- a/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props
-+++ b/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/arm64/BuildHelper.props
-@@ -7,7 +7,7 @@
-     <Arm64HelperOS Include="linux" Ext="so" Item="Arm64HelperLinux" TargetTriple="aarch64-linux-none"
-         ExtraOpts="-shared -Wl,--eh-frame-hdr,-z,now,-z,noexecstack,-z,norelro,--build-id=none -nodefaultlibs -nostdlib" />
-     <Arm64HelperOS Include="macos" Ext="dylib" Item="Arm64HelperMacOS" TargetTriple="aarch64-macos"
--        ExtraOpts="-shared -mmacosx-version-min=11" />
-+        ExtraOpts="-shared -mmacosx-version-min=11 -Wl,-install_name,@rpath/exhelper_macos_arm64.dylib" />
- 
-     <Arm64HelperLinux Include="$(MSBuildThisFileDirectory)exhelper_linux_macos_arm64.S" />
-     <Arm64HelperMacOS Include="$(MSBuildThisFileDirectory)exhelper_linux_macos_arm64.S" />
-diff --git a/Lib.Harmony/ILRepack.targets b/Lib.Harmony/ILRepack.targets
---- a/Lib.Harmony/ILRepack.targets
-+++ b/Lib.Harmony/ILRepack.targets
-@@ -2,8 +2,7 @@
- <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
- 	<Target Name="ILRepacker" AfterTargets="Build">
- 		<PropertyGroup>
--			<DebugInfo>true</DebugInfo>
--			<DebugInfo Condition="'$(TargetFramework)' == 'netstandard2.0'">false</DebugInfo>
-+			<DebugInfo>false</DebugInfo>
- 		</PropertyGroup>
- 		
- 		<ItemGroup>

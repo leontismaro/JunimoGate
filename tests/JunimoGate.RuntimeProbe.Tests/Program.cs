@@ -26,7 +26,7 @@ var report = await RuntimeProbeRunner.RunAsync(new RuntimeProbeInput
 var json = RuntimeProbeJson.Serialize(report);
 var roundTripped = RuntimeProbeJson.Deserialize(json);
 
-return TestHarness.Run(
+return TestHarness.Run([
     ("all hard runtime cases pass on host CoreCLR", () =>
     {
         TestHarness.Equal(RuntimeProbeCaseIds.All.Count, report.Cases.Count);
@@ -96,4 +96,6 @@ return TestHarness.Run(
             .SequenceEqual(roundTripped.Cases.Select(result => (result.Id, result.Status))));
         TestHarness.Equal(report.Environment.Harmony.ModuleVersionId, roundTripped.Environment.Harmony.ModuleVersionId);
         TestHarness.Equal(report.Environment.MonoModUtils.ModuleVersionId, roundTripped.Environment.MonoModUtils.ModuleVersionId);
-    }));
+    }),
+    .. AndroidDetourSafetyTests.Cases
+]);

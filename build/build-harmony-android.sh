@@ -179,6 +179,10 @@ grep -Fq 'OSKind.Android => CreateAndroidSystem()' "$source_root/LocalMonoMod/sr
 grep -Fq 'AndroidPageSize = 0x0027' "$source_root/LocalMonoMod/src/MonoMod.Core/Interop/Unix.cs"
 grep -Fq 'MonoCompileMethod(handle.Value)' "$source_root/LocalMonoMod/src/MonoMod.Core/Platforms/Runtimes/MonoRuntime.cs"
 grep -Fq 'Unix.JunimoGateClearCache(start, end)' "$source_root/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs"
+grep -Fq 'AndroidMemoryPatch.Apply(' "$source_root/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/LinuxSystem.cs"
+grep -Fq 'GetAndroidJitCodeSize(from)' "$source_root/LocalMonoMod/src/MonoMod.Core/Platforms/PlatformTriple.cs"
+grep -Fq 'ValidateDetourSize(maxSizeHint)' "$source_root/LocalMonoMod/src/MonoMod.Core/Platforms/Architectures/Arm64Arch.cs"
+grep -Fq 'Android detour rollback failed' "$source_root/LocalMonoMod/src/MonoMod.Core/Platforms/Systems/AndroidMemoryPatch.cs"
 [[ -f "$source_root/LocalMonoMod/src/MonoMod.Core/Interop/AndroidNativeLibraryResolver.cs" ]]
 
 rm -f "$package" "$provenance"

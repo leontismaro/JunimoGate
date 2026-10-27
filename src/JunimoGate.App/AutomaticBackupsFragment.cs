@@ -62,7 +62,8 @@ public sealed class AutomaticBackupsFragment : Fragment
         cancellation?.Cancel();
         cancellation?.Dispose();
         cancellation = null;
-        pendingExport = null;
+        // OnStop runs when the document picker takes the foreground, so the pending
+        // selection must survive it and only be cleared with the view.
         base.OnStop();
     }
 
@@ -74,6 +75,7 @@ public sealed class AutomaticBackupsFragment : Fragment
         empty = null;
         progress = null;
         adapter = null;
+        pendingExport = null;
         base.OnDestroyView();
     }
 

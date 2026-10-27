@@ -20,8 +20,8 @@ build/build-cacheflush.sh
 生成物位于 ignored 目录：
 
 ```text
-artifacts/nuget/Lib.Harmony.2.4.2-junimogate.64.nupkg
-artifacts/nuget/Lib.Harmony.2.4.2-junimogate.64.provenance.json
+artifacts/nuget/Lib.Harmony.2.4.2-junimogate.67.nupkg
+artifacts/nuget/Lib.Harmony.2.4.2-junimogate.67.provenance.json
 .toolchains/source-cache/harmony-android/
 .toolchains/source-build/harmony-android/
 ```
@@ -94,7 +94,10 @@ Harmony/MonoMod 继续只维护 Android library fix。普通 Mod 的跨程序集
 7. Android Mono 通过 `mono_compile_method` 取得真实 JIT body；
 8. detour source 和 destination 都走 runtime-native body 解析；
 9. executable JIT body 写入后调用 JunimoGate ARM64 cache helper；
-10. net9-only、local MonoMod 和 JunimoGate package identity。
+10. net9-only、local MonoMod 和 JunimoGate package identity；
+11. 完整写入范围、地址溢位、可读/可执行权限和逐映射权限恢复；
+12. ARM64 初次安装与重定向拒绝不足 16 bytes 的空间；Android Mono 未提供大小时通过公开 JIT info API 取得实际代码大小，未知大小或非代码起点拒绝安装；
+13. 写入前解析 cache helper、分配备份与 detour 管理对象；写入后失败恢复原指令、快取和权限，无法确认恢复时终止 `:game` 进程。
 
 这些改动与 `native/JunimoGate.CacheFlush/clear_cache.S` 构成同一验收单元。只升级其中一部分没有意义。
 
@@ -586,11 +589,11 @@ M2通过只允许进入后续阶段。正式升级还应经过：
 4. 运行host和至少一次设备Probe确认环境未变化；
 5. 将候选失败原因写入技术记录，不覆盖旧包。
 
-当前 known-good：
+上一轮真机验证基线（本次候选没有覆盖它的 NuGet 版本）：
 
 ```text
 Lib.Harmony 2.4.2-junimogate.64
-patch SHA-256: 5554b9c9f20ad555987167f3364c5d35d26efb568ee94b872c7270a645b005f9
+patch SHA-256: 8dd12074d4bc99ed6d81dfc34d8f1990548b943e64532a196cbac0008a5833c1
 ```
 
 ILRepack 会为每次构建生成新的 MVID/PDB 路径，NuGet 打包也会写入 ZIP 元数据，
@@ -651,3 +654,29 @@ provenance 文件中记录当次实际哈希，并在复用包时验证 provenan
 | 可重放构建实现 | [`../build/build-harmony-android.sh`](../build/build-harmony-android.sh) |
 | ARM64 helper源码 | [`../native/JunimoGate.CacheFlush/clear_cache.S`](../native/JunimoGate.CacheFlush/clear_cache.S) |
 | 第三方许可证 | [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md) |
+
+## 15. `.67` 内存改写加固
+
+当前消费版本为 `2.4.2-junimogate.67`。已生成的 NuGet 版本不覆盖。
+候选的 host 测试和 APK 静态检查不替代 Android Debug/Release 真机验收。
+
+Android 路径先验证完整映射与页对齐范围，然后保存每段的原权限。
+映射查询和系统调用使用去标签地址，实际读写保留原始 ARM64 指针标签。Executable
+写入要求可读可执行代码映射；不同的写入地址还必须是相同设备/inode/文件偏移的
+shared writable alias。匿名或 private 别名无法仅由 maps 证明，直接拒绝。
+
+ARM64 managed detour 使用 `mono_domain_get`、`mono_jit_info_table_find`、
+`mono_jit_info_get_code_start`、`mono_jit_info_get_code_size` 取得有界代码区间，
+不读取 Mono 内部结构偏移。无法取得元数据、入口不是代码起点或代码不足 16 bytes
+均在写入前拒绝。纯原生入口在此 Mono 路径无法证明代码大小时也会拒绝，不用映射
+剩余大小冒充单个方法的代码大小。
+
+失败处理覆盖保护变更、快取清理和原权限恢复。成功恢复原指令与快取后保留原异常；
+恢复本身失败则 `Environment.FailFast`，防止 mod 的 catch 把半安装的补丁当作普通
+初始化失败继续执行。这不会承诺并行执行中改写 16-byte 指令的原子性；相关协议
+仍需单独设计和真机测试。
+
+`tests/JunimoGate.RuntimeProbe.Tests/AndroidDetourSafetyTests.cs` 从实际 `0Harmony.dll`
+调用同一策略，通过合成 maps 和故障注入验证拒绝路径、分段权限、写入别名、短备份、
+回滚与 fatal handler。真实 mprotect/cache helper、Mono JIT 元数据及多线程执行须由
+Android RuntimeProbe 和代表性 Mod 会话验证。
